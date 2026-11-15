@@ -32,7 +32,7 @@ wait_health() { # url mode
 }
 
 # 1. Standalone, as a household would run it.
-mkdir -p "$work/data"
+mkdir -p "$work/data" "$work/keys"
 port=$((20000 + $$ % 20000))
 SHELF_IMAGE="$tag" SHELF_PORT="$port" SHELF_UID="$(id -u)" SHELF_GID="$(id -g)" \
   docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" up -d --no-build

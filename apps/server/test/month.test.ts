@@ -9,13 +9,13 @@ import { loadConfig } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { SealError, seal, unseal } from '../src/household/sealed';
-import { EMAIL, MAILTO_MAX, mailto, orderText } from '../src/month/order-mail';
-import { broadenMonth, currentMonth } from '../src/month/plan';
+import { EMAIL, MAILTO_MAX, mailto, monthName, orderText } from '../src/month/order-mail';
+import { broadenMonth, currentMonth, nextMonth } from '../src/month/plan';
 import { importSeed } from '../src/seed/import';
-import { ORIGIN, TEST_SEALING_KEY, sessionCookie } from './helpers';
+import { ORIGIN, TEST_SEALING_KEY, THIS_MONTH, sessionCookie } from './helpers';
 
 const SAMPLE = fileURLToPath(new URL('../../../seed-sample', import.meta.url));
-const MONTH = '2026-12';
+const MONTH = nextMonth(THIS_MONTH); // next month: this month's plan is the add_to_month test's
 let db: Db;
 let built: BuiltApp;
 const id: Record<string, string> = {};
@@ -62,6 +62,7 @@ describe('the plan', () => {
 
   it('every third month a Deepen + Connect pick becomes Broaden', () => {
     expect(['2026-09', '2026-10', '2026-11', '2026-12'].map(broadenMonth)).toEqual([true, false, false, true]);
+    expect(['2026-11', '2026-12'].map(nextMonth)).toEqual(['2026-12', '2027-01']);
     expect(currentMonth('Europe/Zurich', new Date('2026-11-30T23:30:00Z'))).toBe('2026-12');
   });
 });
@@ -71,7 +72,10 @@ describe('changing the picks', () => {
     const p = await plan();
     const sams = p.adults.find((a) => a.person.id === id.partner)!.picks;
     const mine = p.adults.find((a) => a.person.id === id.alex)!.picks;
-    if (sams[0]) expect((await send('alex', 'POST', `/api/month/${MONTH}/picks`, { remove: [{ bookId: sams[0].candidate.book.id, for: id.partner }] })).statusCode).toBe(403);
+    // the rule runs before any lookup: another adult's, real pick or not, is 403
+    for (const body of [{ remove: [{ bookId: 'x', for: id.partner }] }, { add: [{ bookId: 'x', for: id.partner }] }, ...(sams[0] ? [{ remove: [{ bookId: sams[0].candidate.book.id, for: id.partner }] }] : [])]) {
+      expect((await send('alex', 'POST', `/api/month/${MONTH}/picks`, body)).statusCode, JSON.stringify(body)).toBe(403);
+    }
     const r = await send('alex', 'POST', `/api/month/${MONTH}/picks`, { remove: [{ bookId: mine[0]!.candidate.book.id, for: id.alex }] });
     expect(r.statusCode, r.body).toBe(200);
     const after: Plan = r.json();
@@ -88,6 +92,18 @@ describe('changing the picks', () => {
   ])('%i: %j', async (status, body) => {
     const b = JSON.parse(JSON.stringify(body).replace('ALEX', id.alex!));
     expect((await send('alex', 'POST', `/api/month/${MONTH}/picks`, b)).statusCode).toBe(status);
+  });
+
+  it('Pick again remakes only your own picks and the kids\': Sam\'s never brings back what Alex removed', async () => {
+    const before = (await plan()).adults.find((a) => a.person.id === id.alex)!.picks;
+    const gone = before[0]!.candidate.book.id;
+    expect((await send('alex', 'POST', `/api/month/${MONTH}/picks`, { remove: [{ bookId: gone, for: id.alex }] })).statusCode).toBe(200);
+    const after: Plan = (await send('partner', 'POST', `/api/month/${MONTH}/picks`, { recompute: true })).json();
+    const alexNow = after.adults.find((a) => a.person.id === id.alex)!.picks.map((x) => x.candidate.book.id);
+    expect(alexNow).not.toContain(gone);
+    expect(alexNow).toEqual(before.slice(1).map((x) => x.candidate.book.id));
+    // Alex's own Pick again may bring it back: his to decide
+    expect((await send('alex', 'POST', `/api/month/${MONTH}/picks`, { recompute: true })).json().adults.find((a: { person: { id: string } }) => a.person.id === id.alex).picks.map((x: Pick) => x.candidate.book.id)).toContain(gone);
   });
 
   it('recompute starts again from the scoring', async () => {
@@ -126,7 +142,8 @@ describe('Compose (ADR 0007)', () => {
     expect(r.statusCode, r.body).toBe(201);
     const o = r.json();
     expect(o.status).toBe('drafted');
-    expect(o.composeUrl).toMatch(/^mailto:orders@bookshop\.example\?subject=Book%20order%2C%20December%202026&body=/);
+    expect(o.composeTo).toBe('orders@bookshop.example');
+    expect(o.composeUrl.startsWith(`mailto:orders@bookshop.example?subject=${encodeURIComponent(`Book order, ${monthName(MONTH)}`)}&body=`)).toBe(true);
     expect(o.composeText).toContain('Example Street 1');
     expect(o.composeText).toContain('prices and delivery times');
     expect(o.composeText).not.toMatch(/\b(?:\d[ -]?){13,19}\b/); // nothing shaped like a card number
@@ -154,6 +171,40 @@ describe('Compose (ADR 0007)', () => {
     const r = await send('alex', 'POST', '/api/backlog/bulk', { ids: [open.id], action: 'add_to_month' });
     expect(r.statusCode, r.body).toBe(200);
     expect((await get('alex', `/api/month/${month}`)).json().adults.find((a: { person: { id: string } }) => a.person.id === id.alex).picks.map((x: Pick) => x.candidate.book.id)).toContain(open.book.id);
+  });
+});
+
+describe('which months', () => {
+  it('this month and the next; another is 404 for changes, and shows only with an order', async () => {
+    expect((await get('alex', '/api/month')).json().month).toBe(THIS_MONTH);
+    const past = '2019-01';
+    expect((await get('alex', `/api/month/${past}`)).statusCode).toBe(404);
+    expect((await send('alex', 'POST', `/api/month/${past}/picks`, { recompute: true })).statusCode).toBe(404);
+    expect((await send('alex', 'PUT', `/api/month/${past}/budget`, null)).statusCode).toBe(404);
+    expect((await send('alex', 'POST', '/api/orders', { month: past })).statusCode).toBe(404);
+    expect((await send('alex', 'POST', '/api/orders', { month: nextMonth(MONTH) })).statusCode).toBe(404);
+    expect(db.select().from(t.order).where(eq(t.order.month, past)).all()).toEqual([]);
+  });
+});
+
+describe('a replaced sealing key', () => {
+  it('Settings still answers (the budget too) and asks for the addresses again; re-entering them works', async () => {
+    const other = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') }), db);
+    await other.app.ready();
+    const h = { cookie: cookie.alex!, origin: ORIGIN, 'content-type': 'application/json' };
+    const s = await other.app.inject({ url: '/api/settings', headers: h });
+    expect(s.statusCode, s.body).toBe(200);
+    expect(s.json().budget).toBeDefined();
+    expect(s.json().order).toMatchObject({ needsReentry: true, bookshopEmail: null, hasDelivery: true });
+    expect((await other.app.inject({ method: 'POST', url: '/api/orders', headers: h, payload: JSON.stringify({ month: THIS_MONTH }) })).json().error).toMatch(/enters them again/);
+    // CRLF line breaks are the same line breaks
+    const r = await other.app.inject({ method: 'PATCH', url: '/api/settings', headers: h, payload: JSON.stringify({ order: { bookshopEmail: 'orders@bookshop.example', deliveryAddress: 'Alex Example\r\nExample Street 1\r\n8000 Zurich' } }) });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await other.app.inject({ url: '/api/settings', headers: h })).json().order).toMatchObject({ needsReentry: false, bookshopEmail: 'orders@bookshop.example' });
+    const o = await other.app.inject({ method: 'POST', url: '/api/orders', headers: h, payload: JSON.stringify({ month: THIS_MONTH }) });
+    expect(o.statusCode, o.body).toBe(201);
+    expect(o.json().composeText).toContain('Alex Example\nExample Street 1');
+    await other.app.close();
   });
 });
 

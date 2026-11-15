@@ -17,17 +17,17 @@ const MOVES: Record<string, string> = { deepen: 'Deepen', connect: 'Connect', br
 const STEPS = ['Picked', 'Composed', 'Quote', 'Invoice', 'In the library'];
 const STEP_OF: Record<string, number> = { picked: 0, drafted: 1, quoted: 2, invoiced: 3, closed: 4 };
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
 
 export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
-  const month = thisMonth();
   const [plan, setPlan] = useState<Plan | null>(null);
+  // "This month" is the server's (its time zone), the same month the Backlog's "add to this month" uses.
+  const month = plan?.month ?? '';
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   const [composed, setComposed] = useState<Order | null>(null);
   const admin = me.person?.role === 'admin';
 
-  const load = useCallback(() => api<Plan>(`/month/${month}`).then(setPlan, (e) => setError(message(e))), [month]);
+  const load = useCallback(() => api<Plan>('/month').then(setPlan, (e) => setError(message(e))), []);
   useEffect(() => { void load(); }, [load]);
   const act = async (fn: () => Promise<Plan>, said: string) => {
     setError(null);
@@ -43,12 +43,12 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
     } catch (e) { setError(e instanceof ApiError && e.status === 409 ? `${message(e)}.` : message(e)); }
   };
 
-  const name = `${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`;
+  const name = month ? `${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}` : '';
   const kidCount = plan?.kids?.reduce((n, k) => n + (k.picks?.length ?? 0), 0) ?? 0;
   const adultCount = plan?.adults?.reduce((n, a) => n + (a.picks?.length ?? 0), 0) ?? 0;
   return (
     <>
-      <PageHead title="This month" sub={`${name}: non-fiction that grows each adult’s reading map, and kids’ books with a different theme and author each.`}
+      <PageHead title="This month" sub={`${name ? `${name}: ` : ''}non-fiction that grows each adult’s reading map, and kids’ books with a different theme and author each.`}
         actions={<button type="button" className="btn" onClick={() => void change({ recompute: true }, 'Picked again from the scoring.')}>Pick again</button>} />
       <div className="stack">
         {error && <Notice kind="error">{error}</Notice>}
@@ -268,10 +268,11 @@ function ComposeCard({ total, order, empty, onCompose, go }: { total: number; or
       ) : (
         <>
           <div className="btn-row">
-            <a className="btn btn-primary" href={order.composeUrl}>Open in your mail app</a>
+            <a className="btn btn-primary" href={order.composeUrl} aria-describedby={`${id}-to`}>Open in your mail app</a>
             <button type="button" className="btn" onClick={() => void copy()}>Copy the order text</button>
             <span className="footnote" role="status">{copied}</span>
           </div>
+          <p id={`${id}-to`}>To: <b>{order.composeTo}</b></p>
           {order.composeComplete === false && <Notice kind="info" title="A long order.">The link holds a greeting only: paste the copied text into the mail.</Notice>}
           <div className="field">
             <label className="field-label" htmlFor={`${id}-t`}>The order text</label>

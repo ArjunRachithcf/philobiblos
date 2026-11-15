@@ -103,7 +103,7 @@ function OrderPlaces({ admin }: { admin: boolean }) {
         <h2 className="card-title" id={`${id}-h`}>Where orders go</h2>
         <p className="footnote">Compose on This month opens your mail app with the order to this address. Shelf never sends mail and never asks for a card number.</p>
       </div>
-      {!order ? <p className="sr-only" role="status">Loading</p> : admin ? (
+      {!order ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : admin ? (
         <form className="stack" onSubmit={save} noValidate>
           <div className="field">
             <label className="field-label" htmlFor={`${id}-e`}>The bookshop’s e-mail address</label>
@@ -114,6 +114,7 @@ function OrderPlaces({ admin }: { admin: boolean }) {
             <textarea className="input textarea" id={`${id}-a`} maxLength={300} autoComplete="off" value={address} onChange={(e) => setAddress(e.target.value)} aria-describedby={`${id}-ah`} />
             <span className="hint" id={`${id}-ah`}>It goes into the order text only. It is sealed on the server and never shown here again.</span>
           </div>
+          {order.needsReentry && <Notice kind="warn" title="Enter both addresses again.">They were sealed with a key that has since changed, so Shelf cannot read them. Compose waits until they are saved again.</Notice>}
           {order.canSeal === false && <Notice kind="warn">The sealing key is missing, so the addresses cannot be saved.</Notice>}
           {error && <Notice kind="error">{error}</Notice>}
           {ok && <Notice kind="ok">{ok}</Notice>}
@@ -121,6 +122,7 @@ function OrderPlaces({ admin }: { admin: boolean }) {
         </form>
       ) : (
         <>
+          {order.needsReentry && <Notice kind="warn">The addresses need entering again by an admin.</Notice>}
           <p>{order.bookshopEmail ? <>Orders go to <b>{order.bookshopEmail}</b>.</> : 'No bookshop address yet.'} {order.hasDelivery ? 'A delivery address is saved.' : ''}</p>
           <p className="footnote">An admin of the household changes it.</p>
         </>

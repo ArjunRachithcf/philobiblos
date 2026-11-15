@@ -10,7 +10,7 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { allCandidates, publicView, type Row } from '../backlog/backlog';
 import { BUDGET_CEILING_C, getBudget, type Budget } from '../household/budget';
-import { getPerson, household, view, type Person } from '../household/people';
+import { actsFor, getPerson, household, view, type Person } from '../household/people';
 import { getLibrary } from '../library/library';
 import { personSettings } from '../library/settings';
 import { mailto, orderText } from './order-mail';
@@ -28,6 +28,21 @@ export function currentMonth(timezone: string, now = new Date()): string {
   return `${p.find((x) => x.type === 'year')!.value}-${p.find((x) => x.type === 'month')!.value}`;
 }
 function checkMonth(month: string) { if (!MONTH.test(month)) throw new MonthError(400, 'month: YYYY-MM'); }
+export function nextMonth(month: string): string {
+  const n = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)); // the next month's index, 1-based month
+  return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
+}
+/**
+ * Plans are made for this month and the next (the household's time zone, SHELF_TZ): any other month is 404 for changes,
+ * and shows only when it has an order.
+ */
+export function checkWindow(db: Db, month: string, timezone: string, change: boolean, now = new Date()): void {
+  checkMonth(month);
+  const cur = currentMonth(timezone, now);
+  if (month === cur || month === nextMonth(cur)) return;
+  if (!change && orderOf(db, month)) return;
+  throw new MonthError(404, change ? 'plans are changed for this month and the next only' : 'no plan for that month');
+}
 /** Deepen + Connect: every third month one pick becomes Broaden (spec §5). */
 export const broadenMonth = (month: string) => (Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1) % 3 === 2;
 
@@ -50,26 +65,28 @@ function pickable(db: Db, month: string, viewer: string): Row[] {
   return allCandidates(db, new Date(), viewer).filter((r) => r.state === 'open' && !ordered.has(r.id));
 }
 
-/** Spec §5 steps 2–4. With `keepAdults`, only the kids' picks are made again (a budget change). */
-function compute(db: Db, month: string, viewer: string, keepAdults?: Line[]): Line[] {
+/**
+ * Spec §5 steps 2–4. `keep`: lines that stay as they are; `pickFor`: the adults whose picks are made (default: all).
+ * The kids' picks are always made again, within the budget left.
+ */
+function compute(db: Db, month: string, viewer: string, o: { keep?: Line[]; pickFor?: string[] } = {}): Line[] {
   const rows = pickable(db, month, viewer);
   const hh = db.select().from(t.householdSettings).where(eq(t.householdSettings.id, 1)).get();
   const { budget } = monthBudget(db, month);
-  const out: Line[] = keepAdults ? [...keepAdults] : [];
-  if (!keepAdults) {
-    for (const p of adults(db)) {
-      const s = personSettings(p);
-      const pile = getLibrary(db, p.id, p.id).stats?.unreadPile ?? 0;
-      const count = adultPickCount(pile, s.unreadLimit, hh?.adultPicks ?? 2);
-      const mine = rows.filter((r) => r.personId === p.id);
-      const ids = pickAdults(mine.map((r) => ({ id: r.id, score: r.score ?? null, move: r.move ?? null, excluded: r.score == null, isFiction: r.isFiction })),
-        { count, mix: s.mix as Mix, broadenMonth: broadenMonth(month), allowFiction: s.fiction });
-      out.push(...ids.map((id) => lineOf(mine.find((r) => r.id === id)!)));
-    }
+  const out: Line[] = [...(o.keep ?? [])];
+  const taken = new Set(out.map((l) => l.bookId));
+  for (const p of adults(db).filter((a) => !o.pickFor || o.pickFor.includes(a.id))) {
+    const s = personSettings(p);
+    const pile = getLibrary(db, p.id, p.id).stats?.unreadPile ?? 0;
+    const count = adultPickCount(pile, s.unreadLimit, hh?.adultPicks ?? 2);
+    const mine = rows.filter((r) => r.personId === p.id && !taken.has(r.book.id));
+    const ids = pickAdults(mine.map((r) => ({ id: r.id, score: r.score ?? null, move: r.move ?? null, excluded: r.score == null, isFiction: r.isFiction })),
+      { count, mix: s.mix as Mix, broadenMonth: broadenMonth(month), allowFiction: s.fiction });
+    for (const id of ids) { const l = lineOf(mine.find((r) => r.id === id)!); out.push(l); taken.add(l.bookId); }
   }
   const ownedAuthors = new Set(db.selectDistinct({ a: t.book.authorsJson }).from(t.copy).innerJoin(t.book, eq(t.book.id, t.copy.bookId)).all()
     .map((r) => (JSON.parse(r.a) as string[])[0]?.toLowerCase()).filter(Boolean));
-  const kidRows = rows.filter((r) => r.role === 'kid' && r.price != null && r.score != null);
+  const kidRows = rows.filter((r) => r.role === 'kid' && r.price != null && r.score != null && !taken.has(r.book.id));
   const total = out.reduce((n, l) => n + (l.estimateC ?? 0), 0);
   const { ids } = pickKids(kidRows.map((r) => ({
     id: r.id, kidId: r.personId, score: r.score!, theme: r.themes[0] ?? `none:${r.book.id}`, author: r.authors[0] ?? `none:${r.book.id}`,
@@ -97,9 +114,9 @@ function editable(o: typeof t.order.$inferSelect) {
 }
 
 function mayChange(db: Db, me: string, personId: string) {
-  const p = getPerson(db, personId);
-  if (!p) throw new MonthError(404, 'no such person');
-  if (p.id !== me && p.role !== 'kid') throw new MonthError(403, 'only they change their own picks');
+  const may = actsFor(db, me, personId);
+  if (may === 'none') throw new MonthError(404, 'no such person');
+  if (may === 'other') throw new MonthError(403, 'only they change their own picks');
 }
 
 const why = (r: Row): string => {
@@ -194,7 +211,11 @@ export function changePicks(db: Db, month: string, me: string, body: unknown): S
   });
   const o = keep(db, month, me);
   editable(o);
-  const fresh = b.recompute ? compute(db, month, me) : null;
+  // Pick again: your own picks and the kids'; another adult's stay as they are (theirs to change).
+  const kidIds = new Set(kids(db).map((k) => k.id));
+  const others = () => db.select().from(t.orderLine).where(eq(t.orderLine.orderId, o.id)).all()
+    .filter((l) => l.forPerson !== me && !kidIds.has(l.forPerson)).map(({ bookId, forPerson, move, estimateC }) => ({ bookId, forPerson, move, estimateC }));
+  const fresh = b.recompute ? compute(db, month, me, { keep: others(), pickFor: [me] }) : null;
   db.transaction((tx) => {
     if (fresh) {
       tx.delete(t.orderLine).where(eq(t.orderLine.orderId, o.id)).run();
@@ -229,7 +250,7 @@ export function setMonthBudget(db: Db, month: string, me: string, body: unknown)
   // The adults' picks stay as they are; the kids' are made again within the new range.
   const kidIds = new Set(kids(db).map((k) => k.id));
   const kept = db.select().from(t.orderLine).where(eq(t.orderLine.orderId, o.id)).all().filter((l) => !kidIds.has(l.forPerson));
-  const lines = compute(db, month, me, kept.map(({ bookId, forPerson, move, estimateC }) => ({ bookId, forPerson, move, estimateC })));
+  const lines = compute(db, month, me, { keep: kept.map(({ bookId, forPerson, move, estimateC }) => ({ bookId, forPerson, move, estimateC })), pickFor: [] });
   db.transaction((tx) => {
     tx.delete(t.orderLine).where(eq(t.orderLine.orderId, o.id)).run();
     if (lines.length) tx.insert(t.orderLine).values(lines.map((l) => ({ ...l, orderId: o.id }))).run();
@@ -256,5 +277,5 @@ export function composeOrder(db: Db, month: string, me: string, places: OrderPla
   const link = mailto(places.bookshopEmail, subject, body);
   const estimate = lines.reduce((n, l) => n + (l.estimateC ?? 0), 0);
   db.update(t.order).set({ status: 'drafted', estimateC: estimate }).where(eq(t.order.id, o.id)).run();
-  return { ...orderView(db, orderOf(db, month)!), composeUrl: link.url, composeComplete: link.complete, composeSubject: subject, composeText: body };
+  return { ...orderView(db, orderOf(db, month)!), composeUrl: link.url, composeComplete: link.complete, composeTo: places.bookshopEmail, composeSubject: subject, composeText: body };
 }

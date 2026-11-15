@@ -48,16 +48,18 @@ export function seal(db: Db, key: Buffer, name: string, value: string | null, no
   db.insert(t.sealedSecret).values(row).onConflictDoUpdate({ target: t.sealedSecret.key, set: { ciphertext: row.ciphertext, keyId: row.keyId, updatedAt: row.updatedAt } }).run();
 }
 
-/** The value, or null when nothing is sealed under that name. A wrong key or a changed row throws. */
-export function unseal(db: Db, key: Buffer, name: string): string | null {
+/** The value, or null when nothing is sealed under that name. No key, a wrong key or a changed row: SealError. */
+export function unseal(db: Db, key: Buffer | null, name: string): string | null {
   const row = db.select().from(t.sealedSecret).where(eq(t.sealedSecret.key, name)).get();
   if (!row) return null;
-  if (row.keyId !== keyId(key)) throw new SealError('sealed with another key');
+  if (!key || row.keyId !== keyId(key)) throw new SealError('sealed with another key');
   const buf = row.ciphertext;
-  const d = createDecipheriv('aes-256-gcm', key, buf.subarray(0, 12));
-  d.setAAD(Buffer.from(name));
-  d.setAuthTag(buf.subarray(12, 28));
-  return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8');
+  try {
+    const d = createDecipheriv('aes-256-gcm', key, buf.subarray(0, 12));
+    d.setAAD(Buffer.from(name));
+    d.setAuthTag(buf.subarray(12, 28));
+    return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8');
+  } catch { throw new SealError('the sealed value does not open'); }
 }
 
 export const isSealed = (db: Db, name: string) => Boolean(db.select({ k: t.sealedSecret.key }).from(t.sealedSecret).where(eq(t.sealedSecret.key, name)).get());

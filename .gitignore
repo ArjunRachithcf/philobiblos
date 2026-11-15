@@ -12,3 +12,5 @@ coverage/
 /apps/web/.e2e-data*/
 /apps/web/test-results/
 /apps/web/playwright-report/
+/keys/
+sealing.key

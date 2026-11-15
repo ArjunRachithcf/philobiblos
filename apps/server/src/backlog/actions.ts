@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { getPerson, household } from '../household/people';
+import { actsFor, getPerson, household } from '../household/people';
 import { norm } from '../seed/import';
 import { candidateId, parseCandidateId } from './backlog';
 
@@ -14,10 +14,10 @@ export class BacklogError extends Error {
 
 const ISBN13 = /^97[89]\d{10}$/;
 
-export function mayChange(db: Db, me: string, personId: string): void {
-  const p = getPerson(db, personId);
-  if (!p) throw new BacklogError(404, 'no such person');
-  if (p.id !== me && p.role !== 'kid') throw new BacklogError(403, 'only they change their own backlog');
+function mayChange(db: Db, me: string, personId: string): void {
+  const may = actsFor(db, me, personId);
+  if (may === 'none') throw new BacklogError(404, 'no such person');
+  if (may === 'other') throw new BacklogError(403, 'only they change their own backlog');
 }
 
 const text = (v: unknown, name: string, max: number, required: boolean): string | null => {

@@ -259,6 +259,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/month": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** This month's plan, in the household's time zone (SHELF_TZ): the one source of "this month" for the page and for add_to_month. */
+        get: operations["getCurrentMonth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/month/{month}": {
         parameters: {
             query?: never;
@@ -268,7 +285,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** The month's picks (packages/scoring, spec §5), budget, the viewer's focus and the order's progress. Computed on each look until someone changes it; then kept as the month's order. */
+        /** This month or the next (or a month with an order): the picks (packages/scoring, spec §5), budget, the viewer's focus and the order's progress. Computed on each look until someone changes it; then kept as the month's order. */
         get: operations["getMonth"];
         put?: never;
         post?: never;
@@ -1025,6 +1042,8 @@ export interface components {
             composeUrl?: string;
             /** @description false when the whole text would make the link too long for mail apps: the link then asks the person to paste composeText */
             composeComplete?: boolean;
+            /** @description the bookshop's address the link writes to (shown next to the link) */
+            composeTo?: string;
             composeSubject?: string;
             /** @description the order text in full (only in the Compose answer) */
             composeText?: string;
@@ -1095,6 +1114,8 @@ export interface components {
                 readonly hasDelivery?: boolean;
                 /** @description false under HomersLab without SHELF_SEALING_KEY */
                 readonly canSeal?: boolean;
+                /** @description sealed under a key that is gone (rotated or lost): an admin enters both addresses again */
+                readonly needsReentry?: boolean;
             };
             /** @description IMAP mailbox that receives only the forwarded bookshop mail (ADR 0007); its app password is a secret, never in the API */
             mail?: {
@@ -1785,6 +1806,28 @@ export interface operations {
             };
         };
     };
+    getCurrentMonth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonthPlan"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     getMonth: {
         parameters: {
             query?: never;
@@ -1816,6 +1859,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description Not this month or the next (changes); no plan for that month (a look) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     setMonthBudget: {
@@ -1856,6 +1908,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description Not this month or the next (changes); no plan for that month (a look) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description The bookshop has the order already */
             409: {
                 headers: {
@@ -1906,7 +1967,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description No open candidate for that person and book */
+            /** @description No open candidate for that person and book; or not this month or the next */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2843,6 +2904,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description Not this month or the next (changes); no plan for that month (a look) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description No bookshop address yet, nothing picked, or the bookshop has the order already */
             409: {
                 headers: {

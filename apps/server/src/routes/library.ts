@@ -17,11 +17,13 @@ export const ADDRESS_MAX = 300;
 /** Settings.order: the bookshop's address and the delivery address, sealed (household/sealed.ts); admins set them. */
 function checkOrder(v: unknown): { bookshopEmail?: string | null; deliveryAddress?: string | null } {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new SettingsError('order: a JSON object is needed');
-  const o = v as Record<string, unknown>;
+  const o = { ...(v as Record<string, unknown>) };
+  // Lines end in \n however the browser or a script sent them (\r\n and \r are the same line break).
+  if (typeof o.deliveryAddress === 'string') o.deliveryAddress = o.deliveryAddress.replace(/\r\n?/g, '\n');
   for (const k of Object.keys(o)) if (k !== 'bookshopEmail' && k !== 'deliveryAddress') throw new SettingsError(`order: ${k} is not one of its settings`);
   if (o.bookshopEmail !== undefined && o.bookshopEmail !== null && (typeof o.bookshopEmail !== 'string' || !EMAIL.test(o.bookshopEmail.trim()))) throw new SettingsError('order.bookshopEmail: one e-mail address');
   if (o.deliveryAddress !== undefined && o.deliveryAddress !== null && (typeof o.deliveryAddress !== 'string' || !o.deliveryAddress.trim() || o.deliveryAddress.length > ADDRESS_MAX || [...o.deliveryAddress].some((c) => (c < ' ' && c !== '\n') || c === '\u007f'))) {
-    throw new SettingsError(`order.deliveryAddress: up to ${ADDRESS_MAX} characters, lines of plain text`);
+    throw new SettingsError(`order.deliveryAddress: up to ${ADDRESS_MAX} characters, lines of plain text (no tabs or other control characters)`);
   }
   return {
     ...(o.bookshopEmail !== undefined ? { bookshopEmail: typeof o.bookshopEmail === 'string' ? o.bookshopEmail.trim() : null } : {}),
@@ -50,8 +52,15 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     try {
       // The delivery address never leaves sealed storage except in a Compose text; Settings says only whether it is set.
       // The key is read only when something is sealed (a standalone Shelf makes its key on the first seal).
-      const email = isSealed(db, SEALED.bookshopEmail) ? unseal(db, sealingKey(cfg)!, SEALED.bookshopEmail) : null;
-      const order = { bookshopEmail: email, hasDelivery: isSealed(db, SEALED.deliveryAddress), canSeal: cfg.sealingKey !== null };
+      // A key that was replaced or lost leaves the sealed rows unreadable: Settings still answers, without them, and says
+      // they need entering again (docs/security.md, "Rotating the sealing key").
+      let email: string | null = null;
+      let needsReentry = false;
+      try { email = isSealed(db, SEALED.bookshopEmail) ? unseal(db, sealingKey(cfg), SEALED.bookshopEmail) : null; } catch (e) { if (!(e instanceof SealError)) throw e; needsReentry = true; }
+      if (!needsReentry && isSealed(db, SEALED.deliveryAddress)) {
+        try { unseal(db, sealingKey(cfg), SEALED.deliveryAddress); } catch (e) { if (!(e instanceof SealError)) throw e; needsReentry = true; }
+      }
+      const order = { bookshopEmail: email, hasDelivery: isSealed(db, SEALED.deliveryAddress), canSeal: cfg.sealingKey !== null, needsReentry };
       return { ...ex.settings, budget: getBudget(db), person: personSettings(getPerson(db, req.caller!.personId)!), order };
     } catch (e) { return fail(reply, e); }
   });

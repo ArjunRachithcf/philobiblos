@@ -408,6 +408,7 @@ test('this month: picks, the budget bar by keyboard, a pick removed, Compose', a
   await page.getByRole('button', { name: 'Compose the order' }).click();
   const open = page.getByRole('link', { name: 'Open in your mail app' });
   await expect(open).toHaveAttribute('href', /^mailto:orders@bookshop\.example\?subject=Book%20order%2C%20/);
+  await expect(page.getByText('To: orders@bookshop.example')).toBeVisible();
   const text = await page.getByLabel('The order text').inputValue();
   expect(text).toContain('Example Street 1');
   expect(text).not.toMatch(/\b(?:\d[ -]?){13,19}\b|card number/i);

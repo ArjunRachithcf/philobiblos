@@ -41,6 +41,16 @@ export function getPerson(db: Db, id: string): Person | undefined {
   return db.select().from(t.person).where(eq(t.person.id, id)).get();
 }
 
+/**
+ * Who may change a person's backlog and picks (the one rule, used by the Backlog and This month): yourself, and the
+ * kids (adults act for them); another adult's are theirs. 'none': no such person.
+ */
+export function actsFor(db: Db, me: string, personId: string): 'yes' | 'none' | 'other' {
+  const p = getPerson(db, personId);
+  if (!p) return 'none';
+  return p.id === me || p.role === 'kid' ? 'yes' : 'other';
+}
+
 /** Admins who can sign in (standalone): at least one must stay. */
 export function adminsWithPasskey(db: Db, except?: string): number {
   const rows = db.selectDistinct({ id: t.person.id }).from(t.person).innerJoin(t.passkey, eq(t.passkey.personId, t.person.id))
