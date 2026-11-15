@@ -116,7 +116,7 @@ describe('proposals and reviews', () => {
     db.insert(t.bookLink).values({ fromBook: from, toBook: to, reason: 'what Sam wrote about trade', confidence: 0.9, state: 'proposed', aiRunId: 'run_sam', privateTo: id.partner }).run();
 
     const samSees = (await get('partner', '/api/proposals')).json().links.find((l: { from: { id: string }; to: { id: string } }) => l.from.id === from && l.to.id === to);
-    expect(samSees).toMatchObject({ reason: 'what Sam wrote about trade', fromAi: true });
+    expect(samSees).toMatchObject({ reason: 'what Sam wrote about trade', fromAi: true, onlyYou: true });
     expect((await get('alex', '/api/proposals')).body).not.toContain('what Sam wrote');
     const backlog = (await get('alex', '/api/backlog?q=%22before%20the%20first%20cities%22')).json();
     expect(JSON.stringify(backlog)).not.toContain('what Sam wrote');

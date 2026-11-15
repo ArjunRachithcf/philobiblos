@@ -331,8 +331,8 @@ components:
       type: object
       required: [links, ideas]
       properties:
-        links: { type: array, items: { type: object, required: [from, to, reason, confidence, fromAi], properties: { from: { $ref: '#/components/schemas/BookRef' }, to: { $ref: '#/components/schemas/BookRef' }, reason: {type: string}, confidence: {type: number}, fromAi: {type: boolean} } } }
-        ideas: { type: array, items: { type: object, required: [book, idea, layer, confidence, fromAi], properties: { book: { $ref: '#/components/schemas/BookRef' }, idea: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } }, layer: { $ref: '#/components/schemas/Layer' }, confidence: {type: number}, fromAi: {type: boolean} } } }
+        links: { type: array, items: { type: object, required: [from, to, reason, confidence, fromAi, onlyYou], properties: { from: { $ref: '#/components/schemas/BookRef' }, to: { $ref: '#/components/schemas/BookRef' }, reason: {type: string}, confidence: {type: number}, fromAi: {type: boolean}, onlyYou: { type: boolean, description: 'written from your own takeaways: nobody else sees it' } } } }
+        ideas: { type: array, items: { type: object, required: [book, idea, layer, confidence, fromAi, onlyYou], properties: { book: { $ref: '#/components/schemas/BookRef' }, idea: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } }, layer: { $ref: '#/components/schemas/Layer' }, confidence: {type: number}, fromAi: {type: boolean}, onlyYou: { type: boolean, description: 'written from your own takeaways: nobody else sees it' } } } }
     Brain:
       type: object
       required: [ideas, edges]

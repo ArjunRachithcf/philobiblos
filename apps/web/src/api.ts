@@ -12,6 +12,9 @@ export type Library = components['schemas']['Library'];
 export type Reading = components['schemas']['Reading'];
 export type Settings = components['schemas']['Settings'];
 export type Candidate = components['schemas']['Candidate'];
+export type Brain = components['schemas']['Brain'];
+export type Proposals = components['schemas']['Proposals'];
+export type Layer = components['schemas']['Layer'];
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
