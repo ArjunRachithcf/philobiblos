@@ -18,9 +18,6 @@ export async function stubRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.post<{ Params: { month: string } }>('/month/:month/picks', async (req) => ex.monthPlan(req.params.month));
 
 
-  app.get('/people/:personId/brain', async () => ex.brain);
-  app.put('/links/:fromBook/:toBook', async () => ({}));
-  app.patch('/ideas/:ideaId', async () => ({}));
 
 
   app.get('/inbox', async () => ex.inbox);

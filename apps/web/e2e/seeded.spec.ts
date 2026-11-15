@@ -150,6 +150,22 @@ test('the backlog: the filter bar, labels, tabs, a score\'s parts, grouping, bul
   await expect(forMenu).toBeFocused();
   await page.getByRole('button', { name: 'Clear' }).click();
 
+  // an empty menu: one disabled item to focus, axe passes, Escape closes it
+  await bar.fill('is:open is:kids');
+  await bar.press('Enter');
+  const ideaMenu = page.getByRole('button', { name: /^Filter by idea/ });
+  await ideaMenu.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('menuitem', { name: 'Nothing to filter by' })).toBeFocused();
+  await expect(page.getByRole('menuitem', { name: 'Nothing to filter by' })).toHaveAttribute('aria-disabled', 'true');
+  await expectAccessible(page, 'backlog with an empty menu');
+  await page.keyboard.press('Enter'); // a disabled item does nothing
+  await expect(bar).toHaveValue('is:open is:kids');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(ideaMenu).toBeFocused();
+  await page.getByRole('button', { name: 'Clear' }).click();
+
   // sort and group are menus of radio items
   await page.getByRole('button', { name: /^Group by/ }).focus();
   await page.keyboard.press('Enter');

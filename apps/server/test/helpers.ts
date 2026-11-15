@@ -68,6 +68,8 @@ export const isPublic = (o: { op: Op }) => security(o).length === 0;
 
 /** Path parameters that name something real in household() (and leave the signed-in admin alone). */
 const PARAMS: Record<string, Record<string, string>> = {
+  getBrain: { personId: 'p_alex' }, reviewLink: { fromBook: 'b_ledger', toBook: 'b_tide' }, reviewBookIdea: { bookId: 'b_tide', ideaId: 'i_markets' }, editIdea: { ideaId: 'i_markets' },
+  undoMerge: { mergeId: 'm_old' },
   renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
@@ -76,6 +78,7 @@ const PARAMS: Record<string, Record<string, string>> = {
 /** Request bodies that name something real in household() where a sample would be refused. */
 const BODIES: Record<string, unknown> = {
   bulkBacklog: { ids: ['p_alex.b_tide'], action: 'reopen' },
+  reviewLink: { state: 'confirmed' }, reviewBookIdea: { state: 'confirmed' }, editIdea: { name: 'Markets and value' },
   addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
 };
 
@@ -129,6 +132,12 @@ export function household(): Db {
   const now = new Date().toISOString();
   db.insert(t.book).values({ id: 'b_tide', title: 'The Long Tide of Markets', authorsJson: '["Mira Okafor"]', audience: 'adult', normKey: 'tide', createdAt: now }).run();
   db.insert(t.candidate).values({ personId: 'p_alex', bookId: 'b_tide', origin: 'wishlist', addedAt: now, touchedAt: now }).run();
+  db.insert(t.book).values({ id: 'b_ledger', title: 'The Grand Ledger', authorsJson: '["Mira Okafor"]', audience: 'adult', normKey: 'ledger', createdAt: now }).run();
+  db.insert(t.bookLink).values({ fromBook: 'b_ledger', toBook: 'b_tide', reason: 'the sequel', confidence: 0.6, state: 'proposed' }).run();
+  db.insert(t.idea).values({ id: 'i_markets', name: 'Markets and value' }).run();
+  db.insert(t.bookIdea).values({ bookId: 'b_tide', ideaId: 'i_markets', layer: 'core', confidence: 0.5, state: 'proposed' }).run();
+  db.insert(t.idea).values({ id: 'i_old', name: 'Prices', mergedInto: 'i_markets' }).run();
+  db.insert(t.ideaMerge).values({ id: 'm_old', ideaId: 'i_old', intoId: 'i_markets', mergedBy: 'p_alex', mergedAt: now }).run();
   for (const id of ['pk1', 'pk2']) {
     db.insert(t.passkey).values({ id, personId: 'p_alex', publicKey: Buffer.from([1]), label: id, createdAt: now }).run();
   }

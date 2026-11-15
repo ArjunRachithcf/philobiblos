@@ -10,6 +10,7 @@ import * as t from '../src/db/schema';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { purgeTakeawayRuns, readBooksForAi } from '../src/library/ai-context';
+import { PRIVATE_REASON } from '../src/knowledge/knowledge';
 import { removePerson } from '../src/household/people';
 import { KIDS_THEMES } from '../src/library/library';
 import { importSeed } from '../src/seed/import';
@@ -177,7 +178,7 @@ describe('your settings and the AI gate', () => {
     expect((await patch('partner', { person: { takeawaysToAi: false } })).statusCode).toBe(200);
     expect(db.select({ id: t.aiRun.id }).from(t.aiRun).all()).toEqual([{ id: 'run_plain' }]);
     expect(db.select({ reason: t.bookLink.reason, run: t.bookLink.aiRunId }).from(t.bookLink).where(eq(t.bookLink.toBook, a!)).all())
-      .toContainEqual({ reason: 'confirmed by a person', run: null });
+      .toContainEqual({ reason: PRIVATE_REASON, run: null }); // decided, kept, its reason neutral (written from Sam's takeaways)
     expect(db.select().from(t.bookLink).where(eq(t.bookLink.reason, 'proposed from a takeaway')).all()).toEqual([]);
     expect(db.select().from(t.bookLink).where(eq(t.bookLink.reason, 'no takeaways in it')).all()).toHaveLength(1);
     expect(purgeTakeawayRuns(db, id.partner!)).toBe(0);
@@ -219,14 +220,22 @@ describe('the takeaway boundary (architecture)', () => {
   });
   const sources = [join(root, 'apps/server/src'), ...readdirSync(join(root, 'packages')).map((d) => join(root, 'packages', d, 'src'))].flatMap(files);
 
-  // Per rule, the files allowed past it. backlog.ts selects named columns (status, feedback, dates) from `reading`;
-  // the first rule still keeps the takeaway column out of it by name.
+  // Per rule, the files allowed past it. backlog.ts and knowledge.ts may select named columns (status, feedback, dates) from `reading`,
+  // never a whole row (a row holds the takeaway); the first rule keeps the column out of it by name.
   it.each([
     ['the takeaway column or field', /\btakeaway\b/, ALLOWED],
-    ['a select from the reading table', /\.from\(t\.reading\)|\bfrom\s+reading\b/i, new Set([...ALLOWED, 'apps/server/src/backlog/backlog.ts'])],
+    ['a select from the reading table', /\.from\(t\.reading\)|\bfrom\s+reading\b/i, new Set([...ALLOWED, 'apps/server/src/backlog/backlog.ts', 'apps/server/src/knowledge/knowledge.ts'])],
+    ['a whole-row select from the reading table', /select(Distinct)?\(\s*\)\s*\.from\(t\.reading\)|select\s+\*\s+from\s+reading\b/i, ALLOWED],
   ] as const)('nothing else mentions %s', (_n, re, allowed) => {
     expect(sources.length).toBeGreaterThan(20);
     const hits = sources.map((f) => relative(root, f)).filter((f) => !allowed.has(f) && re.test(readFileSync(join(root, f), 'utf8')));
     expect(hits).toEqual([]);
+  });
+
+  it('the whole-row rule catches what it should', () => {
+    const re = /select(Distinct)?\(\s*\)\s*\.from\(t\.reading\)/;
+    expect(re.test('db.select().from(t.reading)')).toBe(true);
+    expect(re.test('db.selectDistinct().from(t.reading)')).toBe(true);
+    expect(re.test('db.select({ s: t.reading.status }).from(t.reading)')).toBe(false);
   });
 });

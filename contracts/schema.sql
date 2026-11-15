@@ -1,4 +1,4 @@
--- Shelf database schema v4 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Shelf database schema v5 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -129,7 +129,21 @@ CREATE TABLE book_idea (
   confidence REAL NOT NULL,
   state      TEXT NOT NULL DEFAULT 'proposed' CHECK (state IN ('proposed','confirmed','rejected')),
   ai_run_id  TEXT REFERENCES ai_run(id),
+  reviewed_by TEXT REFERENCES person(id) ON DELETE SET NULL, -- who confirmed or rejected it; only a person does
+  reviewed_at TEXT,
+  private_to TEXT REFERENCES person(id) ON DELETE CASCADE, -- written from this person's takeaways: theirs alone (shelf#3)
   PRIMARY KEY (book_id, idea_id)
+);
+
+CREATE TABLE idea_merge (                  -- who merged which idea into which, and when; an admin can undo it
+  id             TEXT PRIMARY KEY NOT NULL,
+  idea_id        TEXT NOT NULL REFERENCES idea(id),
+  into_id        TEXT NOT NULL REFERENCES idea(id),
+  repointed_json TEXT NOT NULL DEFAULT '[]', -- ideas that pointed at idea_id and were re-pointed at into_id
+  merged_by      TEXT REFERENCES person(id) ON DELETE SET NULL,
+  merged_at      TEXT NOT NULL,
+  undone_by      TEXT REFERENCES person(id) ON DELETE SET NULL,
+  undone_at      TEXT
 );
 
 CREATE TABLE book_link (                   -- candidate builds on a book (the "â†³" links), with a reason
@@ -139,6 +153,9 @@ CREATE TABLE book_link (                   -- candidate builds on a book (the "â
   confidence REAL NOT NULL,
   state      TEXT NOT NULL DEFAULT 'proposed' CHECK (state IN ('proposed','confirmed','rejected')),
   ai_run_id  TEXT REFERENCES ai_run(id),
+  reviewed_by TEXT REFERENCES person(id) ON DELETE SET NULL, -- who confirmed or rejected it; only a person does
+  reviewed_at TEXT,
+  private_to TEXT REFERENCES person(id) ON DELETE CASCADE, -- written from this person's takeaways: theirs alone (shelf#3)
   PRIMARY KEY (from_book, to_book)
 );
 

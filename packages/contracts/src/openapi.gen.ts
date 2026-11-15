@@ -397,7 +397,25 @@ export interface paths {
             };
             cookie?: never;
         };
+        /** An adult's ideas (read books per layer, the best open candidate per layer) and the edges between ideas. Every adult may look; kids have an emotional map instead (404). */
         get: operations["getBrain"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Links and book ideas waiting for a person's decision (book ideas on a merged idea show its new name and keep their own idea id for the review). A proposal written from someone's takeaways is theirs alone: nobody else sees it here (shelf#3). */
+        get: operations["listProposals"];
         put?: never;
         post?: never;
         delete?: never;
@@ -417,7 +435,28 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
+        /** A person confirms or rejects a link (the reviewer is recorded). One written from someone's takeaways is theirs alone: for anyone else it does not exist (404). */
         put: operations["reviewLink"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/books/{bookId}/ideas/{ideaId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bookId: string;
+                ideaId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** A person confirms or rejects a book's idea, or moves it to another layer (which confirms it). Same privacy as links. */
+        put: operations["reviewBookIdea"];
         post?: never;
         delete?: never;
         options?: never;
@@ -440,7 +479,44 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** Rename an idea, or merge it into another (the household's shared vocabulary, ADR 0005): either name or mergeInto. Any adult may merge; a merge changes no book's rows (it decides nothing, private proposals stay their owner's) and is logged for an admin's undo. */
         patch: operations["editIdea"];
+        trace?: never;
+    };
+    "/ideas/merges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The merge log, newest first: which idea went into which, who merged it and when, and whether it was undone */
+        get: operations["listMerges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ideas/merges/{mergeId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mergeId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admins: undo a merge (the idea stands on its own again, with the ideas the merge re-pointed). A merge never changed a row, so nothing else needs restoring. */
+        post: operations["undoMerge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/people/{personId}/library": {
@@ -817,22 +893,47 @@ export interface components {
             } | null;
             order?: components["schemas"]["Order"] | null;
         };
+        /** @enum {unknown} */
+        Layer: "intro" | "core" | "deep" | "counterpoint";
+        IdeaRef: {
+            id: string;
+            name: string;
+        };
+        Proposals: {
+            links: {
+                from: components["schemas"]["BookRef"];
+                to: components["schemas"]["BookRef"];
+                reason: string;
+                confidence: number;
+                fromAi: boolean;
+            }[];
+            ideas: {
+                book: components["schemas"]["BookRef"];
+                idea: {
+                    id: string;
+                    name: string;
+                };
+                layer: components["schemas"]["Layer"];
+                confidence: number;
+                fromAi: boolean;
+            }[];
+        };
         Brain: {
-            ideas?: {
-                id?: string;
-                name?: string;
-                readCount?: number;
-                unreadOwned?: number;
-                isNew?: boolean;
+            ideas: {
+                id: string;
+                name: string;
+                readCount: number;
+                unreadOwned: number;
+                isNew: boolean;
                 focus?: components["schemas"]["Move"];
-                layers?: {
+                layers: {
                     [key: string]: {
                         books?: components["schemas"]["BookRef"][];
                         next?: components["schemas"]["BookRef"] | null;
                     };
                 };
             }[];
-            edges?: {
+            edges: {
                 a?: string;
                 b?: string;
                 weight?: number;
@@ -2081,6 +2182,37 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such person, or a kid */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proposals"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     reviewLink: {
@@ -2093,11 +2225,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
                     /** @enum {unknown} */
-                    state?: "confirmed" | "rejected";
+                    state: "confirmed" | "rejected";
                 };
             };
         };
@@ -2107,10 +2239,89 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @enum {unknown} */
+                        state: "confirmed" | "rejected";
+                        reason: string;
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such link */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    reviewBookIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bookId: string;
+                ideaId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {unknown} */
+                    state?: "confirmed" | "rejected";
+                    layer?: components["schemas"]["Layer"];
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {unknown} */
+                        state: "confirmed" | "rejected";
+                        layer: components["schemas"]["Layer"];
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such idea on that book */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     editIdea: {
@@ -2122,7 +2333,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
                     name?: string;
@@ -2131,15 +2342,118 @@ export interface operations {
             };
         };
         responses: {
+            /** @description The idea (after a merge, the one it went into) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        name: string;
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such idea */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Another idea has that name */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listMerges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
             /** @description OK */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        id: string;
+                        idea: components["schemas"]["IdeaRef"];
+                        into: components["schemas"]["IdeaRef"];
+                        mergedBy: string | null;
+                        mergedAt: string;
+                        undone: boolean;
+                    }[];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    undoMerge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mergeId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The idea */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdeaRef"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such merge */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already undone, or the idea has been merged again since */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getLibrary: {
