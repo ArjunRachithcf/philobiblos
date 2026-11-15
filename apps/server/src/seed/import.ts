@@ -6,6 +6,7 @@ import { and, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
+import { suggestHandle } from '../household/people';
 
 export interface SeedCounts {
   people: number; books: number; copies: number; readings: number; offers: number; candidates: number;
@@ -82,7 +83,9 @@ export function importSeed(db: Db, dir: string, now = new Date().toISOString()):
       const existing = tx.select().from(t.person).where(eq(t.person.name, h.name)).get();
       if (existing) { personId.set(h.name, existing.id); continue; }
       const id = ulid();
-      tx.insert(t.person).values({ id, name: h.name, role: h.role, birthYear: h.birthYear ?? null, settingsJson: JSON.stringify(h.handle ? { handle: h.handle } : {}) }).run();
+      const taken = h.handle ? tx.select({ id: t.person.id }).from(t.person).where(eq(t.person.handle, h.handle)).get() : undefined;
+      const handle = h.handle && !taken ? h.handle : suggestHandle(tx as unknown as Db, h.name);
+      tx.insert(t.person).values({ id, name: h.name, role: h.role, handle, birthYear: h.birthYear ?? null, settingsJson: '{}' }).run();
       personId.set(h.name, id);
       c.people++;
     }

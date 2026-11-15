@@ -14,7 +14,7 @@ export async function addAuthenticator(page: Page) {
   return { cdp, authenticatorId };
 }
 
-export const setupLink = () => readFileSync(join(DATA_DIR, 'setup-link.txt'), 'utf8').trim();
+export const setupLink = (dir = DATA_DIR) => readFileSync(join(dir, 'setup-link.txt'), 'utf8').trim();
 
 /** WCAG 2.2 AA (axe's rules for 2.0, 2.1 and 2.2, A and AA), in light and dark. */
 export async function expectAccessible(page: Page, name: string) {

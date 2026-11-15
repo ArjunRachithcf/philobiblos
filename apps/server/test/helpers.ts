@@ -68,6 +68,7 @@ export const isPublic = (o: { op: Op }) => security(o).length === 0;
 
 /** Path parameters that name something real in household() (and leave the signed-in admin alone). */
 const PARAMS: Record<string, Record<string, string>> = {
+  getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
 };
 
@@ -109,7 +110,7 @@ export function expectValid(o: SpecOp, status: number, body: unknown) {
   expect(validate(body), `${o.op.operationId} ${status}: ${JSON.stringify(validate.errors)}`).toBe(true);
 }
 
-/** Alex (admin, two passkeys), Sam and Robin (adults), Kid 1 (kid); all invented, as in seed-sample/. */
+/** Alex (admin, two passkeys), Sam and Robin (adults), Kid 1 (kid), one book; all invented, as in seed-sample/. */
 export function household(): Db {
   const db = openDb(':memory:');
   db.insert(t.person).values([
@@ -119,6 +120,7 @@ export function household(): Db {
     { id: 'p_kid1', externalId: 'hl-kid', name: 'Kid 1', role: 'kid', handle: 'kid1', birthYear: 2021 },
   ]).run();
   const now = new Date().toISOString();
+  db.insert(t.book).values({ id: 'b_tide', title: 'The Long Tide of Markets', authorsJson: '["Mira Okafor"]', audience: 'adult', normKey: 'tide', createdAt: now }).run();
   for (const id of ['pk1', 'pk2']) {
     db.insert(t.passkey).values({ id, personId: 'p_alex', publicKey: Buffer.from([1]), label: id, createdAt: now }).run();
   }

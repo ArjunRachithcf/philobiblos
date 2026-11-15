@@ -172,14 +172,15 @@ paths:
 
   /people/{personId}/library:
     parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
-    get: { tags: [library], operationId: getLibrary, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Library' } } } } } }
+    get: { tags: [library], operationId: getLibrary, summary: 'A person''s library: owned books of their audience and every book they have a status for. Another adult''s takeaways are never included.', responses: { '404': { description: No such person, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Library' } } } } } }
   /people/{personId}/reading/{bookId}:
     parameters: [{ name: personId, in: path, required: true, schema: {type: string} }, { name: bookId, in: path, required: true, schema: {type: string} }]
     put:
       tags: [library]
       operationId: setReading
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/ReadingUpdate' } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Reading' } } } } }
+      summary: 'Your own status and takeaway, or a kid''s status and feedback (adults act for kids). Not another adult''s (403).'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReadingUpdate' } } } }
+      responses: { '400': { description: 'Bad request: a takeaway for a kid, feedback for an adult, or an invalid value', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such person or book, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Reading' } } } } }
 
   /inbox:
     get: { tags: [inbox], operationId: getInbox, parameters: [{ name: filter, in: query, schema: { enum: [all, ai, shared] } }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InboxItem' } } } } } } }
@@ -225,7 +226,7 @@ paths:
 
   /settings:
     get: { tags: [settings], operationId: getSettings, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } } } }
-    patch: { tags: [settings], operationId: patchSettings, requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
+    patch: { tags: [settings], operationId: patchSettings, summary: 'M1: `person` (your own settings) is stored; the household parts follow with their screens', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
   /jobs/{job}/run:
     post: { tags: [system], operationId: runJob, parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, ai_suggest] } }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started } } }
 
@@ -293,12 +294,13 @@ components:
           layers: { type: object, additionalProperties: { type: object, properties: { books: { type: array, items: { $ref: '#/components/schemas/BookRef' } }, next: { oneOf: [ { $ref: '#/components/schemas/BookRef' }, { type: 'null' } ] } } } } } } }
         edges: { type: array, items: { type: object, properties: { a: {type: string}, b: {type: string}, weight: {type: integer}, via: { type: array, items: {type: string} }, kind: { enum: [read, gap, focus, future] } } } }
     Reading: { type: object, properties: { status: { enum: [to_read, reading, read, abandoned] }, feedback: { enum: [loved, meh, not_yet, null] }, takeaway: { type: [string, 'null'], maxLength: 280 }, finishedAt: { type: [string, 'null'] } } }
-    ReadingUpdate: { $ref: '#/components/schemas/Reading' }
+    ReadingUpdate: { type: object, additionalProperties: false, properties: { status: { enum: [to_read, reading, read, abandoned] }, feedback: { enum: [loved, meh, not_yet, null] }, takeaway: { type: [string, 'null'], maxLength: 280 }, finishedAt: { type: [string, 'null'], pattern: '^\d{4}-\d{2}-\d{2}$' } } }
     Library:
       type: object
+      required: [person, books, stats]
       properties:
         person: { $ref: '#/components/schemas/Person' }
-        books: { type: array, items: { type: object, properties: { book: { $ref: '#/components/schemas/BookRef' }, reading: { $ref: '#/components/schemas/Reading' }, ideas: { type: array, items: {type: string} }, theme: {type: string} } } }
+        books: { type: array, items: { type: object, required: [book, reading], properties: { book: { $ref: '#/components/schemas/BookRef' }, reading: { $ref: '#/components/schemas/Reading' }, ideas: { type: array, items: {type: string} }, theme: {type: string} } } }
         stats: { type: object, properties: { read: {type: integer}, reading: {type: integer}, unreadPile: {type: integer}, unreadLimit: {type: integer}, takeaways: {type: integer} } }
         themes: { type: array, items: { type: object, properties: { theme: {type: string}, books: {type: integer}, loved: {type: integer} } } }
     InboxItem:
@@ -330,7 +332,7 @@ components:
         adultPicks: {type: integer}
         newAuthorsOnly: {type: boolean}
         ai: { type: object, properties: { provider: { enum: [claude, ollama, none], description: 'ollama for a new household; claude only by explicit opt-in' }, model: {type: string}, ollamaUrl: {type: string}, leaves: { type: array, readOnly: true, items: {type: string}, description: 'what leaves the server with this provider, shown before opting in' }, jobs: { type: object, properties: { read: {type: boolean}, link: {type: boolean}, suggest: {type: boolean}, explain: {type: boolean}, wildcards: {type: boolean} } } } }
-        person: { type: object, description: settings of the current person, properties: { mix: { enum: [deepen_connect, deepen_broaden, ai] }, unreadLimit: {type: integer}, counterpoints: {type: boolean}, takeaways: {type: boolean}, takeawaysToClaude: { type: boolean, description: 'off unless the person turns it on' }, fiction: {type: boolean}, weights: { type: object, additionalProperties: {type: number} } } }
+        person: { type: object, description: settings of the current person, properties: { mix: { enum: [deepen_connect, deepen_broaden, ai] }, unreadLimit: {type: integer}, counterpoints: {type: boolean}, takeaways: {type: boolean}, takeawaysToAi: { type: boolean, description: 'whether any AI (local or not) may read your takeaways; off unless you turn it on' }, fiction: {type: boolean}, weights: { type: object, additionalProperties: {type: number} } } }
         kidsThemes: { type: array, items: { type: object, properties: { theme: {type: string}, enabled: {type: boolean} } } }
         cycle: { type: object, properties: { day: {type: integer}, time: {type: string}, timezone: {type: string} } }
         mail: { type: object, description: 'IMAP mailbox that receives only the forwarded bookshop mail (ADR 0007); its app password is a secret, never in the API', properties: { host: {type: string}, port: { type: integer, default: 993 }, user: {type: string}, folder: { type: string, default: INBOX }, configured: { type: boolean, readOnly: true } } }

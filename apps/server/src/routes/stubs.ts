@@ -28,8 +28,6 @@ export async function stubRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.put('/links/:fromBook/:toBook', async () => ({}));
   app.patch('/ideas/:ideaId', async () => ({}));
 
-  app.get<{ Params: { personId: string } }>('/people/:personId/library', async (req) => ex.library(req.params.personId));
-  app.put('/people/:personId/reading/:bookId', async () => ex.reading);
 
   app.get('/inbox', async () => ex.inbox);
   app.post('/inbox/:itemId/books/:index', async () => ({}));
@@ -61,7 +59,5 @@ export async function stubRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.post('/orders', async (_req, reply) => reply.code(201).send(ex.order));
   app.get('/orders/:id', async () => ex.order);
 
-  app.get('/settings', async () => ex.settings);
-  app.patch('/settings', async () => ({}));
   app.post('/jobs/:job/run', async (_req, reply) => reply.code(202).send());
 }

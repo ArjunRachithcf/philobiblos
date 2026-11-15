@@ -306,6 +306,16 @@ describe('passkeys after the first (review round 1)', () => {
     expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toHaveLength(1);
   });
 
+  it('enrolling spends the person\'s other links on its own (two of your own links, one after the other)', async () => {
+    // Own links are not refused at verify for an existing passkey, so only the spending step stops the second one.
+    const me = sessionCookie(hh, 'p_alex');
+    const first = (await call('POST', '/api/me/passkeys/invite', me)).json().url.split('#')[1];
+    const second = (await call('POST', '/api/me/passkeys/invite', me)).json().url.split('#')[1];
+    expect((await enrolWith(first, 'cred-alex-tablet')).statusCode).toBe(200);
+    expect(findInvite(hh, second)).toBeNull();
+    expect((await call('POST', '/api/auth/enrol/options', '', { token: second })).statusCode).toBe(401);
+  });
+
   it('an admin who is removed or steps down takes their open invites along; none becomes a recovery link', async () => {
     hh.insert(t.person).values({ id: 'p_bo', name: 'Bo', role: 'admin', handle: 'bo' }).run();
     hh.insert(t.passkey).values({ id: 'pk-bo', personId: 'p_bo', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
