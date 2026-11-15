@@ -1,6 +1,8 @@
 // Ideas, layers, links and the Brain (ADR 0005) on the sample seed (seed-sample/, all invented): proposals stay
 // proposals until a person decides, the reviewer is recorded, merges and renames, the brain's shape, and the privacy
 // of proposals written from someone's takeaways (shelf#3). Authorization per route.
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
@@ -8,7 +10,9 @@ import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
+import { proposeBookIdeas, proposeLinks, privateToFor } from '../src/knowledge/from-run';
 import { PRIVATE_REASON } from '../src/knowledge/knowledge';
+import { purgeTakeawayRuns } from '../src/library/ai-context';
 import { importSeed } from '../src/seed/import';
 import { ORIGIN, sessionCookie } from './helpers';
 
@@ -217,5 +221,63 @@ describe('ideas: rename and merge', () => {
   it('a kid\'s session is refused (403)', async () => {
     expect((await send('kid1', 'PATCH', `/api/ideas/${ideaId('Markets and value')}`, { name: 'X' })).statusCode).toBe(403);
     expect((await get('kid1', '/api/proposals')).statusCode).toBe(403);
+  });
+});
+
+describe('writing from an AI run (shelf#3)', () => {
+  const run = (rid: string, of: string | null) => db.insert(t.aiRun).values({ id: rid, job: 'link', provider: 'ollama', model: 'm', promptVersion: 'v1', inputHash: rid, startedAt: new Date().toISOString(), takeawaysOf: of }).run();
+
+  it('private_to comes from the run: whose takeaways it read, or nobody\'s; an unknown run is refused', () => {
+    run('run_w_sam', id.partner!);
+    run('run_w_plain', null);
+    expect(privateToFor(db, 'run_w_sam')).toBe(id.partner);
+    expect(privateToFor(db, 'run_w_plain')).toBeNull();
+    expect(() => privateToFor(db, 'nope')).toThrow(/unknown AI run/);
+    const [a, b, c] = ['Gardens of the Commons', 'A Short History of Bread', 'The Grand Ledger'].map(bookId);
+    expect(proposeLinks(db, 'run_w_sam', [{ fromBook: a!, toBook: b!, reason: 'from Sam\'s notes', confidence: 0.9 }])).toBe(1);
+    expect(proposeLinks(db, 'run_w_plain', [{ fromBook: a!, toBook: c!, reason: 'from the catalogue', confidence: 0.9 }])).toBe(1);
+    const row = (to: string) => db.select().from(t.bookLink).where(and(eq(t.bookLink.fromBook, a!), eq(t.bookLink.toBook, to))).get();
+    expect(row(b!)).toMatchObject({ state: 'proposed', aiRunId: 'run_w_sam', privateTo: id.partner });
+    expect(row(c!)).toMatchObject({ state: 'proposed', aiRunId: 'run_w_plain', privateTo: null });
+    // an existing row is never overwritten (a decision stays a decision)
+    expect(proposeLinks(db, 'run_w_plain', [{ fromBook: a!, toBook: b!, reason: 'again', confidence: 1 }])).toBe(0);
+    expect(row(b!)).toMatchObject({ privateTo: id.partner, reason: 'from Sam\'s notes' });
+  });
+
+  it('a private book idea: others get 404 reviewing it, the same as one that is not there; its person decides', async () => {
+    db.insert(t.idea).values({ id: 'i_w_priv', name: 'Written from notes' }).run();
+    const book = bookId('Gardens of the Commons');
+    expect(proposeBookIdeas(db, 'run_w_sam', [{ bookId: book, ideaId: 'i_w_priv', layer: 'deep', confidence: 0.9 }])).toBe(1);
+    for (const body of [{ state: 'confirmed' }, { state: 'rejected' }, { layer: 'core' }]) {
+      const r = await send('alex', 'PUT', `/api/books/${book}/ideas/i_w_priv`, body);
+      expect(r.statusCode).toBe(404);
+      expect(r.json()).toEqual((await send('alex', 'PUT', `/api/books/${book}/ideas/i_none`, body)).json());
+    }
+    expect(db.select().from(t.bookIdea).where(and(eq(t.bookIdea.bookId, book), eq(t.bookIdea.ideaId, 'i_w_priv'))).get()).toMatchObject({ state: 'proposed', layer: 'deep', reviewedBy: null });
+    expect((await send('partner', 'PUT', `/api/books/${book}/ideas/i_w_priv`, { state: 'rejected' })).statusCode).toBe(200);
+  });
+
+  it('the purge deletes undecided links private to the person, even when no run of theirs is left', () => {
+    const [a, b, c] = ['A Short History of Bread', 'Gardens of the Commons', 'The Grand Ledger'].map(bookId);
+    db.insert(t.bookLink).values([
+      { fromBook: a!, toBook: b!, reason: 'undecided, private', confidence: 0.9, state: 'proposed', privateTo: id.partner },
+      { fromBook: a!, toBook: c!, reason: 'decided, private', confidence: 0.9, state: 'confirmed', privateTo: id.partner, reviewedBy: id.partner },
+    ]).run();
+    purgeTakeawayRuns(db, id.partner!);
+    const row = (to: string) => db.select().from(t.bookLink).where(and(eq(t.bookLink.fromBook, a!), eq(t.bookLink.toBook, to))).get();
+    expect(row(b!)).toBeUndefined();
+    expect(row(c!)).toMatchObject({ state: 'confirmed', privateTo: id.partner, reason: PRIVATE_REASON });
+    // and the link proposed by the purged run went with it; the plain run's stays
+    expect(db.select().from(t.bookLink).where(eq(t.bookLink.reason, 'from Sam\'s notes')).all()).toEqual([]);
+    expect(db.select().from(t.bookLink).where(eq(t.bookLink.aiRunId, 'run_w_plain')).all()).toHaveLength(1);
+  });
+
+  it('nothing else in src/ inserts a link or a book idea (the seed writes decided rows, without a run)', () => {
+    const root = fileURLToPath(new URL('../src/', import.meta.url));
+    const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => statSync(join(dir, f)).isDirectory() ? files(join(dir, f)) : /\.ts$/.test(f) ? [join(dir, f)] : []);
+    const re = /insert\(\s*(t\.)?book(Link|Idea)\b|insert\s+into\s+book_(link|idea)\b/i;
+    const hits = files(root).map((f) => relative(root, f)).filter((f) => re.test(readFileSync(join(root, f), 'utf8')));
+    expect(hits.sort()).toEqual(['knowledge/from-run.ts', 'seed/import.ts']);
+    expect(readFileSync(join(root, 'seed/import.ts'), 'utf8')).not.toMatch(/aiRunId|privateTo/);
   });
 });
