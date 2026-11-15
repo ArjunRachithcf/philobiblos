@@ -1,4 +1,4 @@
--- Shelf database schema v4 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Shelf database schema v5 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -129,6 +129,8 @@ CREATE TABLE book_idea (
   confidence REAL NOT NULL,
   state      TEXT NOT NULL DEFAULT 'proposed' CHECK (state IN ('proposed','confirmed','rejected')),
   ai_run_id  TEXT REFERENCES ai_run(id),
+  reviewed_by TEXT REFERENCES person(id) ON DELETE SET NULL, -- who confirmed or rejected it; only a person does
+  reviewed_at TEXT,
   PRIMARY KEY (book_id, idea_id)
 );
 
@@ -139,6 +141,8 @@ CREATE TABLE book_link (                   -- candidate builds on a book (the "â
   confidence REAL NOT NULL,
   state      TEXT NOT NULL DEFAULT 'proposed' CHECK (state IN ('proposed','confirmed','rejected')),
   ai_run_id  TEXT REFERENCES ai_run(id),
+  reviewed_by TEXT REFERENCES person(id) ON DELETE SET NULL, -- who confirmed or rejected it; only a person does
+  reviewed_at TEXT,
   PRIMARY KEY (from_book, to_book)
 );
 

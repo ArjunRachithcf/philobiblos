@@ -21,7 +21,7 @@ export async function backlogRoutes(app: FastifyInstance, db: Db) {
   app.post('/backlog', async (req, reply) => {
     try {
       const id = addToBacklog(db, req.caller!.personId, req.body);
-      return reply.code(201).send(getCandidate(db, id));
+      return reply.code(201).send(getCandidate(db, id, req.caller!.personId));
     } catch (e) { return fail(reply, e); }
   });
 

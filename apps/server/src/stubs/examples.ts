@@ -64,16 +64,6 @@ export const monthPlan = (month: string): S['MonthPlan'] => ({
   order: null,
 });
 
-export const brain: S['Brain'] = {
-  ideas: [
-    { id: 'i_markets', name: 'Markets and value', readCount: 2, unreadOwned: 0, isNew: false, focus: 'connect',
-      layers: { intro: { books: [], next: null }, core: { books: [longTide], next: valueBeyondPrice }, deep: { books: [], next: null }, counterpoint: { books: [], next: null } } },
-    { id: 'i_care', name: 'Care and the commons', readCount: 2, unreadOwned: 0, isNew: false,
-      layers: { core: { books: [{ id: 'b_unpaid', title: 'Notes on Unpaid Work', authors: ['Ruth Adeyemi'] }], next: null } } },
-  ],
-  edges: [{ a: 'i_markets', b: 'i_care', weight: 1, via: ['b_unpaid'], kind: 'read' }],
-};
-
 export const inbox: S['InboxItem'][] = [{
   id: 'in_share1',
   kind: 'share',

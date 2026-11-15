@@ -162,21 +162,38 @@ paths:
     get:
       tags: [brain]
       operationId: getBrain
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Ideas, layers, edges, focus, content: { application/json: { schema: { $ref: '#/components/schemas/Brain' } } } } }
+      summary: 'An adult''s ideas (read books per layer, the best open candidate per layer) and the edges between ideas. Every adult may look; kids have an emotional map instead (404).'
+      responses: { '404': { description: 'No such person, or a kid', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Ideas, layers, edges, content: { application/json: { schema: { $ref: '#/components/schemas/Brain' } } } } }
+  /proposals:
+    get:
+      tags: [brain]
+      operationId: listProposals
+      summary: 'Links and book ideas waiting for a person''s decision. A proposal written from someone''s takeaways is theirs alone: nobody else sees it here (shelf#3).'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Proposals' } } } } }
   /links/{fromBook}/{toBook}:
     parameters: [{ name: fromBook, in: path, required: true, schema: {type: string} }, { name: toBook, in: path, required: true, schema: {type: string} }]
     put:
       tags: [brain]
       operationId: reviewLink
-      requestBody: { content: { application/json: { schema: { type: object, properties: { state: { enum: [confirmed, rejected] } } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } }
+      summary: 'A person confirms or rejects a link (the reviewer is recorded). One written from someone''s takeaways only they decide (403).'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [state], additionalProperties: false, properties: { state: { enum: [confirmed, rejected] } } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such link, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [state, reason], properties: { state: { enum: [confirmed, rejected] }, reason: {type: string} } } } } } }
+  /books/{bookId}/ideas/{ideaId}:
+    parameters: [{ name: bookId, in: path, required: true, schema: {type: string} }, { name: ideaId, in: path, required: true, schema: {type: string} }]
+    put:
+      tags: [brain]
+      operationId: reviewBookIdea
+      summary: 'A person confirms or rejects a book''s idea, or moves it to another layer (which confirms it). Same privacy as links.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, minProperties: 1, additionalProperties: false, properties: { state: { enum: [confirmed, rejected] }, layer: { $ref: '#/components/schemas/Layer' } } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such idea on that book, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [state, layer], properties: { state: { enum: [confirmed, rejected] }, layer: { $ref: '#/components/schemas/Layer' } } } } } } }
   /ideas/{ideaId}:
     parameters: [{ name: ideaId, in: path, required: true, schema: {type: string} }]
     patch:
       tags: [brain]
       operationId: editIdea
-      requestBody: { content: { application/json: { schema: { type: object, properties: { name: {type: string}, mergeInto: {type: string} } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } }
+      summary: 'Rename an idea, or merge it into another (the household''s shared vocabulary, ADR 0005): either name or mergeInto'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, minProperties: 1, maxProperties: 1, additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, mergeInto: {type: string} } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such idea, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: Another idea has that name, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'The idea (after a merge, the one it went into)', content: { application/json: { schema: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } } } } } }
 
   /people/{personId}/library:
     parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
@@ -295,10 +312,18 @@ components:
         focus: { type: array, items: { type: object, properties: { move: { $ref: '#/components/schemas/Move' }, ideas: { type: array, items: {type: string} }, bookId: {type: string}, sentence: {type: string} } } }
         nextBroaden: { type: [object, 'null'], properties: { month: {type: string}, idea: {type: string}, bookId: {type: string} } }
         order: { oneOf: [ { $ref: '#/components/schemas/Order' }, { type: 'null' } ] }
+    Layer: { enum: [intro, core, deep, counterpoint] }
+    Proposals:
+      type: object
+      required: [links, ideas]
+      properties:
+        links: { type: array, items: { type: object, required: [from, to, reason, confidence, fromAi], properties: { from: { $ref: '#/components/schemas/BookRef' }, to: { $ref: '#/components/schemas/BookRef' }, reason: {type: string}, confidence: {type: number}, fromAi: {type: boolean} } } }
+        ideas: { type: array, items: { type: object, required: [book, idea, layer, confidence, fromAi], properties: { book: { $ref: '#/components/schemas/BookRef' }, idea: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } }, layer: { $ref: '#/components/schemas/Layer' }, confidence: {type: number}, fromAi: {type: boolean} } } }
     Brain:
       type: object
+      required: [ideas, edges]
       properties:
-        ideas: { type: array, items: { type: object, properties: { id: {type: string}, name: {type: string}, readCount: {type: integer}, unreadOwned: {type: integer}, isNew: {type: boolean}, focus: { $ref: '#/components/schemas/Move' },
+        ideas: { type: array, items: { type: object, required: [id, name, readCount, unreadOwned, isNew, layers], properties: { id: {type: string}, name: {type: string}, readCount: {type: integer}, unreadOwned: {type: integer}, isNew: {type: boolean}, focus: { $ref: '#/components/schemas/Move' },
           layers: { type: object, additionalProperties: { type: object, properties: { books: { type: array, items: { $ref: '#/components/schemas/BookRef' } }, next: { oneOf: [ { $ref: '#/components/schemas/BookRef' }, { type: 'null' } ] } } } } } } }
         edges: { type: array, items: { type: object, properties: { a: {type: string}, b: {type: string}, weight: {type: integer}, via: { type: array, items: {type: string} }, kind: { enum: [read, gap, focus, future] } } } }
     Reading: { type: object, properties: { status: { enum: [to_read, reading, read, abandoned] }, feedback: { enum: [loved, meh, not_yet, null] }, takeaway: { type: [string, 'null'], maxLength: 280 }, finishedAt: { type: [string, 'null'] } } }

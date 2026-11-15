@@ -8,6 +8,7 @@ import { scoreAdult, scoreKid, type Layer, type ScorePart } from '@shelf/scoring
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { household, view } from '../household/people';
+import { privateRuns, visibleReason } from '../knowledge/knowledge';
 import { bookRef } from '../library/library';
 
 type S = components['schemas'];
@@ -31,13 +32,13 @@ interface Row extends Candidate {
 }
 
 /** One candidate as the API shows it. */
-export function getCandidate(db: Db, id: string, now = new Date()): Candidate | null {
-  const r = allCandidates(db, now).find((c) => c.id === id);
+export function getCandidate(db: Db, id: string, viewer: string, now = new Date()): Candidate | null {
+  const r = allCandidates(db, now, viewer).find((c) => c.id === id);
   return r ? publicView(r) : null;
 }
 
 /** Every candidate, scored, with what the filters need. `now` is injectable for tests. */
-export function allCandidates(db: Db, now = new Date()): Row[] {
+export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
   const people = new Map(household(db).map((p) => [p.id, p]));
   const cands = db.select().from(t.candidate).all();
   const bookIds = [...new Set(cands.map((c) => c.bookId))];
@@ -59,9 +60,11 @@ export function allCandidates(db: Db, now = new Date()): Row[] {
   for (const r of tags) ideasOfBook.set(r.bookId, [...(ideasOfBook.get(r.bookId) ?? []), r]);
   const themesOfBook = new Map<string, string[]>();
   for (const r of db.select().from(t.bookTheme).orderBy(t.bookTheme.theme).all()) themesOfBook.set(r.bookId, [...(themesOfBook.get(r.bookId) ?? []), r.theme]);
+  // A reason from someone's takeaways is theirs (shelf#3): everyone else sees a neutral one.
+  const runs = privateRuns(db);
   const linksFrom = new Map<string, { to: string; reason: string; confidence: number; state: string }[]>();
   for (const l of db.select().from(t.bookLink).all()) {
-    if (l.state === 'confirmed' || (l.state === 'proposed' && l.confidence >= COUNTED)) linksFrom.set(l.fromBook, [...(linksFrom.get(l.fromBook) ?? []), { to: l.toBook, reason: l.reason, confidence: l.confidence, state: l.state }]);
+    if (l.state === 'confirmed' || (l.state === 'proposed' && l.confidence >= COUNTED)) linksFrom.set(l.fromBook, [...(linksFrom.get(l.fromBook) ?? []), { to: l.toBook, reason: visibleReason(l, viewer, runs), confidence: l.confidence, state: l.state }]);
   }
   // Each person's readings: what they have read (with when), and kids' feedback.
   const readBy = new Map<string, Map<string, { finished: string; feedback: string | null }>>();
@@ -186,7 +189,7 @@ export function listBacklog(db: Db, me: string, o: { q?: string; cursor?: string
   const now = o.now ?? new Date();
   const parsed: ParsedQuery = parseQuery(o.q ?? 'is:open sort:score');
   const handles = new Map(household(db).filter((p) => p.handle).map((p) => [p.handle!, p.id]));
-  const rows = allCandidates(db, now).filter((r) => parsed.terms.every((term) => matches(r, term, me, handles, now) !== term.negated));
+  const rows = allCandidates(db, now, me).filter((r) => parsed.terms.every((term) => matches(r, term, me, handles, now) !== term.negated));
   const counts = { open: rows.filter((r) => r.state === 'open').length, closed: rows.filter((r) => r.state === 'closed').length };
   const tab = rows.filter((r) => r.state === parsed.state);
 

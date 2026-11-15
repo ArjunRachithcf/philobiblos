@@ -137,6 +137,9 @@ export const bookIdea = sqliteTable('book_idea', {
   confidence: real('confidence').notNull(),
   state: text('state', { enum: ['proposed', 'confirmed', 'rejected'] }).notNull().default('proposed'),
   aiRunId: text('ai_run_id').references(() => aiRun.id),
+  // Who decided (null: nobody yet, or the seed). Only a person moves a proposal to confirmed or rejected.
+  reviewedBy: text('reviewed_by').references(() => person.id, { onDelete: 'set null' }),
+  reviewedAt: text('reviewed_at'),
 }, (t) => [
   primaryKey({ columns: [t.bookId, t.ideaId] }),
   check('book_idea_layer', sql`${t.layer} IN ('intro','core','deep','counterpoint')`),
@@ -150,6 +153,9 @@ export const bookLink = sqliteTable('book_link', {
   confidence: real('confidence').notNull(),
   state: text('state', { enum: ['proposed', 'confirmed', 'rejected'] }).notNull().default('proposed'),
   aiRunId: text('ai_run_id').references(() => aiRun.id),
+  // Who decided (null: nobody yet, or the seed). Only a person moves a proposal to confirmed or rejected.
+  reviewedBy: text('reviewed_by').references(() => person.id, { onDelete: 'set null' }),
+  reviewedAt: text('reviewed_at'),
 }, (t) => [
   primaryKey({ columns: [t.fromBook, t.toBook] }),
   check('book_link_state', sql`${t.state} IN ('proposed','confirmed','rejected')`),

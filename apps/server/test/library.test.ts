@@ -219,11 +219,11 @@ describe('the takeaway boundary (architecture)', () => {
   });
   const sources = [join(root, 'apps/server/src'), ...readdirSync(join(root, 'packages')).map((d) => join(root, 'packages', d, 'src'))].flatMap(files);
 
-  // Per rule, the files allowed past it. backlog.ts may select named columns (status, feedback, dates) from `reading`,
+  // Per rule, the files allowed past it. backlog.ts and knowledge.ts may select named columns (status, feedback, dates) from `reading`,
   // never a whole row (a row holds the takeaway); the first rule keeps the column out of it by name.
   it.each([
     ['the takeaway column or field', /\btakeaway\b/, ALLOWED],
-    ['a select from the reading table', /\.from\(t\.reading\)|\bfrom\s+reading\b/i, new Set([...ALLOWED, 'apps/server/src/backlog/backlog.ts'])],
+    ['a select from the reading table', /\.from\(t\.reading\)|\bfrom\s+reading\b/i, new Set([...ALLOWED, 'apps/server/src/backlog/backlog.ts', 'apps/server/src/knowledge/knowledge.ts'])],
     ['a whole-row select from the reading table', /select(Distinct)?\(\s*\)\s*\.from\(t\.reading\)|select\s+\*\s+from\s+reading\b/i, ALLOWED],
   ] as const)('nothing else mentions %s', (_n, re, allowed) => {
     expect(sources.length).toBeGreaterThan(20);
