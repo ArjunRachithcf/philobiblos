@@ -4,7 +4,7 @@
 // never sends them).
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { api, message, type Library as Lib, type Me, type Person, type Reading, type Settings } from '../api';
-import { Notice, PageHead } from '../ui';
+import { Choice, Notice, PageHead } from '../ui';
 
 type Item = NonNullable<Lib['books']>[number];
 type Status = NonNullable<Reading['status']>;
@@ -207,34 +207,6 @@ function Cover({ title }: { title: string }) {
  * only; Space, Enter or a click chooses, because choosing has effects (a saved status, the takeaway prompt). Focus
  * comes back to the chosen option after the list re-sorts.
  */
-function Choice({ label, value, options, onChange, className = '' }: { label: string; value: string; options: [string, string][]; onChange: (v: string) => void; className?: string }) {
-  const refs = useRef<(HTMLButtonElement | null)[]>([]);
-  const chose = useRef<string | null>(null);
-  const pos = Math.max(0, options.findIndex(([k]) => k === value));
-  useEffect(() => {
-    if (chose.current !== value) return; // wait for the saved value (the list may re-sort first)
-    chose.current = null;
-    // A modal opened by the choice keeps its focus; otherwise focus stays on the control.
-    if (!document.querySelector('dialog[open]')) refs.current[pos]?.focus();
-  });
-  const key = (e: React.KeyboardEvent, i: number) => {
-    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1
-      : e.key === 'Home' ? -i : e.key === 'End' ? options.length - 1 - i : 0;
-    if (!d) return;
-    e.preventDefault();
-    refs.current[(i + d + options.length) % options.length]?.focus();
-  };
-  return (
-    <div role="radiogroup" aria-label={label} className={`segmented ${className}`} style={{ '--n': options.length, '--pos': pos } as React.CSSProperties}>
-      <span className="segmented-thumb" aria-hidden="true" />
-      {options.map(([k, l], i) => (
-        <button key={k} ref={(el) => { refs.current[i] = el; }} type="button" role="radio" aria-checked={k === value} tabIndex={k === value ? 0 : -1}
-          onClick={() => { if (k !== value) { chose.current = k; onChange(k); } }} onKeyDown={(e) => key(e, i)}>{l}</button>
-      ))}
-    </div>
-  );
-}
-
 function TakeawaySheet({ it, onClose, onSave }: { it: Item; onClose: () => void; onSave: (text: string) => Promise<void> }) {
   const id = useId();
   const ref = useRef<HTMLDialogElement>(null);

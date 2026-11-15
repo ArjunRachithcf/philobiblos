@@ -1,6 +1,8 @@
 // Ideas, layers, links and the Brain (ADR 0005) on the sample seed (seed-sample/, all invented): proposals stay
 // proposals until a person decides, the reviewer is recorded, merges and renames, the brain's shape, and the privacy
 // of proposals written from someone's takeaways (shelf#3). Authorization per route.
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
@@ -8,7 +10,9 @@ import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
+import { proposeBookIdeas, proposeLinks, privateToFor } from '../src/knowledge/from-run';
 import { PRIVATE_REASON } from '../src/knowledge/knowledge';
+import { purgeTakeawayRuns } from '../src/library/ai-context';
 import { importSeed } from '../src/seed/import';
 import { ORIGIN, sessionCookie } from './helpers';
 
@@ -112,7 +116,7 @@ describe('proposals and reviews', () => {
     db.insert(t.bookLink).values({ fromBook: from, toBook: to, reason: 'what Sam wrote about trade', confidence: 0.9, state: 'proposed', aiRunId: 'run_sam', privateTo: id.partner }).run();
 
     const samSees = (await get('partner', '/api/proposals')).json().links.find((l: { from: { id: string }; to: { id: string } }) => l.from.id === from && l.to.id === to);
-    expect(samSees).toMatchObject({ reason: 'what Sam wrote about trade', fromAi: true });
+    expect(samSees).toMatchObject({ reason: 'what Sam wrote about trade', fromAi: true, onlyYou: true });
     expect((await get('alex', '/api/proposals')).body).not.toContain('what Sam wrote');
     const backlog = (await get('alex', '/api/backlog?q=%22before%20the%20first%20cities%22')).json();
     expect(JSON.stringify(backlog)).not.toContain('what Sam wrote');
@@ -217,5 +221,134 @@ describe('ideas: rename and merge', () => {
   it('a kid\'s session is refused (403)', async () => {
     expect((await send('kid1', 'PATCH', `/api/ideas/${ideaId('Markets and value')}`, { name: 'X' })).statusCode).toBe(403);
     expect((await get('kid1', '/api/proposals')).statusCode).toBe(403);
+  });
+});
+
+describe('writing from an AI run (shelf#3)', () => {
+  const run = (rid: string, of: string | null) => db.insert(t.aiRun).values({ id: rid, job: 'link', provider: 'ollama', model: 'm', promptVersion: 'v1', inputHash: rid, startedAt: new Date().toISOString(), takeawaysOf: of }).run();
+
+  it('private_to comes from the run: whose takeaways it read, or nobody\'s; an unknown run is refused', () => {
+    run('run_w_sam', id.partner!);
+    run('run_w_plain', null);
+    expect(privateToFor(db, 'run_w_sam')).toBe(id.partner);
+    expect(privateToFor(db, 'run_w_plain')).toBeNull();
+    expect(() => privateToFor(db, 'nope')).toThrow(/unknown AI run/);
+    const [a, b, c] = ['Gardens of the Commons', 'A Short History of Bread', 'The Grand Ledger'].map(bookId);
+    expect(proposeLinks(db, 'run_w_sam', [{ fromBook: a!, toBook: b!, reason: 'from Sam\'s notes', confidence: 0.9 }])).toBe(1);
+    expect(proposeLinks(db, 'run_w_plain', [{ fromBook: a!, toBook: c!, reason: 'from the catalogue', confidence: 0.9 }])).toBe(1);
+    const row = (to: string) => db.select().from(t.bookLink).where(and(eq(t.bookLink.fromBook, a!), eq(t.bookLink.toBook, to))).get();
+    expect(row(b!)).toMatchObject({ state: 'proposed', aiRunId: 'run_w_sam', privateTo: id.partner });
+    expect(row(c!)).toMatchObject({ state: 'proposed', aiRunId: 'run_w_plain', privateTo: null });
+    // an existing row is never overwritten (a decision stays a decision)
+    expect(proposeLinks(db, 'run_w_plain', [{ fromBook: a!, toBook: b!, reason: 'again', confidence: 1 }])).toBe(0);
+    expect(row(b!)).toMatchObject({ privateTo: id.partner, reason: 'from Sam\'s notes' });
+  });
+
+  it('a private book idea: others get 404 reviewing it, the same as one that is not there; its person decides', async () => {
+    db.insert(t.idea).values({ id: 'i_w_priv', name: 'Written from notes' }).run();
+    const book = bookId('Gardens of the Commons');
+    expect(proposeBookIdeas(db, 'run_w_sam', [{ bookId: book, ideaId: 'i_w_priv', layer: 'deep', confidence: 0.9 }])).toBe(1);
+    for (const body of [{ state: 'confirmed' }, { state: 'rejected' }, { layer: 'core' }]) {
+      const r = await send('alex', 'PUT', `/api/books/${book}/ideas/i_w_priv`, body);
+      expect(r.statusCode).toBe(404);
+      expect(r.json()).toEqual((await send('alex', 'PUT', `/api/books/${book}/ideas/i_none`, body)).json());
+    }
+    expect(db.select().from(t.bookIdea).where(and(eq(t.bookIdea.bookId, book), eq(t.bookIdea.ideaId, 'i_w_priv'))).get()).toMatchObject({ state: 'proposed', layer: 'deep', reviewedBy: null });
+    expect((await send('partner', 'PUT', `/api/books/${book}/ideas/i_w_priv`, { state: 'rejected' })).statusCode).toBe(200);
+  });
+
+  it('the purge deletes undecided links private to the person, even when no run of theirs is left', () => {
+    const [a, b, c] = ['A Short History of Bread', 'Gardens of the Commons', 'The Grand Ledger'].map(bookId);
+    db.insert(t.bookLink).values([
+      { fromBook: a!, toBook: b!, reason: 'undecided, private', confidence: 0.9, state: 'proposed', privateTo: id.partner },
+      { fromBook: a!, toBook: c!, reason: 'decided, private', confidence: 0.9, state: 'confirmed', privateTo: id.partner, reviewedBy: id.partner },
+    ]).run();
+    purgeTakeawayRuns(db, id.partner!);
+    const row = (to: string) => db.select().from(t.bookLink).where(and(eq(t.bookLink.fromBook, a!), eq(t.bookLink.toBook, to))).get();
+    expect(row(b!)).toBeUndefined();
+    expect(row(c!)).toMatchObject({ state: 'confirmed', privateTo: id.partner, reason: PRIVATE_REASON });
+    // and the link proposed by the purged run went with it; the plain run's stays
+    expect(db.select().from(t.bookLink).where(eq(t.bookLink.reason, 'from Sam\'s notes')).all()).toEqual([]);
+    expect(db.select().from(t.bookLink).where(eq(t.bookLink.aiRunId, 'run_w_plain')).all()).toHaveLength(1);
+  });
+
+  it('the database enforces it for any writer, raw SQL included: filled in, a mismatch refused', () => {
+    const c = db.$client;
+    run('run_w_alex', id.alex!);
+    const [a, b, c2] = ['The Grand Ledger', 'Value Beyond Price', 'Care at the Centre'].map(bookId);
+    const priv = (from: string, to: string) => (c.prepare('SELECT private_to AS p FROM book_link WHERE from_book = ? AND to_book = ?').get(from, to) as { p: string | null }).p;
+    // no private_to given: the run's person gets it
+    c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_alex')`).run(a, b);
+    expect(priv(a!, b!)).toBe(id.alex);
+    // someone else's, or private on a run without takeaways: refused
+    expect(() => c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id, private_to) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_alex', ?)`).run(a, c2, id.partner)).toThrow(/private_to must be its run/);
+    expect(() => c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id, private_to) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_plain', ?)`).run(a, c2, id.alex)).toThrow(/private_to must be its run/);
+    // a plain run stays public
+    c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_plain')`).run(a, c2);
+    expect(priv(a!, c2!)).toBeNull();
+    // updates: taking private_to off, or moving a row onto someone's run without making it theirs, is refused
+    expect(() => c.prepare('UPDATE book_link SET private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, b)).toThrow(/private_to must be its run|never changes once set/);
+    expect(() => c.prepare(`UPDATE book_link SET ai_run_id = 'run_w_alex' WHERE from_book = ? AND to_book = ?`).run(a, c2)).toThrow(/private_to must be its run/);
+    expect(() => db.update(t.bookLink).set({ privateTo: id.partner }).where(and(eq(t.bookLink.fromBook, a!), eq(t.bookLink.toBook, b!))).run()).toThrow(/private_to must be its run|never changes once set/);
+    c.prepare(`UPDATE book_link SET ai_run_id = 'run_w_alex', private_to = ? WHERE from_book = ? AND to_book = ?`).run(id.alex, a, c2);
+    expect(priv(a!, c2!)).toBe(id.alex);
+    // clearing the run (the purge) keeps private_to
+    c.prepare('UPDATE book_link SET ai_run_id = NULL WHERE from_book = ? AND to_book = ?').run(a, b);
+    expect(priv(a!, b!)).toBe(id.alex);
+    // the review's bypasses (round 2): clearing both at once; clearing private_to after the run is gone; neither works
+    expect(() => c.prepare('UPDATE book_link SET ai_run_id = NULL, private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, c2)).toThrow(/never changes once set/);
+    expect(() => c.prepare('UPDATE book_link SET private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, b)).toThrow(/never changes once set/);
+    expect(() => c.prepare('UPDATE book_link SET private_to = ? WHERE from_book = ? AND to_book = ?').run(id.partner, a, b)).toThrow(/never changes once set/);
+    expect(priv(a!, b!)).toBe(id.alex);
+    // round 3: INSERT OR REPLACE / REPLACE INTO deletes without delete triggers; over a private row it is refused
+    // unless private_to is carried over, and the row stays as it was
+    for (const verb of ['INSERT OR REPLACE INTO', 'REPLACE INTO']) {
+      expect(() => c.prepare(`${verb} book_link (from_book, to_book, reason, confidence, state) VALUES (?, ?, 'public now', 1, 'confirmed')`).run(a, b)).toThrow(/never replaced/);
+      expect(() => c.prepare(`${verb} book_link (from_book, to_book, reason, confidence, state, private_to) VALUES (?, ?, 'someone else', 1, 'confirmed', ?)`).run(a, b, id.partner)).toThrow(/never replaced/);
+    }
+    expect(priv(a!, b!)).toBe(id.alex);
+    expect((c.prepare('SELECT reason FROM book_link WHERE from_book = ? AND to_book = ?').get(a, b) as { reason: string }).reason).toBe('raw');
+    c.prepare(`REPLACE INTO book_link (from_book, to_book, reason, confidence, state, private_to) VALUES (?, ?, 'raw', 0.9, 'proposed', ?)`).run(a, b, id.alex); // carried over: stays Alex's
+    expect(priv(a!, b!)).toBe(id.alex);
+    // the writer meets an existing private row: skipped, not refused, and nothing changes
+    expect(proposeLinks(db, 'run_w_plain', [{ fromBook: a!, toBook: b!, reason: 'again', confidence: 1 }])).toBe(0);
+    // a run recorded first, its takeaways set later: refused once it has proposals (the rows would stay public)
+    run('run_w_late', null);
+    c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_late')`).run(b, c2);
+    expect(() => c.prepare(`UPDATE ai_run SET takeaways_of = ? WHERE id = 'run_w_late'`).run(id.alex)).toThrow(/takeaways_of is fixed/);
+    c.prepare(`UPDATE ai_run SET takeaways_of = NULL WHERE id = 'run_w_late'`).run(); // no change: fine
+    run('run_w_empty', null);
+    c.prepare(`UPDATE ai_run SET takeaways_of = ? WHERE id = 'run_w_empty'`).run(id.alex); // nothing proposed yet: fine
+    // a run with takeaways is deleted only once its proposals are gone or let go
+    expect(() => c.prepare(`DELETE FROM ai_run WHERE id = 'run_w_alex'`).run()).toThrow(/run with takeaways goes only after/);
+    // the same for book ideas
+    c.prepare(`INSERT INTO idea (id, name) VALUES ('i_w_raw', 'Raw idea')`).run();
+    c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state, ai_run_id) VALUES (?, 'i_w_raw', 'core', 0.9, 'proposed', 'run_w_alex')`).run(a);
+    expect((c.prepare(`SELECT private_to AS p FROM book_idea WHERE idea_id = 'i_w_raw'`).get() as { p: string }).p).toBe(id.alex);
+    expect(() => c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state, ai_run_id, private_to) VALUES (?, 'i_w_raw', 'core', 0.9, 'proposed', 'run_w_alex', ?)`).run(b, id.partner)).toThrow(/private_to must be its run/);
+    expect(() => c.prepare(`UPDATE book_idea SET private_to = NULL WHERE idea_id = 'i_w_raw'`).run()).toThrow(/private_to must be its run|never changes once set/);
+    expect(() => c.prepare(`UPDATE book_idea SET ai_run_id = NULL, private_to = NULL WHERE idea_id = 'i_w_raw'`).run()).toThrow(/never changes once set/);
+    for (const verb of ['INSERT OR REPLACE INTO', 'REPLACE INTO']) {
+      expect(() => c.prepare(`${verb} book_idea (book_id, idea_id, layer, confidence, state) VALUES (?, 'i_w_raw', 'core', 1, 'confirmed')`).run(a)).toThrow(/never replaced/);
+    }
+    expect((c.prepare(`SELECT private_to AS p, state FROM book_idea WHERE idea_id = 'i_w_raw'`).get() as { p: string; state: string })).toEqual({ p: id.alex, state: 'proposed' });
+    expect(proposeBookIdeas(db, 'run_w_plain', [{ bookId: a!, ideaId: 'i_w_raw', layer: 'deep', confidence: 1 }])).toBe(0);
+    // deleting, then inserting, stays possible (the settled design: a deleted proposal may be proposed again)
+    c.prepare(`DELETE FROM book_idea WHERE idea_id = 'i_w_raw'`).run();
+    c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state) VALUES (?, 'i_w_raw', 'core', 0.5, 'proposed')`).run(a);
+    expect((c.prepare(`SELECT private_to AS p FROM book_idea WHERE idea_id = 'i_w_raw'`).get() as { p: string | null }).p).toBeNull();
+    // the purge goes through all of it: undecided rows deleted, runs deleted
+    purgeTakeawayRuns(db, id.alex!);
+    expect(c.prepare(`SELECT id FROM ai_run WHERE takeaways_of = ?`).all(id.alex)).toEqual([]);
+    expect(() => c.prepare(`UPDATE book_link SET private_to = NULL WHERE private_to = ?`).run(id.alex)).not.toThrow(); // nothing left of Alex's
+  });
+
+  it('nothing else in src/ inserts a link or a book idea (the seed writes decided rows, without a run)', () => {
+    const root = fileURLToPath(new URL('../src/', import.meta.url));
+    const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => statSync(join(dir, f)).isDirectory() ? files(join(dir, f)) : /\.ts$/.test(f) ? [join(dir, f)] : []);
+    const re = /insert\(\s*(t\.)?book(Link|Idea)\b|insert\s+into\s+book_(link|idea)\b/i;
+    const hits = files(root).map((f) => relative(root, f)).filter((f) => re.test(readFileSync(join(root, f), 'utf8')));
+    expect(hits.sort()).toEqual(['knowledge/from-run.ts', 'seed/import.ts']);
+    expect(readFileSync(join(root, 'seed/import.ts'), 'utf8')).not.toMatch(/aiRunId|privateTo/);
   });
 });

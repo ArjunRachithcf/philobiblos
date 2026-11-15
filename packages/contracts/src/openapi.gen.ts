@@ -906,6 +906,8 @@ export interface components {
                 reason: string;
                 confidence: number;
                 fromAi: boolean;
+                /** @description written from your own takeaways: nobody else sees it */
+                onlyYou: boolean;
             }[];
             ideas: {
                 book: components["schemas"]["BookRef"];
@@ -916,6 +918,8 @@ export interface components {
                 layer: components["schemas"]["Layer"];
                 confidence: number;
                 fromAi: boolean;
+                /** @description written from your own takeaways: nobody else sees it */
+                onlyYou: boolean;
             }[];
         };
         Brain: {

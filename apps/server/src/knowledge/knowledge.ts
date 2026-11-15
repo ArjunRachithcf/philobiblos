@@ -81,9 +81,9 @@ export function listProposals(db: Db, viewer: string) {
   const ids = [...new Set([...links.flatMap((l) => [l.fromBook, l.toBook]), ...ideas.map((r) => r.row.bookId)])];
   const books = new Map(ids.length ? db.select().from(t.book).where(inArray(t.book.id, ids)).all().map((b) => [b.id, bookRef(b)]) : []);
   return {
-    links: links.map((l) => ({ from: books.get(l.fromBook)!, to: books.get(l.toBook)!, reason: l.reason, confidence: l.confidence, fromAi: l.aiRunId !== null || l.privateTo !== null }))
+    links: links.map((l) => ({ from: books.get(l.fromBook)!, to: books.get(l.toBook)!, reason: l.reason, confidence: l.confidence, fromAi: l.aiRunId !== null || l.privateTo !== null, onlyYou: l.privateTo === viewer }))
       .sort((a, b) => b.confidence - a.confidence),
-    ideas: ideas.map(({ row, name, intoName }) => ({ book: books.get(row.bookId)!, idea: { id: row.ideaId, name: intoName ?? name }, layer: row.layer, confidence: row.confidence, fromAi: row.aiRunId !== null || row.privateTo !== null }))
+    ideas: ideas.map(({ row, name, intoName }) => ({ book: books.get(row.bookId)!, idea: { id: row.ideaId, name: intoName ?? name }, layer: row.layer, confidence: row.confidence, fromAi: row.aiRunId !== null || row.privateTo !== null, onlyYou: row.privateTo === viewer }))
       .sort((a, b) => b.confidence - a.confidence),
   };
 }

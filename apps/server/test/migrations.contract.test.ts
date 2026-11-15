@@ -78,6 +78,14 @@ describe('migrations', () => {
     expect(describeDb(fromTs)).toEqual(describeDb(fromSql([contractSql])));
   });
 
+  it('the migrations build the contract\'s triggers (Drizzle has none; they are hand-written in 0005)', () => {
+    const triggers = (db: Database.Database) => (db.prepare(`SELECT name, tbl_name AS tbl, sql FROM sqlite_master WHERE type='trigger' ORDER BY name`).all() as { name: string; tbl: string; sql: string }[])
+      .map((t) => ({ ...t, sql: t.sql.replace(/\s+/g, ' ').trim() }));
+    const contract = triggers(fromSql([contractSql]));
+    expect(contract.map((t) => t.name)).toHaveLength(12);
+    expect(triggers(openDb(':memory:').$client)).toEqual(contract);
+  });
+
   it('the Drizzle snapshot is in sync with the schema (pnpm db:generate has nothing to add)', async () => {
     const snapshot = JSON.parse(readFileSync(new URL(`../drizzle/meta/${latestSnapshot()}`, import.meta.url), 'utf8'));
     const current = await generateSQLiteDrizzleJson(schema, snapshot.id);
@@ -91,6 +99,7 @@ const RELEASED: Record<string, string> = {
   '0001_auth_and_household.sql': '8b7c16f8eef2aff40d747de07d65ff26369ec40c1e5d28f38c087098a4f5f75b', // contract v2 (M1 a, PR #1)
   '0002_ai_runs_know_takeaways.sql': '9b9e3c78fdf2d18c82eb6ddf2cf3bb13f7340995338ea3513f9d905325ca3375', // contract v3 (M1 b, PR #2)
   '0003_backlog.sql': '9932624f9add595389393ecd98268a6e19bc46bfa89beb4887895b5c8535697c', // contract v4 (M1 c, PR #4)
+  '0004_reviews.sql': '8c03643bd767eba82d96db42f8c827f53f8899ba63270ab9f524721cfae5c418', // contract v5 (M2 a, PR #5)
 };
 const drizzleDir = fileURLToPath(new URL('../drizzle', import.meta.url));
 
