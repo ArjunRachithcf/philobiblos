@@ -40,7 +40,7 @@ jobs:
       - name: Generated files match contracts/
         run: |
           pnpm gen:api
-          pnpm --filter @shelf/server exec tsx scripts/schema-to-migration.ts
+          pnpm --filter @shelf/server exec drizzle-kit generate --name check
           git -c safe.directory='*' diff --exit-code
       - run: pnpm typecheck
       - run: pnpm lint

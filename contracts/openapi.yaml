@@ -11,7 +11,7 @@ info:
     Money is in centimes (integer). Dates are ISO-8601.
 servers: [{ url: /api }]
 security: [ { homerslabPerson: [] }, { session: [] } ]
-tags: [{name: month}, {name: backlog}, {name: brain}, {name: library}, {name: inbox}, {name: orders}, {name: settings}, {name: system}]
+tags: [{name: auth}, {name: household}, {name: month}, {name: backlog}, {name: brain}, {name: library}, {name: inbox}, {name: orders}, {name: settings}, {name: system}]
 
 paths:
   /health:
@@ -19,6 +19,72 @@ paths:
 
   /me:
     get: { tags: [system], operationId: me, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Current person and household, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } } } }
+
+  /auth/session:
+    get: { tags: [auth], operationId: authSession, security: [], summary: 'Who is signed in, and whether the household still needs its first admin', responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSession' } } } } } }
+  /auth/enrol/options:
+    post:
+      tags: [auth]
+      operationId: enrolOptions
+      security: []
+      summary: 'Standalone: start enrolling a passkey with a one-time link (the first admin''s setup link, or an invite)'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], additionalProperties: false, properties: { token: { type: string, maxLength: 200 }, name: { type: string, minLength: 1, maxLength: 60, description: 'setup links only: the first admin''s name' } } } } } }
+      responses: { '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: WebAuthn registration options, content: { application/json: { schema: { $ref: '#/components/schemas/WebAuthnStart' } } } }, '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { description: 'The link is unknown, used or expired', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: 'Not in homerslab mode (HomersLab signs people in)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many attempts, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /auth/enrol/verify:
+    post:
+      tags: [auth]
+      operationId: enrolVerify
+      security: []
+      summary: 'Standalone: finish enrolling; signs the person in (sets the session cookie)'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WebAuthnFinish' } } } }
+      responses: { '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Signed in, headers: { Set-Cookie: { schema: { type: string }, description: 'shelf_session; HttpOnly; Secure; SameSite=Strict; Path=/' } }, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSession' } } } }, '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { description: 'Verification failed, or the challenge expired', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: Not in homerslab mode, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many attempts, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /auth/sign-in/options:
+    post:
+      tags: [auth]
+      operationId: signInOptions
+      security: []
+      summary: 'Standalone: start a passkey sign-in (discoverable credentials; user verification required)'
+      responses: { '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: WebAuthn authentication options, content: { application/json: { schema: { $ref: '#/components/schemas/WebAuthnStart' } } } }, '404': { description: Not in homerslab mode, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many attempts, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /auth/sign-in/verify:
+    post:
+      tags: [auth]
+      operationId: signInVerify
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WebAuthnFinish' } } } }
+      responses: { '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Signed in, headers: { Set-Cookie: { schema: { type: string }, description: 'shelf_session; HttpOnly; Secure; SameSite=Strict; Path=/' } }, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSession' } } } }, '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { description: 'Verification failed, an unknown passkey, or a kid''s account', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: Not in homerslab mode, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many attempts, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /auth/sign-out:
+    post: { tags: [auth], operationId: signOut, security: [], summary: Ends this browser's session (if any) and clears the cookie, responses: { '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Signed out } } }
+
+  /people:
+    post:
+      tags: [household]
+      operationId: addPerson
+      summary: 'Admins, standalone: add an adult, an admin or a kid (under HomersLab, people come from HomersLab)'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PersonInput' } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }, '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The handle is taken, or the household is managed by HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /people/{personId}:
+    parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
+    patch:
+      tags: [household]
+      operationId: editPerson
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PersonPatch' } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }, '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such person, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The last admin cannot stop being one; the handle is taken; or managed by HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+    delete:
+      tags: [household]
+      operationId: removePerson
+      summary: 'Admins, standalone: remove a person with their readings, passkeys and sessions'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Removed }, '404': { description: No such person, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'Not yourself, not the last admin; or managed by HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /people/{personId}/invites:
+    parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
+    post:
+      tags: [household]
+      operationId: invitePerson
+      summary: 'Admins, standalone: a one-time link (7 days) for an adult to enrol a passkey; the link is in this response only'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { type: object, required: [url, expiresAt], properties: { url: { type: string }, expiresAt: { type: string } } } } } }, '404': { description: No such person, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'Kids never sign in; or managed by HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /me/passkeys:
+    get: { tags: [auth], operationId: myPasskeys, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Passkey' } } } } } } }
+  /me/passkeys/{id}:
+    delete: { tags: [auth], operationId: removePasskey, parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Removed }, '404': { description: No such passkey of yours, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: Your last passkey stays, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } } }
 
   /month/{month}:
     parameters: [{ name: month, in: path, required: true, schema: { type: string, pattern: '^\d{4}-\d{2}$' } }]
@@ -161,17 +227,23 @@ paths:
 
 components:
   securitySchemes:
-    homerslabPerson: { type: apiKey, in: header, name: X-HomersLab-Person, description: 'SHELF_MODE=homerslab: the person id forwarded by the HomersLab proxy, trusted only from SHELF_TRUSTED_PROXY' }
-    session: { type: apiKey, in: cookie, name: shelf_session, description: 'SHELF_MODE=standalone: the session cookie of a passkey sign-in' }
+    homerslabPerson: { type: apiKey, in: header, name: X-HomersLab-Person, description: 'SHELF_MODE=homerslab: the person id forwarded by the HomersLab proxy, with X-HomersLab-Name and X-HomersLab-Role (admin, adult or kid); all three are trusted only from SHELF_TRUSTED_PROXY' }
+    session: { type: apiKey, in: cookie, name: shelf_session, description: 'SHELF_MODE=standalone: the session cookie of a passkey sign-in. Requests that change something must also carry an Origin header equal to SHELF_ORIGIN.' }
     shareToken: { type: http, scheme: bearer, description: 'A per-person phone share token: accepted by POST /shares and nothing else' }
   responses:
     Unauthorized: { description: 'No valid identity for this route (deny by default)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-    Forbidden: { description: 'Signed in, but not allowed (kids have no access; a person not in the household)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: 'Not allowed: a kid (kids have no access), someone HomersLab sends without a role, a non-admin on an admin route, or a request that changes something from another origin', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
     Error: { type: object, required: [error], properties: { error: {type: string} } }
     Money: { type: integer, description: centimes }
     Me: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, household: { type: array, items: { $ref: '#/components/schemas/Person' } }, mode: { enum: [homerslab, standalone] } } }
-    Person: { type: object, required: [id, name, role], properties: { id: {type: string}, name: {type: string}, role: { enum: [admin, adult, kid] }, ageBand: { enum: ['0-2','3-5','6-8','9-12', null] } } }
+    Person: { type: object, required: [id, name, role], properties: { id: {type: string}, name: {type: string}, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'] }, birthYear: { type: [integer, 'null'], description: kids only }, ageBand: { enum: ['0-2','3-5','6-8','9-12', null] }, signsIn: { type: boolean, description: 'standalone: has at least one passkey' } } }
+    PersonInput: { type: object, required: [name, role], additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: string, pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: integer, minimum: 2000, maximum: 2100 } } }
+    PersonPatch: { type: object, additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'], pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: [integer, 'null'], minimum: 2000, maximum: 2100 } } }
+    AuthSession: { type: object, required: [mode, signedIn, setupNeeded], properties: { mode: { enum: [homerslab, standalone] }, signedIn: {type: boolean}, setupNeeded: { type: boolean, description: 'standalone: no admin has a passkey yet; the setup link is in SHELF_DATA_DIR/setup-link.txt' }, person: { $ref: '#/components/schemas/Person' } } }
+    WebAuthnStart: { type: object, required: [challengeId, options], properties: { challengeId: {type: string}, options: { type: object, description: 'PublicKeyCredentialCreationOptionsJSON or PublicKeyCredentialRequestOptionsJSON' }, person: { type: object, properties: { name: {type: string} }, description: 'enrol: who the link is for' } } }
+    WebAuthnFinish: { type: object, required: [challengeId, response], additionalProperties: false, properties: { challengeId: { type: string, maxLength: 100 }, response: { type: object, description: 'RegistrationResponseJSON or AuthenticationResponseJSON' }, label: { type: string, maxLength: 40, description: 'enrol: a name for this passkey, e.g. Laptop' } } }
+    Passkey: { type: object, required: [id, label, createdAt], properties: { id: {type: string}, label: {type: string}, createdAt: {type: string}, lastUsedAt: { type: [string, 'null'] }, backedUp: {type: boolean} } }
     Budget: { type: object, properties: { min: { $ref: '#/components/schemas/Money' }, max: { $ref: '#/components/schemas/Money' } } }
     BookRef: { type: object, required: [id, title], properties: { id: {type: string}, title: {type: string}, authors: { type: array, items: {type: string} }, coverUrl: {type: string}, isbn13: {type: string}, isFiction: {type: boolean}, audience: { enum: [adult, kids] } } }
     Move: { enum: [deepen, connect, broaden, counterpoint, wildcard, intro, fiction] }

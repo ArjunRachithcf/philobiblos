@@ -1,7 +1,7 @@
 // Drizzle schema of contracts/schema.sql (the source of truth). test/migrations.contract.test.ts checks that the
 // migrations build the same tables, columns, keys, indexes and CHECK constraints as that file.
 import { sql } from 'drizzle-orm';
-import { blob, check, index, integer, primaryKey, real, sqliteTable, text, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { blob, check, index, uniqueIndex, integer, primaryKey, real, sqliteTable, text, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 
 // People ---------------------------------------------------------------
 export const person = sqliteTable('person', {
@@ -11,7 +11,40 @@ export const person = sqliteTable('person', {
   role: text('role', { enum: ['admin', 'adult', 'kid'] }).notNull(),
   birthYear: integer('birth_year'),
   settingsJson: text('settings_json').notNull().default('{}'),
-}, (t) => [check('person_role', sql`${t.role} IN ('admin','adult','kid')`)]);
+  handle: text('handle'),
+}, (t) => [check('person_role', sql`${t.role} IN ('admin','adult','kid')`), uniqueIndex('person_handle').on(t.handle)]);
+
+// Sign-in (standalone; ADR 0010) ---------------------------------------
+export const passkey = sqliteTable('passkey', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  publicKey: blob('public_key', { mode: 'buffer' }).notNull(),
+  counter: integer('counter').notNull().default(0),
+  transportsJson: text('transports_json').notNull().default('[]'),
+  backedUp: integer('backed_up').notNull().default(0),
+  label: text('label').notNull(),
+  createdAt: text('created_at').notNull(),
+  lastUsedAt: text('last_used_at'),
+});
+
+export const session = sqliteTable('session', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull(),
+  lastSeenAt: text('last_seen_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+});
+
+export const invite = sqliteTable('invite', {
+  id: text('id').primaryKey(),
+  purpose: text('purpose', { enum: ['setup', 'enrol'] }).notNull(),
+  personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  createdBy: text('created_by').references(() => person.id, { onDelete: 'set null' }),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  usedAt: text('used_at'),
+}, (t) => [check('invite_purpose', sql`${t.purpose} IN ('setup','enrol')`)]);
 
 export const householdSettings = sqliteTable('household_settings', {
   id: integer('id').primaryKey(),

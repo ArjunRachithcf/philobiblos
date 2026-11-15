@@ -1,15 +1,13 @@
-// contracts/schema.sql is the source of truth: the first migration is that file, and the Drizzle schema in
-// src/db/schema.ts describes the same database.
+// contracts/schema.sql is the source of truth: the migrations, applied in order, build exactly that database, and
+// the Drizzle schema in src/db/schema.ts describes it too. (0000_init.sql was the contract's v1, verbatim.)
 import { readFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { generateSQLiteDrizzleJson, generateSQLiteMigration } from 'drizzle-kit/api';
-import { schemaToMigration } from '../src/db/contract-sql';
 import { openDb } from '../src/db/open';
 import * as schema from '../src/db/schema';
 
 const contractSql = readFileSync(new URL('../../../contracts/schema.sql', import.meta.url), 'utf8');
-const migrationSql = readFileSync(new URL('../drizzle/0000_init.sql', import.meta.url), 'utf8');
 
 function checks(sql: string): string[] {
   const out: string[] = [];
@@ -48,6 +46,12 @@ function describeDb(db: Database.Database) {
   }));
 }
 
+function latestSnapshot(): string {
+  const journal = JSON.parse(readFileSync(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8')) as { entries: { idx: number }[] };
+  const last = journal.entries.at(-1)!.idx;
+  return `${String(last).padStart(4, '0')}_snapshot.json`;
+}
+
 function fromSql(statements: string[]): Database.Database {
   const db = new Database(':memory:');
   for (const s of statements) db.exec(s);
@@ -55,10 +59,6 @@ function fromSql(statements: string[]): Database.Database {
 }
 
 describe('migrations', () => {
-  it('0000_init.sql is contracts/schema.sql', () => {
-    expect(migrationSql).toBe(schemaToMigration(contractSql));
-  });
-
   it('the migrations build the contract\'s database', () => {
     const migrated = openDb(':memory:');
     expect(describeDb(migrated.$client)).toEqual(describeDb(fromSql([contractSql])));
@@ -73,7 +73,7 @@ describe('migrations', () => {
   });
 
   it('the Drizzle snapshot is in sync with the schema (pnpm db:generate has nothing to add)', async () => {
-    const snapshot = JSON.parse(readFileSync(new URL('../drizzle/meta/0000_snapshot.json', import.meta.url), 'utf8'));
+    const snapshot = JSON.parse(readFileSync(new URL(`../drizzle/meta/${latestSnapshot()}`, import.meta.url), 'utf8'));
     const current = await generateSQLiteDrizzleJson(schema, snapshot.id);
     expect(await generateSQLiteMigration(snapshot, current)).toEqual([]);
   });

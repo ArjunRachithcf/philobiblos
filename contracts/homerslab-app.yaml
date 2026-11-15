@@ -13,8 +13,12 @@ env:
   SHELF_DATA_DIR: /data
   SHELF_TZ: Europe/Zurich
 identity:
-  forwarded_header: X-HomersLab-Person     # trusted only from the proxy address HomersLab configures (SHELF_TRUSTED_PROXY)
-  household_api: true                      # reads people, roles and kids' birth years
+  # All three are trusted only from the proxy address HomersLab configures (SHELF_TRUSTED_PROXY); a person is added
+  # to Shelf the first time HomersLab sends them, and their name and role follow HomersLab on every request.
+  forwarded_header: X-HomersLab-Person     # stable person id
+  forwarded_name_header: X-HomersLab-Name
+  forwarded_role_header: X-HomersLab-Role  # admin | adult | kid
+  household_api: true                      # later: kids' birth years (not yet defined by HomersLab)
 audience: household                        # adults full access; kids: no access (adults act for them)
 secrets:
   - { key: SHELF_SEALING_KEY, file: true, description: Key that seals the delivery address (outside the database) }

@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { and, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { parseQuery } from '@shelf/contracts';
-import { hashToken, newToken } from '../auth';
+import { hashToken, newToken } from '../auth/tokens';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -13,7 +13,6 @@ import * as ex from '../stubs/examples';
 
 export async function stubRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.get('/health', { config: { auth: 'public' } }, async () => ({ ok: true, version: VERSION, mode: cfg.mode }));
-  app.get('/me', async () => ({ person: ex.alex, household: [ex.alex, ex.sam, ex.kid], mode: cfg.mode }));
 
   app.get<{ Params: { month: string } }>('/month/:month', async (req) => ex.monthPlan(req.params.month));
   app.put<{ Params: { month: string } }>('/month/:month/budget', async (req) => ex.monthPlan(req.params.month));

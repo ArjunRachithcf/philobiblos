@@ -1,4 +1,4 @@
--- Shelf database schema v1 (SQLite). Source of truth for migrations.
+-- Shelf database schema v2 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -10,7 +10,41 @@ CREATE TABLE person (
   name          TEXT NOT NULL,
   role          TEXT NOT NULL CHECK (role IN ('admin','adult','kid')),
   birth_year    INTEGER,                  -- kids: drives age band
-  settings_json TEXT NOT NULL DEFAULT '{}' -- per-person: mix, unread_limit, counterpoints, takeaways, takeaways_to_claude (default off), fiction, weights
+  settings_json TEXT NOT NULL DEFAULT '{}', -- per-person: mix, unread_limit, counterpoints, takeaways, takeaways_to_claude (default off), fiction, weights
+  handle        TEXT                      -- short lower-case name for the backlog's for:/by: (e.g. 'alex'); unique
+);
+CREATE UNIQUE INDEX person_handle ON person(handle);
+
+-- Sign-in (standalone; ADR 0010) ---------------------------------------
+CREATE TABLE passkey (                     -- WebAuthn credentials; user verification required at enrolment and sign-in
+  id              TEXT PRIMARY KEY NOT NULL, -- credential id (base64url)
+  person_id       TEXT NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+  public_key      BLOB NOT NULL,
+  counter         INTEGER NOT NULL DEFAULT 0,
+  transports_json TEXT NOT NULL DEFAULT '[]',
+  backed_up       INTEGER NOT NULL DEFAULT 0,
+  label           TEXT NOT NULL,           -- e.g. 'Laptop'
+  created_at      TEXT NOT NULL,
+  last_used_at    TEXT
+);
+
+CREATE TABLE session (                     -- a signed-in browser; the cookie holds a random value, this table its hash
+  id           TEXT PRIMARY KEY NOT NULL,  -- SHA-256 of the cookie value
+  person_id    TEXT NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+  created_at   TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  expires_at   TEXT NOT NULL               -- absolute end; idle sessions end earlier (see ADR 0010)
+);
+
+CREATE TABLE invite (                      -- one-time link to enrol a passkey: the first admin's, or a person's
+  id          TEXT PRIMARY KEY NOT NULL,
+  purpose     TEXT NOT NULL CHECK (purpose IN ('setup','enrol')),
+  person_id   TEXT REFERENCES person(id) ON DELETE CASCADE, -- null for 'setup' (the admin is created when it is used)
+  token_hash  TEXT NOT NULL UNIQUE,        -- SHA-256 of the link's token; the token itself is never stored
+  created_by  TEXT REFERENCES person(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  used_at     TEXT
 );
 
 CREATE TABLE household_settings (
