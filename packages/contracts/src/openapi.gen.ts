@@ -933,7 +933,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description Signed in, but not allowed (kids have no access; a person not in the household) */
+        /** @description Not allowed: a kid (kids have no access), someone HomersLab sends without a role, a non-admin on an admin route, or a request that changes something from another origin */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -1061,6 +1061,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            403: components["responses"]["Forbidden"];
             /** @description Not in homerslab mode (HomersLab signs people in) */
             404: {
                 headers: {
@@ -1123,6 +1124,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            403: components["responses"]["Forbidden"];
             /** @description Not in homerslab mode */
             404: {
                 headers: {
@@ -1161,6 +1163,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebAuthnStart"];
                 };
             };
+            403: components["responses"]["Forbidden"];
             /** @description Not in homerslab mode */
             404: {
                 headers: {
@@ -1223,6 +1226,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            403: components["responses"]["Forbidden"];
             /** @description Not in homerslab mode */
             404: {
                 headers: {
@@ -1259,6 +1263,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["Forbidden"];
         };
     };
     addPerson: {
