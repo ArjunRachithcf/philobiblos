@@ -219,12 +219,14 @@ describe('the takeaway boundary (architecture)', () => {
   });
   const sources = [join(root, 'apps/server/src'), ...readdirSync(join(root, 'packages')).map((d) => join(root, 'packages', d, 'src'))].flatMap(files);
 
+  // Per rule, the files allowed past it. backlog.ts selects named columns (status, feedback, dates) from `reading`;
+  // the first rule still keeps the takeaway column out of it by name.
   it.each([
-    ['the takeaway column or field', /\btakeaway\b/],
-    ['a whole-row select from the reading table (it holds the takeaway)', /select\(\)\s*\.from\(t\.reading\)|select\s+\*\s+from\s+reading\b/i],
-  ])('nothing else mentions %s', (_n, re) => {
+    ['the takeaway column or field', /\btakeaway\b/, ALLOWED],
+    ['a select from the reading table', /\.from\(t\.reading\)|\bfrom\s+reading\b/i, new Set([...ALLOWED, 'apps/server/src/backlog/backlog.ts'])],
+  ] as const)('nothing else mentions %s', (_n, re, allowed) => {
     expect(sources.length).toBeGreaterThan(20);
-    const hits = sources.map((f) => relative(root, f)).filter((f) => !ALLOWED.has(f) && re.test(readFileSync(join(root, f), 'utf8')));
+    const hits = sources.map((f) => relative(root, f)).filter((f) => !allowed.has(f) && re.test(readFileSync(join(root, f), 'utf8')));
     expect(hits).toEqual([]);
   });
 });

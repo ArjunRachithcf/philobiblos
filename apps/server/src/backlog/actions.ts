@@ -104,10 +104,45 @@ export const DEFAULT_FILTERS = [
 
 export function savedFilters(db: Db, me: string) {
   const mine = db.select().from(t.savedFilter).where(eq(t.savedFilter.personId, me)).orderBy(t.savedFilter.createdAt).all();
-  return mine.length ? mine.map((f) => ({ id: f.id, name: f.name, q: f.q })) : DEFAULT_FILTERS.map((f, i) => ({ id: `default-${i + 1}`, ...f }));
+  return mine.length ? mine.map((f) => ({ id: f.id.replace(/^(default-\d)-.*$/, '$1'), name: f.name, q: f.q })) : DEFAULT_FILTERS.map((f, i) => ({ id: `default-${i + 1}`, ...f }));
 }
 
 export const MAX_FILTERS = 20;
+
+/** Your list as rows: the first change to it (save, rename, remove) starts it from the defaults. */
+function startList(db: Db, me: string, now: Date): void {
+  if (db.select({ id: t.savedFilter.id }).from(t.savedFilter).where(eq(t.savedFilter.personId, me)).get()) return;
+  for (const [i, f] of DEFAULT_FILTERS.entries()) {
+    db.insert(t.savedFilter).values({ id: `default-${i + 1}-${me}`, personId: me, ...f, createdAt: new Date(now.getTime() - (DEFAULT_FILTERS.length - i) - 1000).toISOString() }).run();
+  }
+}
+
+/** A default's id before the list starts (default-N) is the same filter as its row after (default-N-<person>). */
+function rowId(me: string, id: string): string {
+  return /^default-\d$/.test(id) ? `${id}-${me}` : id;
+}
+
+/** PATCH /backlog/saved-filters/{id}: renames one of your filters. */
+export function renameFilter(db: Db, me: string, id: string, body: unknown, now = new Date()): void {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BacklogError(400, 'a JSON object is needed');
+  const b = body as Record<string, unknown>;
+  for (const k of Object.keys(b)) if (k !== 'name') throw new BacklogError(400, `unknown field ${k}`);
+  const name = text(b.name, 'name', 40, true)!;
+  db.transaction((tx) => {
+    startList(tx as unknown as Db, me, now);
+    const r = tx.update(t.savedFilter).set({ name }).where(and(eq(t.savedFilter.id, rowId(me, id)), eq(t.savedFilter.personId, me))).run();
+    if (r.changes === 0) throw new BacklogError(404, 'no such saved filter of yours');
+  });
+}
+
+/** DELETE /backlog/saved-filters/{id}: removes one of your filters (an empty list shows the defaults again). */
+export function removeFilter(db: Db, me: string, id: string, now = new Date()): void {
+  db.transaction((tx) => {
+    startList(tx as unknown as Db, me, now);
+    const r = tx.delete(t.savedFilter).where(and(eq(t.savedFilter.id, rowId(me, id)), eq(t.savedFilter.personId, me))).run();
+    if (r.changes === 0) throw new BacklogError(404, 'no such saved filter of yours');
+  });
+}
 
 export function saveFilter(db: Db, me: string, body: unknown, now = new Date()) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BacklogError(400, 'a JSON object is needed');
@@ -116,10 +151,10 @@ export function saveFilter(db: Db, me: string, body: unknown, now = new Date()) 
   const name = text(b.name, 'name', 40, true)!;
   const q = text(b.q, 'q', 500, true)!;
   const existing = db.select().from(t.savedFilter).where(eq(t.savedFilter.personId, me)).all();
-  if (existing.length >= MAX_FILTERS) throw new BacklogError(409, `at most ${MAX_FILTERS} saved filters`);
+  if (existing.length >= MAX_FILTERS) throw new BacklogError(409, `at most ${MAX_FILTERS} saved filters: remove one first`);
   // The first filter you save starts your own list, from the defaults.
   db.transaction((tx) => {
-    if (!existing.length) for (const [i, f] of DEFAULT_FILTERS.entries()) tx.insert(t.savedFilter).values({ id: ulid(), personId: me, ...f, createdAt: new Date(now.getTime() - (DEFAULT_FILTERS.length - i)).toISOString() }).run();
+    startList(tx as unknown as Db, me, now);
     tx.insert(t.savedFilter).values({ id: ulid(), personId: me, name, q, createdAt: now.toISOString() }).run();
   });
 }

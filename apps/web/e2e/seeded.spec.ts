@@ -127,14 +127,44 @@ test('the backlog: the filter bar, labels, tabs, a score\'s parts, grouping, bul
   await page.getByRole('button', { name: 'Clear' }).click();
   await expect(bar).toHaveValue('is:open sort:score');
 
-  // a dropdown with counts, then grouping
-  await page.getByRole('combobox', { name: 'Filter by for' }).selectOption('kid2');
+  // a menu with counts, by keyboard only: arrows move and change nothing; Enter chooses
+  const forMenu = page.getByRole('button', { name: /^Filter by for/ });
+  await forMenu.focus();
+  await page.keyboard.press('ArrowDown');
+  const menu = page.getByRole('menu', { name: /Filter by for/ });
+  await expect(menu).toBeVisible();
+  await expect(forMenu).toHaveAttribute('aria-expanded', 'true');
+  await expect(menu.getByRole('menuitem').first()).toBeFocused();
+  await expectAccessible(page, 'backlog with a menu open');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown'); // wraps around: still nothing applied
+  await expect(bar).toHaveValue('is:open sort:score');
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(forMenu).toBeFocused();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('End');
+  await expect(page.getByRole('menuitem', { name: /^kid2/ })).toBeFocused();
+  await page.keyboard.press('Enter');
   await expect(bar).toHaveValue('is:open sort:score for:kid2');
+  await expect(forMenu).toBeFocused();
   await page.getByRole('button', { name: 'Clear' }).click();
-  await page.getByRole('combobox', { name: 'Group by' }).selectOption('for');
+
+  // sort and group are menus of radio items
+  await page.getByRole('button', { name: /^Group by/ }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('menuitemradio', { name: 'No groups (current)' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Space');
   await expect(page.getByRole('heading', { name: 'Kid 2', level: 2 })).toBeVisible();
   await expectAccessible(page, 'backlog grouped');
-  await page.getByRole('combobox', { name: 'Group by' }).selectOption('none');
+  await page.getByRole('button', { name: /^Sort by/ }).focus();
+  await page.keyboard.press('ArrowUp'); // opens on the last item: Title
+  await page.keyboard.press('Enter');
+  await expect(bar).toHaveValue('is:open sort:title');
+  await page.getByRole('button', { name: /^Group by/ }).click();
+  await page.getByRole('menuitemradio', { name: 'No groups' }).click();
+  await page.getByRole('button', { name: 'Clear' }).click();
 
   // bulk: not for me, then it is under closed, then reopened
   await page.getByRole('checkbox', { name: 'Select Value Beyond Price' }).check();
@@ -148,6 +178,16 @@ test('the backlog: the filter bar, labels, tabs, a score\'s parts, grouping, bul
   await expect(page.getByText('Value Beyond Price', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: /^\d+ open$/ }).click();
   await expect(page.getByText('Value Beyond Price', { exact: true })).toBeVisible();
+
+  // saved filters: rename one, remove one
+  await page.getByRole('button', { name: 'Manage' }).click();
+  await page.getByLabel('Name of Cheap & good').fill('Bargains');
+  await page.getByRole('button', { name: 'Rename Cheap & good' }).click();
+  await expect(page.getByRole('button', { name: 'Bargains', exact: true })).toBeVisible();
+  await expectAccessible(page, 'managing saved filters');
+  await page.getByRole('button', { name: 'Remove From Instagram' }).click();
+  await expect(page.getByRole('button', { name: 'From Instagram', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Manage' }).click();
 
   // a saved filter, and a book added by hand for a kid
   await page.getByRole('button', { name: 'Kids', exact: true }).click();

@@ -1,7 +1,7 @@
 // The Backlog (spec §4, contracts/backlog-query.md). The rules are in src/backlog/.
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Db } from '../db/open';
-import { BacklogError, addToBacklog, bulk, saveFilter, savedFilters } from '../backlog/actions';
+import { BacklogError, addToBacklog, bulk, removeFilter, renameFilter, saveFilter, savedFilters } from '../backlog/actions';
 import { LIMIT_MAX, getCandidate, listBacklog } from '../backlog/backlog';
 
 export async function backlogRoutes(app: FastifyInstance, db: Db) {
@@ -32,5 +32,11 @@ export async function backlogRoutes(app: FastifyInstance, db: Db) {
   app.get('/backlog/saved-filters', async (req) => savedFilters(db, req.caller!.personId));
   app.post('/backlog/saved-filters', async (req, reply) => {
     try { saveFilter(db, req.caller!.personId, req.body); return reply.code(201).send(); } catch (e) { return fail(reply, e); }
+  });
+  app.patch<{ Params: { id: string } }>('/backlog/saved-filters/:id', async (req, reply) => {
+    try { renameFilter(db, req.caller!.personId, req.params.id, req.body); return reply.code(204).send(); } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>('/backlog/saved-filters/:id', async (req, reply) => {
+    try { removeFilter(db, req.caller!.personId, req.params.id); return reply.code(204).send(); } catch (e) { return fail(reply, e); }
   });
 }

@@ -1,7 +1,7 @@
 // The Backlog (spec §4, the design's "Backlog"): one filter bar with the query language of contracts/backlog-query.md
 // (parsed by packages/contracts here and on the server), open/closed tabs, dropdowns per qualifier with counts, saved
 // filters, labels that add their qualifier, a score that opens into its parts, grouping, and bulk actions.
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 // The query module only: the package's root also holds the AI schemas (Ajv), which the page must not load (CSP).
 import { parseQuery, withQualifier, type QualifierKey } from '@shelf/contracts/backlog-query';
 import { api, message, type Candidate, type Me } from '../api';
@@ -20,6 +20,7 @@ const REASON: Record<string, string> = { not_for_me: 'Not for me', snoozed: 'Sno
 const FACETS: [string, string][] = [['for', 'For'], ['move', 'Move'], ['idea', 'Idea'], ['source', 'Source']];
 const SORTS: [string, string][] = [['score', 'Score'], ['links', 'Links'], ['price', 'Price'], ['added', 'Added'], ['title', 'Title']];
 type Group = 'none' | 'for' | 'move' | 'idea';
+const GROUPS: [Group, string][] = [['none', 'No groups'], ['for', 'Group: person'], ['move', 'Group: move'], ['idea', 'Group: idea or theme']];
 const chf = (c?: number) => (c == null ? null : `CHF ${(c / 100).toFixed(2)}`);
 
 export function Backlog({ me }: { me: Me }) {
@@ -83,6 +84,7 @@ export function Backlog({ me }: { me: Me }) {
             {saved.map((f) => (
               <button key={f.id} type="button" className="chip" aria-pressed={f.q === q} onClick={() => setQ(f.q ?? DEFAULT_Q)}>{f.name}</button>
             ))}
+            <ManageFilters saved={saved} onChanged={async (text) => { await loadSaved(); setSaid(text); }} />
           </div>
         )}
         <form role="search" className="bl-bar" onSubmit={(e) => { e.preventDefault(); setQ(draft.trim() || DEFAULT_Q); }}>
@@ -102,19 +104,17 @@ export function Backlog({ me }: { me: Me }) {
             <button type="button" aria-pressed={state === 'open'} onClick={() => add('is', 'open')}>{page?.counts.open ?? 0} open</button>
             <button type="button" aria-pressed={state === 'closed'} onClick={() => add('is', 'closed')}>{page?.counts.closed ?? 0} closed</button>
           </div>
+          {/* Menu buttons (ARIA APG menu button), not <select>s: a closed select applies its next value on Arrow Down in
+              some browsers, which here would refilter on every key (WCAG 3.2.2). Nothing happens until a value is chosen. */}
           {FACETS.map(([key, label]) => (
-            <select key={key} className="input select bl-select" aria-label={`Filter by ${label.toLowerCase()}`} value=""
-              onChange={(e) => e.target.value && add(key as QualifierKey, e.target.value)}>
-              <option value="">{label}</option>
-              {(page?.facets[key] ?? []).map((f) => <option key={f.value} value={f.value}>{key === 'move' ? MOVE[f.value!] ?? f.value : f.value} ({f.count})</option>)}
-            </select>
+            <MenuButton key={key} label={label} name={`Filter by ${label.toLowerCase()}`}
+              items={(page?.facets[key] ?? []).map((f) => ({ value: f.value!, text: `${key === 'move' ? MOVE[f.value!] ?? f.value : f.value} (${f.count})` }))}
+              empty="Nothing to filter by" onPick={(v) => add(key as QualifierKey, v)} />
           ))}
-          <select className="input select bl-select" aria-label="Sort by" value={sort.field} onChange={(e) => add('sort', e.target.value)}>
-            {SORTS.map(([k, l]) => <option key={k} value={k}>Sort: {l}</option>)}
-          </select>
-          <select className="input select bl-select" aria-label="Group by" value={group} onChange={(e) => setGroup(e.target.value as Group)}>
-            <option value="none">No groups</option><option value="for">Group: person</option><option value="move">Group: move</option><option value="idea">Group: idea or theme</option>
-          </select>
+          <MenuButton label={`Sort: ${SORTS.find(([k]) => k === sort.field)?.[1] ?? 'Score'}`} name="Sort by" checked={sort.field}
+            items={SORTS.map(([k, l]) => ({ value: k, text: l }))} onPick={(v) => add('sort', v)} />
+          <MenuButton label={GROUPS.find(([k]) => k === group)![1]} name="Group by" checked={group}
+            items={GROUPS.map(([k, l]) => ({ value: k, text: l }))} onPick={(v) => setGroup(v as Group)} />
         </div>
 
         {selected.size > 0 && (
@@ -248,5 +248,112 @@ function AddBook({ me, onAdded }: { me: Me; onAdded: (title: string) => Promise<
         <div className="btn-row"><button type="submit" className="btn btn-primary" disabled={!title.trim()}>Add to the backlog</button></div>
       </form>
     </section>
+  );
+}
+
+/**
+ * A menu button (ARIA APG): Enter, Space or Arrow Down opens the menu on its first (or checked) item, Arrow Up on its
+ * last; arrows, Home and End move; Enter or Space chooses; Escape closes and returns to the button; Tab or a click
+ * elsewhere closes. With `checked`, the items are menuitemradio.
+ */
+function MenuButton({ label, name, items, onPick, checked, empty = 'Nothing here' }: {
+  label: string; name: string; items: { value: string; text: string }[]; onPick: (v: string) => void; checked?: string; empty?: string;
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const first = useRef<'first' | 'last'>('first');
+
+  useEffect(() => {
+    if (!open) return;
+    const i = first.current === 'last' ? items.length - 1 : Math.max(0, items.findIndex((x) => x.value === checked));
+    refs.current[i]?.focus();
+    const away = (e: PointerEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  }, [open]); // focus once, when it opens (not on each new list of items)
+
+  const close = (focus = true) => { setOpen(false); if (focus) button.current?.focus(); };
+  const onButtonKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      first.current = e.key === 'ArrowUp' ? 'last' : 'first';
+      setOpen(true);
+    }
+  };
+  const onMenuKey = (e: React.KeyboardEvent, i: number) => {
+    const n = items.length;
+    const to = e.key === 'ArrowDown' ? (i + 1) % n : e.key === 'ArrowUp' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (to >= 0) { e.preventDefault(); refs.current[to]?.focus(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'Tab') close(false);
+  };
+  const role = checked === undefined ? 'menuitem' : 'menuitemradio';
+  return (
+    <div className="bl-menu-wrap" ref={wrap}>
+      <button ref={button} type="button" className="btn btn-sm bl-menu-btn" id={`${id}-b`} aria-haspopup="menu" aria-expanded={open}
+        aria-controls={`${id}-m`} aria-label={name === label ? undefined : `${name}: ${label}`}
+        onClick={() => { first.current = 'first'; setOpen(!open); }} onKeyDown={onButtonKey}>
+        {label}<span aria-hidden="true" className="bl-chev">▾</span>
+      </button>
+      {open && (
+        <div className="menu is-open bl-menu" role="menu" id={`${id}-m`} aria-labelledby={`${id}-b`}>
+          {items.length === 0 ? <p className="menu-label">{empty}</p> : items.map((it, i) => (
+            <button key={it.value} ref={(el) => { refs.current[i] = el; }} type="button" role={role} tabIndex={-1} className="menu-item"
+              {...(role === 'menuitemradio' ? { 'aria-checked': it.value === checked } : {})}
+              onClick={() => { close(); onPick(it.value); }} onKeyDown={(e) => onMenuKey(e, i)}>
+              {it.text}{it.value === checked && <span className="sr-only"> (current)</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Rename or remove saved filters (the list is capped, so removing is how there is room again). */
+function ManageFilters({ saved, onChanged }: { saved: Saved[]; onChanged: (said: string) => Promise<void> }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const call = async (f: Saved, method: 'PATCH' | 'DELETE', name?: string) => {
+    setError(null);
+    try {
+      await api(`/backlog/saved-filters/${encodeURIComponent(f.id ?? '')}`, { method, ...(name ? { body: { name } } : {}) });
+      await onChanged(method === 'DELETE' ? `${f.name} removed.` : `Renamed to ${name}.`);
+    } catch (e) { setError(message(e)); }
+  };
+  return (
+    <>
+      <button type="button" className="chip" aria-expanded={open} aria-controls={`${id}-p`} onClick={() => setOpen(!open)}>Manage</button>
+      {open && (
+        <div className="card bl-manage" id={`${id}-p`}>
+          <ul className="group" role="list" aria-label="Your saved filters">
+            {saved.map((f) => <ManageRow key={f.id} f={f} onRename={(n) => void call(f, 'PATCH', n)} onRemove={() => void call(f, 'DELETE')} />)}
+          </ul>
+          {error && <Notice kind="error">{error}</Notice>}
+        </div>
+      )}
+    </>
+  );
+}
+
+function ManageRow({ f, onRename, onRemove }: { f: Saved; onRename: (name: string) => void; onRemove: () => void }) {
+  const id = useId();
+  const [name, setName] = useState(f.name ?? '');
+  return (
+    <li className="row bl-manage-row">
+      <span className="row-main">
+        <label className="sr-only" htmlFor={id}>Name of {f.name}</label>
+        <input className="input" id={id} value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
+        <span className="row-sub mono wrap">{f.q}</span>
+      </span>
+      <span className="row-trail">
+        <button type="button" className="btn btn-sm" disabled={!name.trim() || name.trim() === f.name} onClick={() => onRename(name.trim())}>Rename<span className="sr-only"> {f.name}</span></button>
+        <button type="button" className="btn btn-sm btn-destructive" onClick={onRemove}>Remove<span className="sr-only"> {f.name}</span></button>
+      </span>
+    </li>
   );
 }

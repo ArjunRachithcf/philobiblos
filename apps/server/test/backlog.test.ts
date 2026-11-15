@@ -180,7 +180,7 @@ describe('bulk actions (POST /backlog/bulk)', () => {
 
 describe('saved filters', () => {
   it('the defaults until you save one; then yours, per person; at most 20', async () => {
-    const get = async (who: string) => (await built.app.inject({ url: '/api/backlog/saved-filters', headers: { cookie: cookie[who]! } })).json() as { name: string; q: string }[];
+    const get = async (who: string) => (await built.app.inject({ url: '/api/backlog/saved-filters', headers: { cookie: cookie[who]! } })).json() as { id: string; name: string; q: string }[];
     expect((await get('alex')).map((f) => f.name)).toEqual(['To buy now', 'Kids', 'Cheap & good', 'From Instagram']);
     expect((await post('alex', '/api/backlog/saved-filters', { name: 'Kites', q: 'theme:courage' })).statusCode).toBe(201);
     expect((await get('alex')).map((f) => f.name)).toEqual(['To buy now', 'Kids', 'Cheap & good', 'From Instagram', 'Kites']);
@@ -188,6 +188,28 @@ describe('saved filters', () => {
     for (const body of [{ name: '', q: 'x' }, { name: 'x' }, { name: 'x', q: 'y', z: 1 }]) expect((await post('alex', '/api/backlog/saved-filters', body)).statusCode).toBe(400);
     for (let i = 0; i < 15; i++) await post('alex', '/api/backlog/saved-filters', { name: `f${i}`, q: 'is:open' });
     expect((await post('alex', '/api/backlog/saved-filters', { name: 'one more', q: 'is:open' })).statusCode).toBe(409);
+
+    // the cap never locks anyone out: remove one, then save again; rename one
+    const call = (who: string, method: 'PATCH' | 'DELETE', fid: string, payload?: unknown) =>
+      built.app.inject({ method, url: `/api/backlog/saved-filters/${encodeURIComponent(fid)}`, payload: payload as object, headers: { cookie: cookie[who]!, origin: ORIGIN } });
+    const kites = (await get('alex')).find((f) => f.name === 'Kites')!;
+    expect((await call('partner', 'DELETE', kites.id)).statusCode).toBe(404); // not yours
+    expect((await call('partner', 'PATCH', kites.id, { name: 'Mine now' })).statusCode).toBe(404);
+    expect((await call('alex', 'DELETE', kites.id)).statusCode).toBe(204);
+    expect((await post('alex', '/api/backlog/saved-filters', { name: 'one more', q: 'is:open' })).statusCode).toBe(201);
+    expect((await call('alex', 'PATCH', 'default-1', { name: 'Buy soon' })).statusCode).toBe(204);
+    expect((await get('alex'))[0]).toMatchObject({ id: 'default-1', name: 'Buy soon', q: 'is:open is:adult score:>40' });
+    for (const body of [{ name: '' }, { name: 'x', q: 'y' }]) expect((await call('alex', 'PATCH', 'default-1', body)).statusCode).toBe(400);
+    expect((await call('alex', 'DELETE', 'nope')).statusCode).toBe(404);
+  });
+
+  it('a default can be removed or renamed before anything is saved; the rest stay', async () => {
+    const get = async () => (await built.app.inject({ url: '/api/backlog/saved-filters', headers: { cookie: cookie.partner! } })).json() as { id: string; name: string }[];
+    const del = await built.app.inject({ method: 'DELETE', url: '/api/backlog/saved-filters/default-2', headers: { cookie: cookie.partner!, origin: ORIGIN } });
+    expect(del.statusCode).toBe(204);
+    expect((await get()).map((f) => f.name)).toEqual(['To buy now', 'Cheap & good', 'From Instagram']);
+    // Alex's list is Alex's
+    expect((await built.app.inject({ url: '/api/backlog/saved-filters', headers: { cookie: cookie.alex! } })).json().map((f: { name: string }) => f.name)).toContain('Kids');
   });
 });
 

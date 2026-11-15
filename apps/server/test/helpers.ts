@@ -68,6 +68,7 @@ export const isPublic = (o: { op: Op }) => security(o).length === 0;
 
 /** Path parameters that name something real in household() (and leave the signed-in admin alone). */
 const PARAMS: Record<string, Record<string, string>> = {
+  renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
 };
