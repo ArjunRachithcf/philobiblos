@@ -1,0 +1,67 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "shelf/ai/tag_book.schema.json",
+ "type": "object",
+ "required": [
+  "audience",
+  "isFiction"
+ ],
+ "properties": {
+  "audience": {
+   "enum": [
+    "adult",
+    "kids"
+   ]
+  },
+  "isFiction": {
+   "type": "boolean"
+  },
+  "ideas": {
+   "type": "array",
+   "maxItems": 4,
+   "items": {
+    "type": "object",
+    "required": [
+     "name",
+     "layer",
+     "confidence"
+    ],
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "isNewIdea": {
+      "type": "boolean"
+     },
+     "layer": {
+      "enum": [
+       "intro",
+       "core",
+       "deep",
+       "counterpoint"
+      ]
+     },
+     "confidence": {
+      "type": "number"
+     }
+    }
+   }
+  },
+  "kidsThemes": {
+   "type": "array",
+   "maxItems": 2,
+   "items": {
+    "type": "string"
+   }
+  },
+  "ageBand": {
+   "enum": [
+    "0-2",
+    "3-5",
+    "6-8",
+    "9-12",
+    null
+   ]
+  }
+ }
+}

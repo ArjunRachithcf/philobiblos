@@ -1,0 +1,36 @@
+{
+ "books": [
+  {
+   "title": "Calm at Bedtime",
+   "author": "Nadia Romero",
+   "seenIn": [
+    3
+   ],
+   "confidence": 0.97,
+   "audienceGuess": "adult",
+   "offTheme": false
+  },
+  {
+   "title": "The Patient Parent",
+   "author": "Dana Weiss",
+   "seenIn": [
+    8
+   ],
+   "confidence": 0.95,
+   "audienceGuess": "adult",
+   "offTheme": false
+  },
+  {
+   "title": "Nine Months in Pictures",
+   "author": "Eva Lindqvist",
+   "seenIn": [
+    10
+   ],
+   "confidence": 0.9,
+   "audienceGuess": "adult",
+   "offTheme": true,
+   "offThemeReason": "pregnancy guide"
+  }
+ ],
+ "framesRead": 11
+}

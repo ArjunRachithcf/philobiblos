@@ -1,0 +1,261 @@
+openapi: 3.1.0
+info:
+  title: Shelf API
+  version: 0.1.0
+  description: |
+    HTTP API of Shelf. Same under HomersLab and standalone. Authentication: HomersLab forwarded identity
+    (`X-HomersLab-Person`, trusted only from the configured proxy address) or a standalone passkey session cookie.
+    `/shares` also takes a per-person share token (`Authorization: Bearer`), which is good for nothing else.
+    Secrets (tokens, the mail password, the delivery address) never appear in a response, except a new
+    share token once, in the response that creates it. See ADR 0009 and docs/security.md.
+    Money is in centimes (integer). Dates are ISO-8601.
+servers: [{ url: /api }]
+security: [ { homerslabPerson: [] }, { session: [] } ]
+tags: [{name: month}, {name: backlog}, {name: brain}, {name: library}, {name: inbox}, {name: orders}, {name: settings}, {name: system}]
+
+paths:
+  /health:
+    get: { tags: [system], operationId: health, security: [], responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ok: {type: boolean}, version: {type: string}, mode: {enum: [homerslab, standalone]} } } } } } } }
+
+  /me:
+    get: { tags: [system], operationId: me, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Current person and household, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } } } }
+
+  /month/{month}:
+    parameters: [{ name: month, in: path, required: true, schema: { type: string, pattern: '^\d{4}-\d{2}$' } }]
+    get:
+      tags: [month]
+      operationId: getMonth
+      summary: The month's picks, budget, focus and order progress
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
+  /month/{month}/budget:
+    parameters: [{ name: month, in: path, required: true, schema: { type: string } }]
+    put:
+      tags: [month]
+      operationId: setMonthBudget
+      summary: One-month override (null clears it)
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Budget' } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Recomputed plan, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
+  /month/{month}/picks:
+    parameters: [{ name: month, in: path, required: true, schema: { type: string } }]
+    post:
+      tags: [month]
+      operationId: changePicks
+      summary: Add, remove or swap a pick; or recompute (ask AI again)
+      requestBody: { content: { application/json: { schema: { type: object, properties: { add: { type: array, items: { $ref: '#/components/schemas/PickRef' } }, remove: { type: array, items: { $ref: '#/components/schemas/PickRef' } }, recompute: { type: boolean } } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
+
+  /backlog:
+    get:
+      tags: [backlog]
+      operationId: listBacklog
+      summary: GitHub-style filtered list (grammar in contracts/backlog-query.md)
+      parameters:
+        - { name: q, in: query, schema: { type: string, default: 'is:open sort:score' }, example: 'is:open is:adult move:deepen price:<30 sort:score' }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '200':
+          description: OK
+          content: { application/json: { schema: { type: object, properties: {
+            items: { type: array, items: { $ref: '#/components/schemas/Candidate' } },
+            counts: { type: object, properties: { open: {type: integer}, closed: {type: integer} } },
+            facets: { type: object, additionalProperties: { type: array, items: { type: object, properties: { value: {type: string}, count: {type: integer} } } } },
+            nextCursor: { type: [string, 'null'] },
+            queryErrors: { type: array, items: { type: string } } } } } }
+    post:
+      tags: [backlog]
+      operationId: addToBacklog
+      requestBody: { content: { application/json: { schema: { type: object, required: [title], properties: { title: {type: string}, author: {type: string}, isbn13: {type: string}, for: {type: string}, note: {type: string} } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Candidate' } } } } }
+  /backlog/bulk:
+    post:
+      tags: [backlog]
+      operationId: bulkBacklog
+      requestBody: { content: { application/json: { schema: { type: object, required: [ids, action], properties: { ids: { type: array, items: {type: string} }, action: { enum: [not_for_me, snooze, reopen, add_to_month] }, months: {type: integer} } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } }
+  /backlog/saved-filters:
+    get: { tags: [backlog], operationId: savedFilters, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { type: object, properties: { id: {type: string}, name: {type: string}, q: {type: string} } } } } } } } }
+    post: { tags: [backlog], operationId: saveFilter, requestBody: { content: { application/json: { schema: { type: object, properties: { name: {type: string}, q: {type: string} } } } } }, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created } } }
+
+  /people/{personId}/brain:
+    parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [brain]
+      operationId: getBrain
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Ideas, layers, edges, focus, content: { application/json: { schema: { $ref: '#/components/schemas/Brain' } } } } }
+  /links/{fromBook}/{toBook}:
+    parameters: [{ name: fromBook, in: path, required: true, schema: {type: string} }, { name: toBook, in: path, required: true, schema: {type: string} }]
+    put:
+      tags: [brain]
+      operationId: reviewLink
+      requestBody: { content: { application/json: { schema: { type: object, properties: { state: { enum: [confirmed, rejected] } } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } }
+  /ideas/{ideaId}:
+    parameters: [{ name: ideaId, in: path, required: true, schema: {type: string} }]
+    patch:
+      tags: [brain]
+      operationId: editIdea
+      requestBody: { content: { application/json: { schema: { type: object, properties: { name: {type: string}, mergeInto: {type: string} } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } }
+
+  /people/{personId}/library:
+    parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
+    get: { tags: [library], operationId: getLibrary, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Library' } } } } } }
+  /people/{personId}/reading/{bookId}:
+    parameters: [{ name: personId, in: path, required: true, schema: {type: string} }, { name: bookId, in: path, required: true, schema: {type: string} }]
+    put:
+      tags: [library]
+      operationId: setReading
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/ReadingUpdate' } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Reading' } } } } }
+
+  /inbox:
+    get: { tags: [inbox], operationId: getInbox, parameters: [{ name: filter, in: query, schema: { enum: [all, ai, shared] } }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InboxItem' } } } } } } }
+  /inbox/{itemId}/books/{index}:
+    parameters: [{ name: itemId, in: path, required: true, schema: {type: string} }, { name: index, in: path, required: true, schema: {type: integer} }]
+    post:
+      tags: [inbox]
+      operationId: decideFound
+      requestBody: { content: { application/json: { schema: { type: object, properties: { action: { enum: [add, skip] }, for: {type: string} } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } }
+  /shares:
+    post:
+      tags: [inbox]
+      operationId: createShare
+      security: [ { homerslabPerson: [] }, { session: [] }, { shareToken: [] } ]
+      summary: Phone share target (PWA share_target, or an iOS Shortcut with a per-person share token)
+      requestBody:
+        content:
+          multipart/form-data: { schema: { type: object, properties: { url: {type: string}, text: {type: string}, note: {type: string}, media: { type: array, items: { type: string, format: binary } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { id: {type: string}, status: { enum: [received, reading] } } } } } }, '413': { description: 'Too many files (more than 30) or a file over 20 MB', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /share-tokens:
+    get: { tags: [inbox], operationId: listShareTokens, summary: The current person's share tokens (never the token itself), responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ShareToken' } } } } } } }
+    post:
+      tags: [inbox]
+      operationId: createShareToken
+      summary: A new share token for the current person; the token is in this response only, and stored hashed
+      requestBody: { content: { application/json: { schema: { type: object, required: [label], properties: { label: {type: string, maxLength: 60} } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/ShareToken' }, { type: object, required: [token], properties: { token: {type: string} } } ] } } } } }
+  /share-tokens/{id}:
+    delete: { tags: [inbox], operationId: revokeShareToken, parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Revoked } } }
+  /shares/{id}:
+    get: { tags: [inbox], operationId: getShare, parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Progress and result, content: { application/json: { schema: { $ref: '#/components/schemas/Share' } } } } } }
+
+  /orders:
+    post:
+      tags: [orders]
+      operationId: createOrderDraft
+      summary: Turn the month's picks into an order and its Compose link, a mailto with the text filled in (never sends)
+      requestBody: { content: { application/json: { schema: { type: object, properties: { month: {type: string} } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } } }
+  /orders/{id}:
+    get: { tags: [orders], operationId: getOrder, parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } } } }
+
+  /settings:
+    get: { tags: [settings], operationId: getSettings, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } } } }
+    patch: { tags: [settings], operationId: patchSettings, requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
+  /jobs/{job}/run:
+    post: { tags: [system], operationId: runJob, parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, ai_suggest] } }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started } } }
+
+components:
+  securitySchemes:
+    homerslabPerson: { type: apiKey, in: header, name: X-HomersLab-Person, description: 'SHELF_MODE=homerslab: the person id forwarded by the HomersLab proxy, trusted only from SHELF_TRUSTED_PROXY' }
+    session: { type: apiKey, in: cookie, name: shelf_session, description: 'SHELF_MODE=standalone: the session cookie of a passkey sign-in' }
+    shareToken: { type: http, scheme: bearer, description: 'A per-person phone share token: accepted by POST /shares and nothing else' }
+  responses:
+    Unauthorized: { description: 'No valid identity for this route (deny by default)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: 'Signed in, but not allowed (kids have no access; a person not in the household)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  schemas:
+    Error: { type: object, required: [error], properties: { error: {type: string} } }
+    Money: { type: integer, description: centimes }
+    Me: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, household: { type: array, items: { $ref: '#/components/schemas/Person' } }, mode: { enum: [homerslab, standalone] } } }
+    Person: { type: object, required: [id, name, role], properties: { id: {type: string}, name: {type: string}, role: { enum: [admin, adult, kid] }, ageBand: { enum: ['0-2','3-5','6-8','9-12', null] } } }
+    Budget: { type: object, properties: { min: { $ref: '#/components/schemas/Money' }, max: { $ref: '#/components/schemas/Money' } } }
+    BookRef: { type: object, required: [id, title], properties: { id: {type: string}, title: {type: string}, authors: { type: array, items: {type: string} }, coverUrl: {type: string}, isbn13: {type: string}, isFiction: {type: boolean}, audience: { enum: [adult, kids] } } }
+    Move: { enum: [deepen, connect, broaden, counterpoint, wildcard, intro, fiction] }
+    ScorePart: { type: object, properties: { label: {type: string}, value: {type: number}, kind: {type: string} } }
+    Candidate:
+      type: object
+      properties:
+        id: {type: string}
+        book: { $ref: '#/components/schemas/BookRef' }
+        for: { $ref: '#/components/schemas/Person' }
+        state: { enum: [open, closed] }
+        closedReason: { enum: [not_for_me, snoozed, owned, repeats, picked, null] }
+        move: { $ref: '#/components/schemas/Move' }
+        ideas: { type: array, items: { type: object, properties: { id: {type: string}, name: {type: string}, layer: { enum: [intro, core, deep, counterpoint] } } } }
+        theme: { type: [string, 'null'] }
+        buildsOn: { type: array, items: { type: object, properties: { book: { $ref: '#/components/schemas/BookRef' }, reason: {type: string}, confidence: {type: number}, state: { enum: [proposed, confirmed] } } } }
+        source: { enum: [wishlist, to_buy, share, ai, manual, seed] }
+        addedAt: { type: string, format: date-time }
+        price: { $ref: '#/components/schemas/Money' }
+        priceIsEstimate: {type: boolean}
+        score: {type: number}
+        scoreParts: { type: array, items: { $ref: '#/components/schemas/ScorePart' } }
+    PickRef: { type: object, required: [bookId, for], properties: { bookId: {type: string}, for: {type: string} } }
+    Pick:
+      type: object
+      properties: { candidate: { $ref: '#/components/schemas/Candidate' }, move: { $ref: '#/components/schemas/Move' }, why: {type: string}, idea: {type: string} }
+    MonthPlan:
+      type: object
+      properties:
+        month: {type: string}
+        budget: { $ref: '#/components/schemas/Budget' }
+        budgetIsOverride: {type: boolean}
+        total: { $ref: '#/components/schemas/Money' }
+        adults: { type: array, items: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, picks: { type: array, items: { $ref: '#/components/schemas/Pick' } }, unreadPile: {type: integer}, unreadLimit: {type: integer} } } }
+        kids: { type: array, items: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, picks: { type: array, items: { $ref: '#/components/schemas/Pick' } } } } }
+        focus: { type: array, items: { type: object, properties: { move: { $ref: '#/components/schemas/Move' }, ideas: { type: array, items: {type: string} }, bookId: {type: string}, sentence: {type: string} } } }
+        nextBroaden: { type: [object, 'null'], properties: { month: {type: string}, idea: {type: string}, bookId: {type: string} } }
+        order: { oneOf: [ { $ref: '#/components/schemas/Order' }, { type: 'null' } ] }
+    Brain:
+      type: object
+      properties:
+        ideas: { type: array, items: { type: object, properties: { id: {type: string}, name: {type: string}, readCount: {type: integer}, unreadOwned: {type: integer}, isNew: {type: boolean}, focus: { $ref: '#/components/schemas/Move' },
+          layers: { type: object, additionalProperties: { type: object, properties: { books: { type: array, items: { $ref: '#/components/schemas/BookRef' } }, next: { oneOf: [ { $ref: '#/components/schemas/BookRef' }, { type: 'null' } ] } } } } } } }
+        edges: { type: array, items: { type: object, properties: { a: {type: string}, b: {type: string}, weight: {type: integer}, via: { type: array, items: {type: string} }, kind: { enum: [read, gap, focus, future] } } } }
+    Reading: { type: object, properties: { status: { enum: [to_read, reading, read, abandoned] }, feedback: { enum: [loved, meh, not_yet, null] }, takeaway: { type: [string, 'null'], maxLength: 280 }, finishedAt: { type: [string, 'null'] } } }
+    ReadingUpdate: { $ref: '#/components/schemas/Reading' }
+    Library:
+      type: object
+      properties:
+        person: { $ref: '#/components/schemas/Person' }
+        books: { type: array, items: { type: object, properties: { book: { $ref: '#/components/schemas/BookRef' }, reading: { $ref: '#/components/schemas/Reading' }, ideas: { type: array, items: {type: string} }, theme: {type: string} } } }
+        stats: { type: object, properties: { read: {type: integer}, reading: {type: integer}, unreadPile: {type: integer}, unreadLimit: {type: integer}, takeaways: {type: integer} } }
+        themes: { type: array, items: { type: object, properties: { theme: {type: string}, books: {type: integer}, loved: {type: integer} } } }
+    InboxItem:
+      type: object
+      properties:
+        id: {type: string}
+        kind: { enum: [share, ai_suggestion, unmatched_invoice_line] }
+        by: { $ref: '#/components/schemas/Person' }
+        title: {type: string}
+        createdAt: {type: string}
+        mediaCount: {type: integer}
+        found: { type: array, items: { type: object, properties: { title: {type: string}, author: {type: string}, verdict: { enum: [add, skip_off_theme, skip_owned, fiction] }, idea: {type: string}, layer: {type: string}, theme: {type: string}, buildsOn: { type: array, items: {type: string} }, decided: { enum: [added, skipped, null] } } } }
+    Share: { type: object, properties: { id: {type: string}, status: { enum: [received, reading, done, failed] }, progress: { type: object, properties: { done: {type: integer}, total: {type: integer} } }, found: { type: array, items: { type: object } }, error: {type: string} } }
+    Order:
+      type: object
+      properties:
+        id: {type: string}
+        month: {type: string}
+        status: { enum: [picked, drafted, quoted, invoiced, closed] }
+        composeUrl: { type: string, description: 'mailto: link to the bookshop with the order text filled in (never the card number: the text leaves it for the person to fill in)' }
+        estimate: { $ref: '#/components/schemas/Money' }
+        quoted: { $ref: '#/components/schemas/Money' }
+        invoiced: { $ref: '#/components/schemas/Money' }
+        lines: { type: array, items: { type: object, properties: { book: { $ref: '#/components/schemas/BookRef' }, for: {type: string}, estimate: { $ref: '#/components/schemas/Money' }, quoted: { $ref: '#/components/schemas/Money' }, delivery: {type: string}, state: { enum: [planned, quoted, unavailable, delivered, rolled_over] } } } }
+    Settings:
+      type: object
+      properties:
+        budget: { $ref: '#/components/schemas/Budget' }
+        adultPicks: {type: integer}
+        newAuthorsOnly: {type: boolean}
+        ai: { type: object, properties: { provider: { enum: [claude, ollama, none], description: 'ollama for a new household; claude only by explicit opt-in' }, model: {type: string}, ollamaUrl: {type: string}, leaves: { type: array, readOnly: true, items: {type: string}, description: 'what leaves the server with this provider, shown before opting in' }, jobs: { type: object, properties: { read: {type: boolean}, link: {type: boolean}, suggest: {type: boolean}, explain: {type: boolean}, wildcards: {type: boolean} } } } }
+        person: { type: object, description: settings of the current person, properties: { mix: { enum: [deepen_connect, deepen_broaden, ai] }, unreadLimit: {type: integer}, counterpoints: {type: boolean}, takeaways: {type: boolean}, takeawaysToClaude: { type: boolean, description: 'off unless the person turns it on' }, fiction: {type: boolean}, weights: { type: object, additionalProperties: {type: number} } } }
+        kidsThemes: { type: array, items: { type: object, properties: { theme: {type: string}, enabled: {type: boolean} } } }
+        cycle: { type: object, properties: { day: {type: integer}, time: {type: string}, timezone: {type: string} } }
+        mail: { type: object, description: 'IMAP mailbox that receives only the forwarded bookshop mail (ADR 0007); its app password is a secret, never in the API', properties: { host: {type: string}, port: { type: integer, default: 993 }, user: {type: string}, folder: { type: string, default: INBOX }, configured: { type: boolean, readOnly: true } } }
+    ShareToken: { type: object, required: [id, label, createdAt], properties: { id: {type: string}, label: {type: string}, createdAt: {type: string}, lastUsedAt: { type: [string, 'null'] }, revoked: {type: boolean} } }

@@ -1,0 +1,55 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "shelf/ai/suggest_next.schema.json",
+ "type": "object",
+ "required": [
+  "suggestions"
+ ],
+ "properties": {
+  "suggestions": {
+   "type": "array",
+   "maxItems": 3,
+   "items": {
+    "type": "object",
+    "required": [
+     "title",
+     "author",
+     "move",
+     "idea",
+     "why"
+    ],
+    "properties": {
+     "title": {
+      "type": "string"
+     },
+     "author": {
+      "type": "string"
+     },
+     "move": {
+      "enum": [
+       "deepen",
+       "connect",
+       "broaden",
+       "counterpoint",
+       "wildcard"
+      ]
+     },
+     "idea": {
+      "type": "string"
+     },
+     "ideas2": {
+      "type": "string"
+     },
+     "futureLink": {
+      "type": "string",
+      "description": "wildcards: which owned book it may join later"
+     },
+     "why": {
+      "type": "string",
+      "maxLength": 200
+     }
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,62 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "shelf/ai/extract_titles.schema.json",
+ "type": "object",
+ "required": [
+  "books"
+ ],
+ "properties": {
+  "books": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "title",
+     "confidence"
+    ],
+    "properties": {
+     "title": {
+      "type": "string"
+     },
+     "author": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "seenIn": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      },
+      "description": "image/frame indexes"
+     },
+     "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+     },
+     "audienceGuess": {
+      "enum": [
+       "adult",
+       "kids",
+       "unknown"
+      ]
+     },
+     "offTheme": {
+      "type": "boolean"
+     },
+     "offThemeReason": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "framesRead": {
+   "type": "integer"
+  },
+  "notes": {
+   "type": "string"
+  }
+ }
+}

@@ -1,0 +1,11 @@
+# The household's real data and private notes never enter git
+/seed/
+/private/
+node_modules/
+dist/
+coverage/
+.env
+*.sqlite
+*.sqlite-*
+/data/
+*.tsbuildinfo
