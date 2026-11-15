@@ -287,21 +287,39 @@ describe('writing from an AI run (shelf#3)', () => {
     c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_plain')`).run(a, c2);
     expect(priv(a!, c2!)).toBeNull();
     // updates: taking private_to off, or moving a row onto someone's run without making it theirs, is refused
-    expect(() => c.prepare('UPDATE book_link SET private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, b)).toThrow(/private_to must be its run/);
+    expect(() => c.prepare('UPDATE book_link SET private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, b)).toThrow(/private_to must be its run|never changes once set/);
     expect(() => c.prepare(`UPDATE book_link SET ai_run_id = 'run_w_alex' WHERE from_book = ? AND to_book = ?`).run(a, c2)).toThrow(/private_to must be its run/);
-    expect(() => db.update(t.bookLink).set({ privateTo: id.partner }).where(and(eq(t.bookLink.fromBook, a!), eq(t.bookLink.toBook, b!))).run()).toThrow(/private_to must be its run/);
+    expect(() => db.update(t.bookLink).set({ privateTo: id.partner }).where(and(eq(t.bookLink.fromBook, a!), eq(t.bookLink.toBook, b!))).run()).toThrow(/private_to must be its run|never changes once set/);
     c.prepare(`UPDATE book_link SET ai_run_id = 'run_w_alex', private_to = ? WHERE from_book = ? AND to_book = ?`).run(id.alex, a, c2);
     expect(priv(a!, c2!)).toBe(id.alex);
     // clearing the run (the purge) keeps private_to
     c.prepare('UPDATE book_link SET ai_run_id = NULL WHERE from_book = ? AND to_book = ?').run(a, b);
     expect(priv(a!, b!)).toBe(id.alex);
+    // the review's bypasses (round 2): clearing both at once; clearing private_to after the run is gone; neither works
+    expect(() => c.prepare('UPDATE book_link SET ai_run_id = NULL, private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, c2)).toThrow(/never changes once set/);
+    expect(() => c.prepare('UPDATE book_link SET private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, b)).toThrow(/never changes once set/);
+    expect(() => c.prepare('UPDATE book_link SET private_to = ? WHERE from_book = ? AND to_book = ?').run(id.partner, a, b)).toThrow(/never changes once set/);
+    expect(priv(a!, b!)).toBe(id.alex);
+    // a run recorded first, its takeaways set later: refused once it has proposals (the rows would stay public)
+    run('run_w_late', null);
+    c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_late')`).run(b, c2);
+    expect(() => c.prepare(`UPDATE ai_run SET takeaways_of = ? WHERE id = 'run_w_late'`).run(id.alex)).toThrow(/takeaways_of is fixed/);
+    c.prepare(`UPDATE ai_run SET takeaways_of = NULL WHERE id = 'run_w_late'`).run(); // no change: fine
+    run('run_w_empty', null);
+    c.prepare(`UPDATE ai_run SET takeaways_of = ? WHERE id = 'run_w_empty'`).run(id.alex); // nothing proposed yet: fine
+    // a run with takeaways is deleted only once its proposals are gone or let go
+    expect(() => c.prepare(`DELETE FROM ai_run WHERE id = 'run_w_alex'`).run()).toThrow(/run with takeaways goes only after/);
     // the same for book ideas
     c.prepare(`INSERT INTO idea (id, name) VALUES ('i_w_raw', 'Raw idea')`).run();
     c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state, ai_run_id) VALUES (?, 'i_w_raw', 'core', 0.9, 'proposed', 'run_w_alex')`).run(a);
     expect((c.prepare(`SELECT private_to AS p FROM book_idea WHERE idea_id = 'i_w_raw'`).get() as { p: string }).p).toBe(id.alex);
     expect(() => c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state, ai_run_id, private_to) VALUES (?, 'i_w_raw', 'core', 0.9, 'proposed', 'run_w_alex', ?)`).run(b, id.partner)).toThrow(/private_to must be its run/);
-    expect(() => c.prepare(`UPDATE book_idea SET private_to = NULL WHERE idea_id = 'i_w_raw'`).run()).toThrow(/private_to must be its run/);
+    expect(() => c.prepare(`UPDATE book_idea SET private_to = NULL WHERE idea_id = 'i_w_raw'`).run()).toThrow(/private_to must be its run|never changes once set/);
+    expect(() => c.prepare(`UPDATE book_idea SET ai_run_id = NULL, private_to = NULL WHERE idea_id = 'i_w_raw'`).run()).toThrow(/never changes once set/);
+    // the purge goes through all of it: undecided rows deleted, runs deleted
     purgeTakeawayRuns(db, id.alex!);
+    expect(c.prepare(`SELECT id FROM ai_run WHERE takeaways_of = ?`).all(id.alex)).toEqual([]);
+    expect(() => c.prepare(`UPDATE book_link SET private_to = NULL WHERE private_to = ?`).run(id.alex)).not.toThrow(); // nothing left of Alex's
   });
 
   it('nothing else in src/ inserts a link or a book idea (the seed writes decided rows, without a run)', () => {

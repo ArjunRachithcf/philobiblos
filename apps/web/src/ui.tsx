@@ -1,4 +1,6 @@
 // Small pieces shared by the screens, on HomersLab's components (design/components.css).
+// WCAG 3.2.2 (On Input), for review: a select or text field only sets state (eslint.config.js enforces the handler);
+// never let a useEffect on that state save, decide or navigate. Lint cannot see that path; a button or MenuButton acts.
 import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 
 export function Icon({ name, className = 'icon' }: { name: string; className?: string }) {
