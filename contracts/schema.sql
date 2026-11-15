@@ -290,6 +290,8 @@ BEGIN SELECT RAISE(ABORT, 'ai_run.takeaways_of is fixed once the run has proposa
 CREATE TRIGGER ai_run_with_takeaways_delete BEFORE DELETE ON ai_run
 WHEN OLD.takeaways_of IS NOT NULL AND (EXISTS (SELECT 1 FROM book_link WHERE ai_run_id = OLD.id) OR EXISTS (SELECT 1 FROM book_idea WHERE ai_run_id = OLD.id))
 BEGIN SELECT RAISE(ABORT, 'a run with takeaways goes only after its proposals are deleted or let go (purgeTakeawayRuns)'); END;
+-- An insert over a private row (INSERT OR REPLACE) must itself name the same private_to; leaving it to the fill trigger
+-- is refused too, since that runs after the insert.
 CREATE TRIGGER book_link_private_not_replaced BEFORE INSERT ON book_link
 WHEN EXISTS (SELECT 1 FROM book_link WHERE from_book = NEW.from_book AND to_book = NEW.to_book AND private_to IS NOT NULL AND private_to IS NOT NEW.private_to)
 BEGIN SELECT RAISE(ABORT, 'book_link: a private row is never replaced (INSERT OR REPLACE) without its private_to'); END;
