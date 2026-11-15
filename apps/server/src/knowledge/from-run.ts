@@ -2,7 +2,7 @@
 // it is derived from the run (ai_run.takeaways_of), so a proposal written from someone's takeaways is private to them
 // whichever job wrote it. Nothing else in src/ inserts a book_link or book_idea with a run (architecture test in
 // test/knowledge.test.ts); the seed writes only decided rows, without a run.
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 
@@ -20,12 +20,17 @@ export interface ProposedBookIdea { bookId: string; ideaId: string; layer: 'intr
 export function proposeLinks(db: Db, aiRunId: string, links: readonly ProposedLink[]): number {
   if (!links.length) return 0;
   const privateTo = privateToFor(db, aiRunId);
-  return db.insert(t.bookLink).values(links.map((l) => ({ ...l, state: 'proposed' as const, aiRunId, privateTo }))).onConflictDoNothing().run().changes;
+  // Existing rows are skipped here, not left to ON CONFLICT: the database refuses an insert over a private row (0005).
+  const fresh = links.filter((l) => !db.select({ x: t.bookLink.fromBook }).from(t.bookLink).where(and(eq(t.bookLink.fromBook, l.fromBook), eq(t.bookLink.toBook, l.toBook))).get());
+  if (!fresh.length) return 0;
+  return db.insert(t.bookLink).values(fresh.map((l) => ({ ...l, state: 'proposed' as const, aiRunId, privateTo }))).onConflictDoNothing().run().changes;
 }
 
 /** Proposes book ideas from a run; an existing row (decided or not) is left alone. Returns how many were added. */
 export function proposeBookIdeas(db: Db, aiRunId: string, rows: readonly ProposedBookIdea[]): number {
   if (!rows.length) return 0;
   const privateTo = privateToFor(db, aiRunId);
-  return db.insert(t.bookIdea).values(rows.map((r) => ({ ...r, state: 'proposed' as const, aiRunId, privateTo }))).onConflictDoNothing().run().changes;
+  const fresh = rows.filter((r) => !db.select({ x: t.bookIdea.bookId }).from(t.bookIdea).where(and(eq(t.bookIdea.bookId, r.bookId), eq(t.bookIdea.ideaId, r.ideaId))).get());
+  if (!fresh.length) return 0;
+  return db.insert(t.bookIdea).values(fresh.map((r) => ({ ...r, state: 'proposed' as const, aiRunId, privateTo }))).onConflictDoNothing().run().changes;
 }

@@ -300,6 +300,18 @@ describe('writing from an AI run (shelf#3)', () => {
     expect(() => c.prepare('UPDATE book_link SET private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, b)).toThrow(/never changes once set/);
     expect(() => c.prepare('UPDATE book_link SET private_to = ? WHERE from_book = ? AND to_book = ?').run(id.partner, a, b)).toThrow(/never changes once set/);
     expect(priv(a!, b!)).toBe(id.alex);
+    // round 3: INSERT OR REPLACE / REPLACE INTO deletes without delete triggers; over a private row it is refused
+    // unless private_to is carried over, and the row stays as it was
+    for (const verb of ['INSERT OR REPLACE INTO', 'REPLACE INTO']) {
+      expect(() => c.prepare(`${verb} book_link (from_book, to_book, reason, confidence, state) VALUES (?, ?, 'public now', 1, 'confirmed')`).run(a, b)).toThrow(/never replaced/);
+      expect(() => c.prepare(`${verb} book_link (from_book, to_book, reason, confidence, state, private_to) VALUES (?, ?, 'someone else', 1, 'confirmed', ?)`).run(a, b, id.partner)).toThrow(/never replaced/);
+    }
+    expect(priv(a!, b!)).toBe(id.alex);
+    expect((c.prepare('SELECT reason FROM book_link WHERE from_book = ? AND to_book = ?').get(a, b) as { reason: string }).reason).toBe('raw');
+    c.prepare(`REPLACE INTO book_link (from_book, to_book, reason, confidence, state, private_to) VALUES (?, ?, 'raw', 0.9, 'proposed', ?)`).run(a, b, id.alex); // carried over: stays Alex's
+    expect(priv(a!, b!)).toBe(id.alex);
+    // the writer meets an existing private row: skipped, not refused, and nothing changes
+    expect(proposeLinks(db, 'run_w_plain', [{ fromBook: a!, toBook: b!, reason: 'again', confidence: 1 }])).toBe(0);
     // a run recorded first, its takeaways set later: refused once it has proposals (the rows would stay public)
     run('run_w_late', null);
     c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_late')`).run(b, c2);
@@ -316,6 +328,15 @@ describe('writing from an AI run (shelf#3)', () => {
     expect(() => c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state, ai_run_id, private_to) VALUES (?, 'i_w_raw', 'core', 0.9, 'proposed', 'run_w_alex', ?)`).run(b, id.partner)).toThrow(/private_to must be its run/);
     expect(() => c.prepare(`UPDATE book_idea SET private_to = NULL WHERE idea_id = 'i_w_raw'`).run()).toThrow(/private_to must be its run|never changes once set/);
     expect(() => c.prepare(`UPDATE book_idea SET ai_run_id = NULL, private_to = NULL WHERE idea_id = 'i_w_raw'`).run()).toThrow(/never changes once set/);
+    for (const verb of ['INSERT OR REPLACE INTO', 'REPLACE INTO']) {
+      expect(() => c.prepare(`${verb} book_idea (book_id, idea_id, layer, confidence, state) VALUES (?, 'i_w_raw', 'core', 1, 'confirmed')`).run(a)).toThrow(/never replaced/);
+    }
+    expect((c.prepare(`SELECT private_to AS p, state FROM book_idea WHERE idea_id = 'i_w_raw'`).get() as { p: string; state: string })).toEqual({ p: id.alex, state: 'proposed' });
+    expect(proposeBookIdeas(db, 'run_w_plain', [{ bookId: a!, ideaId: 'i_w_raw', layer: 'deep', confidence: 1 }])).toBe(0);
+    // deleting, then inserting, stays possible (the settled design: a deleted proposal may be proposed again)
+    c.prepare(`DELETE FROM book_idea WHERE idea_id = 'i_w_raw'`).run();
+    c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state) VALUES (?, 'i_w_raw', 'core', 0.5, 'proposed')`).run(a);
+    expect((c.prepare(`SELECT private_to AS p FROM book_idea WHERE idea_id = 'i_w_raw'`).get() as { p: string | null }).p).toBeNull();
     // the purge goes through all of it: undecided rows deleted, runs deleted
     purgeTakeawayRuns(db, id.alex!);
     expect(c.prepare(`SELECT id FROM ai_run WHERE takeaways_of = ?`).all(id.alex)).toEqual([]);

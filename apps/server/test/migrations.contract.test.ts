@@ -82,7 +82,7 @@ describe('migrations', () => {
     const triggers = (db: Database.Database) => (db.prepare(`SELECT name, tbl_name AS tbl, sql FROM sqlite_master WHERE type='trigger' ORDER BY name`).all() as { name: string; tbl: string; sql: string }[])
       .map((t) => ({ ...t, sql: t.sql.replace(/\s+/g, ' ').trim() }));
     const contract = triggers(fromSql([contractSql]));
-    expect(contract.map((t) => t.name)).toHaveLength(10);
+    expect(contract.map((t) => t.name)).toHaveLength(12);
     expect(triggers(openDb(':memory:').$client)).toEqual(contract);
   });
 

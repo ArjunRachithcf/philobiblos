@@ -290,3 +290,9 @@ BEGIN SELECT RAISE(ABORT, 'ai_run.takeaways_of is fixed once the run has proposa
 CREATE TRIGGER ai_run_with_takeaways_delete BEFORE DELETE ON ai_run
 WHEN OLD.takeaways_of IS NOT NULL AND (EXISTS (SELECT 1 FROM book_link WHERE ai_run_id = OLD.id) OR EXISTS (SELECT 1 FROM book_idea WHERE ai_run_id = OLD.id))
 BEGIN SELECT RAISE(ABORT, 'a run with takeaways goes only after its proposals are deleted or let go (purgeTakeawayRuns)'); END;
+CREATE TRIGGER book_link_private_not_replaced BEFORE INSERT ON book_link
+WHEN EXISTS (SELECT 1 FROM book_link WHERE from_book = NEW.from_book AND to_book = NEW.to_book AND private_to IS NOT NULL AND private_to IS NOT NEW.private_to)
+BEGIN SELECT RAISE(ABORT, 'book_link: a private row is never replaced (INSERT OR REPLACE) without its private_to'); END;
+CREATE TRIGGER book_idea_private_not_replaced BEFORE INSERT ON book_idea
+WHEN EXISTS (SELECT 1 FROM book_idea WHERE book_id = NEW.book_id AND idea_id = NEW.idea_id AND private_to IS NOT NULL AND private_to IS NOT NEW.private_to)
+BEGIN SELECT RAISE(ABORT, 'book_idea: a private row is never replaced (INSERT OR REPLACE) without its private_to'); END;
