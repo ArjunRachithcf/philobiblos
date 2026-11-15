@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e07e1dc4-df29-4bf8-bf72-5ccd900549d9",
+  "id": "4481dfe6-0f9e-4a85-86b4-5f5938a7af24",
   "prevId": "5800b186-e116-4b9e-88cd-c7a6b29ef171",
   "tables": {
     "ai_run": {
@@ -931,8 +931,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "purpose": {
-          "name": "purpose",
+        "kind": {
+          "name": "kind",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -1021,9 +1021,9 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {
-        "invite_purpose": {
-          "name": "invite_purpose",
-          "value": "\"invite\".\"purpose\" IN ('setup','enrol')"
+        "invite_kind": {
+          "name": "invite_kind",
+          "value": "\"invite\".\"kind\" IN ('setup','admin','self','recovery')"
         }
       }
     },
@@ -1443,6 +1443,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "invited_by": {
+          "name": "invited_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},
@@ -1458,6 +1465,19 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "passkey_invited_by_person_id_fk": {
+          "name": "passkey_invited_by_person_id_fk",
+          "tableFrom": "passkey",
+          "tableTo": "person",
+          "columnsFrom": [
+            "invited_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -1797,6 +1817,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "passkey_id": {
+          "name": "passkey_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},
@@ -1807,6 +1834,19 @@
           "tableTo": "person",
           "columnsFrom": [
             "person_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "session_passkey_id_passkey_id_fk": {
+          "name": "session_passkey_id_passkey_id_fk",
+          "tableFrom": "session",
+          "tableTo": "passkey",
+          "columnsFrom": [
+            "passkey_id"
           ],
           "columnsTo": [
             "id"

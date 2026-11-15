@@ -18,22 +18,22 @@ export const SETUP_FILE = 'setup-link.txt';
 
 export const SELF_HOURS = 24;
 export const RECOVERY_HOURS = 24;
+export type InviteKind = Invite['kind'];
+const HOURS: Record<InviteKind, number> = { setup: SETUP_HOURS, admin: INVITE_DAYS * 24, self: SELF_HOURS, recovery: RECOVERY_HOURS };
 
 /**
- * A new one-time link. 'setup': the first admin's (24 h). 'enrol' for someone else: an admin's invite (7 days);
- * for yourself (createdBy = personId) or a recovery link from the CLI (createdBy null): 24 h.
+ * A new one-time link: 'setup', the first admin's (24 h); 'admin', an admin's invite for someone without a passkey
+ * (7 days); 'self', your own for another device (24 h); 'recovery', `shelf recover`'s for an admin (24 h).
  */
-export function createInvite(db: Db, cfg: Pick<Config, 'origin'>, o: { purpose: 'setup' | 'enrol'; personId?: string; createdBy?: string; now?: Date }) {
+export function createInvite(db: Db, cfg: Pick<Config, 'origin'>, o: { kind: InviteKind; personId?: string; createdBy?: string; now?: Date }) {
   const now = o.now ?? new Date();
   const token = newToken();
-  const hours = o.purpose === 'setup' ? SETUP_HOURS : o.createdBy && o.createdBy !== o.personId ? INVITE_DAYS * 24 : SELF_HOURS;
-  const expiresAt = new Date(now.getTime() + hours * HOUR);
+  const expiresAt = new Date(now.getTime() + HOURS[o.kind] * HOUR);
   db.insert(t.invite).values({
-    id: ulid(), purpose: o.purpose, personId: o.personId ?? null, tokenHash: hashToken(token),
+    id: ulid(), kind: o.kind, personId: o.personId ?? null, tokenHash: hashToken(token),
     createdBy: o.createdBy ?? null, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
   }).run();
-  const path = o.purpose === 'setup' ? 'setup' : 'enrol';
-  return { url: `${cfg.origin}/${path}#${token}`, token, expiresAt };
+  return { url: `${cfg.origin}/${o.kind === 'setup' ? 'setup' : 'enrol'}#${token}`, token, expiresAt };
 }
 
 /** The open invite a token belongs to (unused, unexpired), or null. */
@@ -43,15 +43,20 @@ export function findInvite(db: Db, token: unknown, now = new Date()): Invite | n
     .where(and(eq(t.invite.tokenHash, hashToken(token)), isNull(t.invite.usedAt), gt(t.invite.expiresAt, now.toISOString()))).get() ?? null;
 }
 
+/** Ends every open link of a person (after they enrol a passkey: one enrolment spends them all). */
+export function spendInvites(db: Db, personId: string, now = new Date()): void {
+  db.update(t.invite).set({ usedAt: now.toISOString() }).where(and(eq(t.invite.personId, personId), isNull(t.invite.usedAt))).run();
+}
+
 /** Marks an invite used; false if someone else used it first. */
 export function useInvite(db: Db, id: string, now = new Date()): boolean {
   return db.update(t.invite).set({ usedAt: now.toISOString() }).where(and(eq(t.invite.id, id), isNull(t.invite.usedAt))).run().changes === 1;
 }
 
-/** An open recovery link (an 'enrol' invite nobody in the household made, from `shelf recover`). */
+/** An open recovery link (`shelf recover`). */
 export function openRecovery(db: Db, now = new Date()): boolean {
   return Boolean(db.select({ id: t.invite.id }).from(t.invite)
-    .where(and(eq(t.invite.purpose, 'enrol'), isNull(t.invite.createdBy), isNull(t.invite.usedAt), gt(t.invite.expiresAt, now.toISOString()))).get());
+    .where(and(eq(t.invite.kind, 'recovery'), isNull(t.invite.usedAt), gt(t.invite.expiresAt, now.toISOString()))).get());
 }
 
 /**
@@ -64,8 +69,8 @@ export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'd
     if (!openRecovery(db)) removeSetupLink(cfg);
     return null;
   }
-  db.delete(t.invite).where(eq(t.invite.purpose, 'setup')).run();
-  const { url } = createInvite(db, cfg, { purpose: 'setup' });
+  db.delete(t.invite).where(eq(t.invite.kind, 'setup')).run();
+  const { url } = createInvite(db, cfg, { kind: 'setup' });
   return writeLinkFile(cfg, url);
 }
 
@@ -77,7 +82,7 @@ export function createRecoveryLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' |
   if (cfg.mode !== 'standalone') throw new Error('under HomersLab, HomersLab signs people in');
   const p = db.select().from(t.person).where(eq(t.person.handle, handle)).get();
   if (!p || p.role !== 'admin') throw new Error(`no admin with the handle ${handle}`);
-  const { url } = createInvite(db, cfg, { purpose: 'enrol', personId: p.id });
+  const { url } = createInvite(db, cfg, { kind: 'recovery', personId: p.id });
   return writeLinkFile(cfg, url);
 }
 

@@ -19,7 +19,7 @@ shared posts, PDFs, videos and web pages it did not write. Security comes before
 | Actor | Could try | Controls |
 |---|---|---|
 | **A household adult** | read another adult's takeaways, change their settings, add or remove people | per-person routes act on the signed-in person; shared data (budget, backlog) is shared by design; admins manage people; the last admin cannot be removed or demoted |
-| **A kid** | sign in, change picks or feedback | `audience: household`: kids have no access; adults act for them |
+| **A kid** | sign in, change picks or feedback | `audience: adults`: kids have no access; adults act for them |
 | **A stranger on the LAN** | reach the app, forge `X-HomersLab-Person`, guess a sign-in | standalone binds `127.0.0.1` by default; in homerslab mode the headers count only from the configured proxy address, and only once HomersLab's edge strips and sets them (`SHELF_EDGE_IDENTITY`, HomersLab #236) and its per-app firewall (HomersLab ADR 0020) lets only the edge reach Shelf; passkeys only, nothing to guess; sign-in steps rate limited; setup and invite links one-time, hashed, in the fragment (ADR 0010) |
 | **A stranger on the internet** | the same, through whatever exposes Shelf | Shelf is never public by itself (`public: false`); HomersLab's proxy and sign-in are in front |
 | **Whoever holds a share token** (lost phone, leaked Shortcut) | post shares; read anything | write-only to `POST /api/shares`; revocable; hashed at rest; shown once |

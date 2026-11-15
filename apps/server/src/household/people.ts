@@ -1,6 +1,6 @@
 // The household (ADR 0001): people, their roles and, for kids, birth years. Standalone keeps them here; under
 // HomersLab they arrive with each request from the proxy (identity.ts) and are kept in step.
-import { and, count, eq, ne } from 'drizzle-orm';
+import { and, count, eq, isNull, ne } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { components } from '@shelf/contracts/openapi';
 import type { Db } from '../db/open';
@@ -101,8 +101,14 @@ export function editPerson(db: Db, id: string, patch: Partial<PersonInput>): Per
       tx.delete(t.passkey).where(eq(t.passkey.personId, id)).run();
       tx.delete(t.invite).where(eq(t.invite.personId, id)).run();
     }
+    if (role !== 'admin' && p.role === 'admin') revokeInvitesBy(tx as unknown as Db, id);
   });
   return getPerson(db, id)!;
+}
+
+/** An admin's open invites, gone when the admin is removed or stops being one. */
+function revokeInvitesBy(db: Db, adminId: string): void {
+  db.delete(t.invite).where(and(eq(t.invite.createdBy, adminId), eq(t.invite.kind, 'admin'), isNull(t.invite.usedAt))).run();
 }
 
 export function removePerson(db: Db, id: string, by: string): void {
@@ -111,7 +117,10 @@ export function removePerson(db: Db, id: string, by: string): void {
   if (id === by) throw new HouseholdError(409, 'you cannot remove yourself');
   if (p.role === 'admin' && adminsWithPasskey(db, id) === 0) throw new HouseholdError(409, 'the household needs an admin who can sign in');
   try {
-    db.delete(t.person).where(eq(t.person.id, id)).run();
+    db.transaction((tx) => {
+      revokeInvitesBy(tx as unknown as Db, id); // otherwise they would outlive their admin, with no one behind them
+      tx.delete(t.person).where(eq(t.person.id, id)).run();
+    });
   } catch {
     throw new HouseholdError(409, 'this person still has shares or orders');
   }

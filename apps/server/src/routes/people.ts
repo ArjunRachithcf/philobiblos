@@ -99,7 +99,7 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     // Once someone has a passkey, only they add more (an admin cannot slip a passkey into an adult's account).
     if (hasPasskey(p.id)) return reply.code(409).send({ error: 'they already sign in; they add passkeys themselves' });
     if (!fresh(req, reply)) return;
-    const { url, expiresAt } = createInvite(db, cfg, { purpose: 'enrol', personId: p.id, createdBy: req.caller!.personId });
+    const { url, expiresAt } = createInvite(db, cfg, { kind: 'admin', personId: p.id, createdBy: req.caller!.personId });
     return reply.code(201).send({ url, expiresAt: expiresAt.toISOString() });
   });
 
@@ -114,7 +114,7 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.post('/me/passkeys/invite', async (req, reply) => {
     if (!standaloneOnly(reply) || !fresh(req, reply)) return;
     const me = req.caller!.personId;
-    const { url, expiresAt } = createInvite(db, cfg, { purpose: 'enrol', personId: me, createdBy: me });
+    const { url, expiresAt } = createInvite(db, cfg, { kind: 'self', personId: me, createdBy: me });
     return reply.code(201).send({ url, expiresAt: expiresAt.toISOString() });
   });
 

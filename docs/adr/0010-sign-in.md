@@ -12,7 +12,10 @@ identity from the configured proxy only. There are no passwords anywhere.
 - **Standalone, everyone else.** An admin adds people (adults, admins, kids) and sends an adult without a passkey a
   one-time invite link (7 days). Once someone has a passkey, only they add more: "Add a passkey on another device"
   makes a one-time link for themselves (24 hours). An admin cannot slip a passkey into an adult's account, and each
-  passkey records whose invite made it (shown in "Your passkeys"). Kids never sign in; adults act for them.
+  passkey records whose invite made it (shown in "Your passkeys"). A person's enrolment spends every other open link
+  of theirs, and an admin's invite is refused at the last step if the person has a passkey by then. An admin who is
+  removed or stops being one takes their open invites along. Each link has its kind (`setup`, `admin`, `self`,
+  `recovery`) in the database. Kids never sign in; adults act for them.
 - **Fresh sign-in.** Making any link that adds a passkey (an invite, or your own) needs a sign-in in the last
   10 minutes; an older session gets 403 and signs in again. A stolen, older cookie cannot add a passkey.
 - **Links** carry their token in the `#fragment`: it never reaches a server log or a `Referer`, and the page removes
@@ -36,7 +39,8 @@ identity from the configured proxy only. There are no passwords anywhere.
   `adult` or `kid`), read only from `SHELF_TRUSTED_PROXY`. The address alone is not enough: HomersLab's edge must
   delete every `X-HomersLab-*` header a client sends and set the three itself (HomersLab #236), and only the edge may
   reach Shelf's port (HomersLab ADR 0020's per-app firewall). HomersLab promises the first by setting
-  `SHELF_EDGE_IDENTITY=homerslab-v1`; homerslab mode refuses to start without it, without `SHELF_TRUSTED_PROXY` and
+  `SHELF_EDGE_IDENTITY=homerslab-v1` (the manifest asks for it as `identity.edge` and does not set it); homerslab
+  mode refuses to start without it, without `SHELF_TRUSTED_PROXY` and
   without `SHELF_ORIGIN`. A person (an admin too) is added the first time the edge sends them, with the role it sends,
   and follows HomersLab's name and role after that; without a valid role, or as a kid, the answer is 403. The
   manifest's audience is `adults`. People are managed in HomersLab, so Shelf's own household editing answers 409 and

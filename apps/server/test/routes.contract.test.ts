@@ -2,7 +2,9 @@
 // and a body that validates against the spec's schema for it; and the security schemes hold (deny by default).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
-import { loadConfig } from '../src/config';
+import { readFileSync } from 'node:fs';
+import { parse } from 'yaml';
+import { EDGE_IDENTITY, loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { ORIGIN, expectValid, fakeWebAuthn, household, isPublic, ops, request, security, sessionCookie } from './helpers';
 
@@ -128,6 +130,12 @@ describe('homerslab mode', () => {
   it('the role must be exactly admin, adult or kid', async () => {
     expect((await hl.app.inject({ url: '/api/me', headers: { ...HL_ADULT, 'x-homerslab-person': 'hl-pad', 'x-homerslab-role': ' admin' } })).statusCode).toBe(403);
     expect((await hl.app.inject({ url: '/api/me', headers: { ...HL_ADULT, 'x-homerslab-person': 'hl-up', 'x-homerslab-role': 'Admin' } })).statusCode).toBe(403);
+  });
+  it('the manifest asks HomersLab for the edge\'s promise and does not make it itself', () => {
+    const m = parse(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'));
+    expect(m.identity.edge).toBe(EDGE_IDENTITY);
+    for (const k of ['SHELF_EDGE_IDENTITY', 'SHELF_TRUSTED_PROXY', 'SHELF_ORIGIN']) expect(Object.keys(m.env ?? {}), k).not.toContain(k);
+    expect(m.audience).toBe('adults');
   });
   it('needs SHELF_ORIGIN, the edge\'s promise (HomersLab #236) and the trusted proxy', () => {
     expect(() => loadConfig({ SHELF_MODE: 'homerslab' })).toThrow(/SHELF_ORIGIN/);

@@ -39,14 +39,14 @@ export const session = sqliteTable('session', {
 
 export const invite = sqliteTable('invite', {
   id: text('id').primaryKey(),
-  purpose: text('purpose', { enum: ['setup', 'enrol'] }).notNull(),
+  kind: text('kind', { enum: ['setup', 'admin', 'self', 'recovery'] }).notNull(),
   personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
   tokenHash: text('token_hash').notNull().unique(),
   createdBy: text('created_by').references(() => person.id, { onDelete: 'set null' }),
   createdAt: text('created_at').notNull(),
   expiresAt: text('expires_at').notNull(),
   usedAt: text('used_at'),
-}, (t) => [check('invite_purpose', sql`${t.purpose} IN ('setup','enrol')`)]);
+}, (t) => [check('invite_kind', sql`${t.kind} IN ('setup','admin','self','recovery')`)]);
 
 export const householdSettings = sqliteTable('household_settings', {
   id: integer('id').primaryKey(),

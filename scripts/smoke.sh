@@ -49,8 +49,8 @@ while IFS= read -r line; do env_args+=(-e "$line"); done < <(
   awk '/^env:/{f=1;next} f&&/^[^ ]/{f=0} f&&/^  [A-Z_]+:/{sub(/^  /,""); sub(/ *#.*/,""); sub(/: */,"="); print}' contracts/homerslab-app.yaml)
 [ "${#env_args[@]}" -gt 0 ] || { echo "no env in the manifest" >&2; exit 1; }
 port2=$((port + 1))
-# SHELF_TRUSTED_PROXY and SHELF_ORIGIN are HomersLab's to give; stand-ins here.
-docker run -d --name "$hl" "${env_args[@]}" -e SHELF_TRUSTED_PROXY=127.0.0.1 -e SHELF_ORIGIN=https://shelf.example.org \
+# SHELF_EDGE_IDENTITY, SHELF_TRUSTED_PROXY and SHELF_ORIGIN are HomersLab's to give; stand-ins here.
+docker run -d --name "$hl" "${env_args[@]}" -e SHELF_EDGE_IDENTITY=homerslab-v1 -e SHELF_TRUSTED_PROXY=127.0.0.1 -e SHELF_ORIGIN=https://shelf.example.org \
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
   -v "$hl-data:/data" -p "127.0.0.1:$port2:8080" "$tag" >/dev/null
 wait_health "http://127.0.0.1:$port2/api/health" homerslab

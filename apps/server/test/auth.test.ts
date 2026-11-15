@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { buildApp, type BuiltApp } from '../src/app';
-import { createInvite, createRecoveryLink, ensureSetupLink, findInvite, SETUP_FILE } from '../src/auth/invites';
+import { createInvite, createRecoveryLink, ensureSetupLink, findInvite, openRecovery, SETUP_FILE } from '../src/auth/invites';
+import { removePerson } from '../src/household/people';
 import { FRESH_MINUTES, IDLE_DAYS, createSession, sessionPerson } from '../src/auth/sessions';
 import { Challenges } from '../src/auth/webauthn';
 import { loadConfig, type Config } from '../src/config';
@@ -191,11 +192,11 @@ describe('sessions, invites and challenges expire', () => {
   it('an admin\'s invite lasts 7 days; your own link and a recovery link 24 hours', () => {
     const hh = household();
     const t0 = new Date('2026-11-01T00:00:00Z');
-    const { token } = createInvite(hh, cfg, { purpose: 'enrol', personId: 'p_sam', createdBy: 'p_alex', now: t0 });
+    const { token } = createInvite(hh, cfg, { kind: 'admin', personId: 'p_sam', createdBy: 'p_alex', now: t0 });
     expect(findInvite(hh, token, new Date(t0.getTime() + 6 * 86_400_000))).not.toBeNull();
     expect(findInvite(hh, token, new Date(t0.getTime() + 8 * 86_400_000))).toBeNull();
-    for (const createdBy of ['p_alex', undefined]) {
-      const own = createInvite(hh, cfg, { purpose: 'enrol', personId: 'p_alex', createdBy, now: t0 });
+    for (const kind of ['self', 'recovery'] as const) {
+      const own = createInvite(hh, cfg, { kind, personId: 'p_alex', createdBy: kind === 'self' ? 'p_alex' : undefined, now: t0 });
       expect(findInvite(hh, own.token, new Date(t0.getTime() + 23 * 3_600_000))).not.toBeNull();
       expect(findInvite(hh, own.token, new Date(t0.getTime() + 25 * 3_600_000))).toBeNull();
     }
@@ -217,7 +218,7 @@ describe('passkeys after the first (review round 1)', () => {
   let a: BuiltApp['app'];
   beforeEach(async () => { hh = household(); a = (await buildApp(cfg, hh, { webauthn: fakeWebAuthn() })).app; });
   afterEach(() => a.close());
-  const call = (method: 'POST' | 'GET' | 'DELETE', url: string, cookie: string, payload?: object) =>
+  const call = (method: 'POST' | 'GET' | 'DELETE' | 'PATCH', url: string, cookie: string, payload?: object) =>
     a.inject({ method, url, payload, headers: { ...H, cookie } });
   async function enrolWith(token: string, credId: string) {
     const o = (await call('POST', '/api/auth/enrol/options', '', { token })).json();
@@ -274,10 +275,51 @@ describe('passkeys after the first (review round 1)', () => {
     expect(hh.select().from(t.session).all().map((s) => s.passkeyId)).toEqual(['pk2']);
   });
 
-  it('a share token is the only credential of its request: no fallback to the cookie', async () => {
+  it('a request with Authorization is authenticated by the token alone: a wrong or malformed one gets 401 beside a valid cookie', async () => {
     const cookie = sessionCookie(hh, 'p_alex');
-    const r = await a.inject({ method: 'POST', url: '/api/shares', headers: { cookie, origin: ORIGIN, authorization: 'Bearer wrong-token-wrong-token-wrong' } });
-    expect(r.statusCode).toBe(401);
+    for (const authorization of ['Bearer wrong-token-wrong-token-wrong', 'Bearer short', 'Basic YWxleDp4', '']) {
+      const r = await a.inject({ method: 'POST', url: '/api/shares', headers: { cookie, origin: ORIGIN, authorization } });
+      expect(r.statusCode, authorization).toBe(401);
+    }
+  });
+
+  it('the last admin must be one who can sign in', async () => {
+    // Pat is an admin without a passkey: Alex, the only admin with one, can neither step down nor be removed.
+    hh.insert(t.person).values({ id: 'p_pat', name: 'Pat', role: 'admin', handle: 'pat' }).run();
+    expect((await call('PATCH', '/api/people/p_alex', sessionCookie(hh, 'p_alex'), { role: 'adult' })).statusCode).toBe(409);
+    expect(() => removePerson(hh, 'p_alex', 'p_pat')).toThrow(/admin who can sign in/);
+    // Once Pat has a passkey, Alex may step down.
+    hh.insert(t.passkey).values({ id: 'pk-pat', personId: 'p_pat', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
+    expect((await call('PATCH', '/api/people/p_alex', sessionCookie(hh, 'p_alex'), { role: 'adult' })).statusCode).toBe(200);
+  });
+
+  it('the first enrolment spends every other open link of that person', async () => {
+    const admin = sessionCookie(hh, 'p_alex');
+    const first = (await call('POST', '/api/people/p_sam/invites', admin)).json().url.split('#')[1];
+    const second = (await call('POST', '/api/people/p_sam/invites', admin)).json().url.split('#')[1];
+    // both started before either finishes: the second still fails at verify
+    const o1 = (await call('POST', '/api/auth/enrol/options', '', { token: first })).json();
+    const o2 = (await call('POST', '/api/auth/enrol/options', '', { token: second })).json();
+    expect((await call('POST', '/api/auth/enrol/verify', '', { challengeId: o1.challengeId, response: { id: 'cred-sam', challenge: o1.options.challenge } })).statusCode).toBe(200);
+    expect((await call('POST', '/api/auth/enrol/verify', '', { challengeId: o2.challengeId, response: { id: 'cred-sam-2', challenge: o2.options.challenge } })).statusCode).toBe(401);
+    expect((await call('POST', '/api/auth/enrol/options', '', { token: second })).statusCode).toBe(401);
+    expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toHaveLength(1);
+  });
+
+  it('an admin who is removed or steps down takes their open invites along; none becomes a recovery link', async () => {
+    hh.insert(t.person).values({ id: 'p_bo', name: 'Bo', role: 'admin', handle: 'bo' }).run();
+    hh.insert(t.passkey).values({ id: 'pk-bo', personId: 'p_bo', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
+    const bo = sessionCookie(hh, 'p_bo');
+    const forSam = (await call('POST', '/api/people/p_sam/invites', bo)).json().url.split('#')[1];
+    const forRobin = (await call('POST', '/api/people/p_del/invites', bo)).json().url.split('#')[1];
+    expect((await call('PATCH', '/api/people/p_bo', sessionCookie(hh, 'p_alex'), { role: 'adult' })).statusCode).toBe(200);
+    expect(findInvite(hh, forSam)).toBeNull();
+    expect((await call('PATCH', '/api/people/p_bo', sessionCookie(hh, 'p_alex'), { role: 'admin' })).statusCode).toBe(200);
+    const again = (await call('POST', '/api/people/p_sam/invites', sessionCookie(hh, 'p_bo'))).json().url.split('#')[1];
+    expect((await call('DELETE', '/api/people/p_bo', sessionCookie(hh, 'p_alex'))).statusCode).toBe(204);
+    expect(findInvite(hh, again)).toBeNull();
+    expect(findInvite(hh, forRobin)).toBeNull();
+    expect(openRecovery(hh)).toBe(false);
   });
 });
 

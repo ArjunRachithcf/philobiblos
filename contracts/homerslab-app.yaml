@@ -12,12 +12,13 @@ env:
   SHELF_MODE: homerslab
   SHELF_DATA_DIR: /data
   SHELF_TZ: Europe/Zurich
-  # Shelf refuses to start in homerslab mode without both (ADR 0010):
-  SHELF_EDGE_IDENTITY: homerslab-v1        # HomersLab's promise, once its edge does it (HomersLab #236): the edge deletes
-                                           # every X-HomersLab-* header a client sends and sets the three below itself
-  SHELF_TRUSTED_PROXY: ${EDGE_ADDRESS}     # the edge's address on the app network; only it may reach Shelf's port
-                                           # (HomersLab ADR 0020's per-app firewall makes the address mean something)
+  # Not set here: HomersLab gives SHELF_ORIGIN, SHELF_TRUSTED_PROXY (the edge's address on the app network; HomersLab
+  # ADR 0020's per-app firewall makes it mean something) and, once its edge keeps identity.edge's promise,
+  # SHELF_EDGE_IDENTITY. Shelf refuses to start in homerslab mode without all three (ADR 0010).
 identity:
+  # Required of HomersLab, not set by Shelf: the edge deletes every X-HomersLab-* header a client sends and sets the
+  # three below itself (HomersLab #236). HomersLab answers by setting SHELF_EDGE_IDENTITY to this value.
+  edge: homerslab-v1
   # All three are trusted only from SHELF_TRUSTED_PROXY; a person is added to Shelf the first time HomersLab sends
   # them, with exactly the role HomersLab sends (admin | adult | kid; anything else: 403), and their name and role
   # follow HomersLab on every request.

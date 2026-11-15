@@ -1,4 +1,4 @@
--- Shelf database schema v3 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Shelf database schema v2 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -38,9 +38,10 @@ CREATE TABLE session (                     -- a signed-in browser; the cookie ho
   passkey_id   TEXT REFERENCES passkey(id) ON DELETE CASCADE -- the passkey that signed in: removing it ends the session
 );
 
-CREATE TABLE invite (                      -- one-time link to enrol a passkey: the first admin's, or a person's
+CREATE TABLE invite (                      -- one-time link to enrol a passkey (ADR 0010)
   id          TEXT PRIMARY KEY NOT NULL,
-  purpose     TEXT NOT NULL CHECK (purpose IN ('setup','enrol')),
+  kind        TEXT NOT NULL CHECK (kind IN ('setup','admin','self','recovery')), -- the first admin's; an admin's invite;
+                                           -- your own for another device; `shelf recover`'s
   person_id   TEXT REFERENCES person(id) ON DELETE CASCADE, -- null for 'setup' (the admin is created when it is used)
   token_hash  TEXT NOT NULL UNIQUE,        -- SHA-256 of the link's token; the token itself is never stored
   created_by  TEXT REFERENCES person(id) ON DELETE SET NULL,

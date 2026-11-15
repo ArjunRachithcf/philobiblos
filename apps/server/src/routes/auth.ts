@@ -5,7 +5,7 @@ import { ulid } from 'ulid';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { findInvite, openRecovery, removeSetupLink, useInvite } from '../auth/invites';
+import { findInvite, openRecovery, removeSetupLink, spendInvites, useInvite } from '../auth/invites';
 import { SESSION_COOKIE, SESSION_DAYS, cookieOptions, createSession, endSession, sessionPerson } from '../auth/sessions';
 import type { Challenges, WebAuthn } from '../auth/webauthn';
 import { getPerson, setupNeeded, suggestHandle, view } from '../household/people';
@@ -41,7 +41,7 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (!standaloneOnly(reply)) return;
     const invite = findInvite(db, req.body?.token);
     if (!invite) return reply.code(401).send({ error: 'this link is unknown, used or expired' });
-    if (invite.purpose === 'setup') {
+    if (invite.kind === 'setup') {
       const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 60) : '';
       if (!name) return reply.code(400).send({ error: 'a name is needed' });
       const { challenge, options } = await webauthn.registrationOptions({ userId: `setup:${invite.id}`, userName: name, exclude: [] });
@@ -71,7 +71,7 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     try { db.transaction((tx) => {
       const invite = tx.select().from(t.invite).where(eq(t.invite.id, pending.inviteId!)).get();
       if (!invite || !useInvite(tx as unknown as Db, invite.id)) return;
-      if (invite.purpose === 'setup') {
+      if (invite.kind === 'setup') {
         // The first admin: an admin of the household with this name and no passkey yet (an imported household),
         // or a new one.
         const name = pending.name ?? 'Admin';
@@ -81,14 +81,19 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
         if (!claim) tx.insert(t.person).values({ id: personId, name, role: 'admin', handle: suggestHandle(tx as unknown as Db, name), settingsJson: '{}' }).run();
       } else {
         personId = invite.personId;
-        recovery = invite.createdBy === null;
+        recovery = invite.kind === 'recovery';
+        // An admin's invite is for someone's first passkey only: after that, only they add more.
+        if (invite.kind === 'admin' && personId && tx.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.personId, personId)).get()) {
+          personId = null;
+        }
       }
       if (!personId) return;
       tx.insert(t.passkey).values({
         id: cred.id, personId, publicKey: Buffer.from(cred.publicKey), counter: cred.counter,
         transportsJson: JSON.stringify(cred.transports), backedUp: cred.backedUp ? 1 : 0, label, createdAt: now,
-        invitedBy: invite.createdBy && invite.createdBy !== personId ? invite.createdBy : null,
+        invitedBy: invite.kind === 'admin' ? invite.createdBy : null,
       }).run();
+      spendInvites(tx as unknown as Db, personId);
     }); } catch (e) {
       // Two enrolments of one passkey at once: the primary key decides.
       if ((e as { code?: string }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY') return taken();
