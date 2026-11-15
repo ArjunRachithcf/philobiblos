@@ -1,0 +1,28 @@
+# Standalone: docker compose up -d, then open http://localhost:8080 (published on this machine only, ADR 0009).
+services:
+  shelf:
+    image: ${SHELF_IMAGE:-shelf:0.1.0}
+    build: .
+    user: "${SHELF_UID:-1000}:${SHELF_GID:-1000}"
+    environment:
+      SHELF_MODE: standalone
+      SHELF_DATA_DIR: /data
+      SHELF_TZ: Europe/Zurich
+      # AI: Ollama is the default; Claude only after the opt-in in Settings.
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Mail (ADR 0007): the Shelf-only mailbox, read over IMAP (TLS) with an app password.
+      SHELF_IMAP_HOST: ${SHELF_IMAP_HOST:-}
+      SHELF_IMAP_USER: ${SHELF_IMAP_USER:-}
+      SHELF_IMAP_PASSWORD: ${SHELF_IMAP_PASSWORD:-}
+    volumes: [ "./data:/data:Z" ]
+    ports: [ "127.0.0.1:${SHELF_PORT:-8080}:8080" ]
+    read_only: true
+    tmpfs: [ /tmp ]
+    cap_drop: [ ALL ]
+    security_opt: [ "no-new-privileges:true" ]
+    restart: unless-stopped
+  # Optional local AI (the default provider), pinned by digest:
+  # ollama:
+  #   image: ollama/ollama:0.40.12@sha256:20d1bbfbabe1c97ba4b16301f08a20d8484bcf77047742a3cb71c613d8e12d0b
+  #   volumes: [ "./ollama:/root/.ollama" ]

@@ -1,0 +1,70 @@
+# Typecheck, lint, unit and contract tests, generated files in sync, and the image started both ways.
+# Actions and images are pinned by digest; the comments name the versions. Nothing here holds a secret.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Types, lint, unit and contract tests
+    runs-on: ubuntu-24.04
+    container:
+      image: node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
+      env:
+        # Test isolation: nothing in the tests may reach a container engine.
+        DOCKER_HOST: unix:///nonexistent
+    env:
+      CI: "true"
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - name: git (checkout needs it for a repository, the diff check below too)
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Known vulnerabilities in production dependencies
+        run: pnpm audit --prod
+      - name: Generated files match contracts/
+        run: |
+          pnpm gen:api
+          pnpm --filter @shelf/server exec tsx scripts/schema-to-migration.ts
+          git -c safe.directory='*' diff --exit-code
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test:unit
+      - run: pnpm test:contract
+      - name: The importer runs on the sample seed
+        run: SHELF_DATA_DIR=$RUNNER_TEMP/seed-data pnpm seed seed-sample
+
+  smoke:
+    name: Image starts standalone and with the HomersLab manifest
+    runs-on: ubuntu-24.04
+    needs: check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: ./scripts/smoke.sh
+
+  release-check:
+    name: A release has no placeholders and a digest-pinned image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: ./scripts/check-release.sh
