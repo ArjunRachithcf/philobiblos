@@ -5,11 +5,12 @@
 // Privacy (docs/security.md): a takeaway is its person's own. Anyone signed in sees anyone's statuses, but a
 // takeaway leaves the server only in its own person's library. Adults change their own readings and act for kids;
 // nobody changes another adult's.
-import { and, eq, inArray, or, gte } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { components } from '@shelf/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson, view, type Person } from '../household/people';
+import { countedTags } from '../knowledge/tags';
 import { personSettings } from './settings';
 
 type S = components['schemas'];
@@ -41,13 +42,10 @@ export function bookRef(b: typeof t.book.$inferSelect): S['BookRef'] {
   };
 }
 
-/** Each book's ideas that count (ADR 0005): confirmed, or proposed with confidence ≥ 0.8. */
+/** Each book's ideas that count (ADR 0005), merged ideas read under the idea they went into (knowledge/tags.ts). */
 export function ideasOf(db: Db, ids: string[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  if (!ids.length) return out;
-  const rows = db.select({ bookId: t.bookIdea.bookId, name: t.idea.name }).from(t.bookIdea).innerJoin(t.idea, eq(t.idea.id, t.bookIdea.ideaId))
-    .where(and(inArray(t.bookIdea.bookId, ids), or(eq(t.bookIdea.state, 'confirmed'), and(eq(t.bookIdea.state, 'proposed'), gte(t.bookIdea.confidence, 0.8))))).all();
-  for (const r of rows) out.set(r.bookId, [...(out.get(r.bookId) ?? []), r.name]);
+  for (const r of countedTags(db, ids)) out.set(r.bookId, [...(out.get(r.bookId) ?? []), r.name]);
   return out;
 }
 

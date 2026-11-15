@@ -1,16 +1,20 @@
 // Ideas, layers and links (ADR 0005, spec §6). Proposals (from the AI, or the seed's guesses) stay proposals until a
 // person confirms or rejects them; nothing else changes their state, and the reviewer is recorded.
 //
-// Privacy (shelf#3): a proposal from an AI run whose input held someone's takeaways (ai_run.takeaways_of) is that
-// person's: only they see its reason, and only they decide it. Everyone else never sees the reason; such a link still
-// counts for scores (a link between two books is the household's), with a neutral reason in its place.
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+// Privacy (shelf#3): a link or book idea written from someone's takeaways carries `private_to` (set when the AI writes
+// it, kept whatever happens to the run): only that person sees its reason and decides it; for everyone else it does
+// not exist as a proposal (404, not 403: no hint that it is there). A decided private link still counts for scores (a
+// link between two books is the household's); others see a neutral reason in its place.
+import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
+import { ulid } from 'ulid';
 import type { components } from '@shelf/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson } from '../household/people';
 import { allCandidates } from '../backlog/backlog';
 import { bookRef } from '../library/library';
+import { countedTags } from './tags';
 
 type S = components['schemas'];
 type Layer = 'intro' | 'core' | 'deep' | 'counterpoint';
@@ -21,21 +25,12 @@ export class KnowledgeError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string) { super(message); }
 }
 
-/** run id → the person whose takeaways its input held (only runs that held any). */
-export function privateRuns(db: Db): Map<string, string> {
-  return new Map(db.select({ id: t.aiRun.id, of: t.aiRun.takeawaysOf }).from(t.aiRun).all().filter((r) => r.of).map((r) => [r.id, r.of!]));
-}
-
 /** A link's reason as this viewer may see it. */
-export function visibleReason(link: { reason: string; aiRunId: string | null }, viewer: string, runs: Map<string, string>): string {
-  const owner = link.aiRunId ? runs.get(link.aiRunId) : undefined;
-  return owner && owner !== viewer ? PRIVATE_REASON : link.reason;
+export function visibleReason(link: { reason: string; privateTo: string | null }, viewer: string): string {
+  return link.privateTo && link.privateTo !== viewer ? PRIVATE_REASON : link.reason;
 }
 
-function ownerOrThrow(aiRunId: string | null, viewer: string, runs: Map<string, string>): void {
-  const owner = aiRunId ? runs.get(aiRunId) : undefined;
-  if (owner && owner !== viewer) throw new KnowledgeError(403, 'this proposal came from someone else’s reading: only they decide it');
-}
+const hidden = (row: { privateTo: string | null }, viewer: string) => row.privateTo !== null && row.privateTo !== viewer;
 
 function parseReview(body: unknown, allowLayer: boolean): { state?: 'confirmed' | 'rejected'; layer?: Layer } {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new KnowledgeError(400, 'a JSON object is needed');
@@ -58,20 +53,17 @@ function parseReview(body: unknown, allowLayer: boolean): { state?: 'confirmed' 
 export function reviewLink(db: Db, viewer: string, from: string, to: string, body: unknown, now = new Date()) {
   const { state } = parseReview(body, false);
   const link = db.select().from(t.bookLink).where(and(eq(t.bookLink.fromBook, from), eq(t.bookLink.toBook, to))).get();
-  if (!link) throw new KnowledgeError(404, 'no such link');
-  const runs = privateRuns(db);
-  ownerOrThrow(link.aiRunId, viewer, runs);
+  if (!link || hidden(link, viewer)) throw new KnowledgeError(404, 'no such link');
   db.update(t.bookLink).set({ state: state!, reviewedBy: viewer, reviewedAt: now.toISOString() })
     .where(and(eq(t.bookLink.fromBook, from), eq(t.bookLink.toBook, to))).run();
-  return { state: state!, reason: visibleReason(link, viewer, runs) };
+  return { state: state!, reason: visibleReason(link, viewer) };
 }
 
 /** PUT /books/{book}/ideas/{idea}: a person confirms or rejects a book's idea, or puts it in another layer (which confirms it). */
 export function reviewBookIdea(db: Db, viewer: string, bookId: string, ideaId: string, body: unknown, now = new Date()) {
   const u = parseReview(body, true);
   const row = db.select().from(t.bookIdea).where(and(eq(t.bookIdea.bookId, bookId), eq(t.bookIdea.ideaId, ideaId))).get();
-  if (!row) throw new KnowledgeError(404, 'no such idea on that book');
-  ownerOrThrow(row.aiRunId, viewer, privateRuns(db));
+  if (!row || hidden(row, viewer)) throw new KnowledgeError(404, 'no such idea on that book');
   const next = { state: u.state ?? 'confirmed' as const, layer: u.layer ?? row.layer };
   db.update(t.bookIdea).set({ ...next, reviewedBy: viewer, reviewedAt: now.toISOString() })
     .where(and(eq(t.bookIdea.bookId, bookId), eq(t.bookIdea.ideaId, ideaId))).run();
@@ -80,17 +72,18 @@ export function reviewBookIdea(db: Db, viewer: string, bookId: string, ideaId: s
 
 /** GET /proposals: what is waiting for a person's decision, as this viewer may see it (others' private ones left out). */
 export function listProposals(db: Db, viewer: string) {
-  const runs = privateRuns(db);
-  const mine = (aiRunId: string | null) => !aiRunId || !runs.has(aiRunId) || runs.get(aiRunId) === viewer;
-  const links = db.select().from(t.bookLink).where(eq(t.bookLink.state, 'proposed')).all().filter((l) => mine(l.aiRunId));
-  const ideas = db.select({ row: t.bookIdea, name: t.idea.name }).from(t.bookIdea).innerJoin(t.idea, eq(t.idea.id, t.bookIdea.ideaId))
-    .where(and(eq(t.bookIdea.state, 'proposed'), isNull(t.idea.mergedInto))).all().filter((r) => mine(r.row.aiRunId));
+  const links = db.select().from(t.bookLink).where(eq(t.bookLink.state, 'proposed')).all().filter((l) => !hidden(l, viewer));
+  // A proposal on a merged idea shows under the idea it went into; it is reviewed by its own row (idea.id).
+  const into = alias(t.idea, 'into_idea');
+  const ideas = db.select({ row: t.bookIdea, name: t.idea.name, intoId: into.id, intoName: into.name }).from(t.bookIdea)
+    .innerJoin(t.idea, eq(t.idea.id, t.bookIdea.ideaId)).leftJoin(into, eq(into.id, t.idea.mergedInto))
+    .where(eq(t.bookIdea.state, 'proposed')).all().filter((r) => !hidden(r.row, viewer));
   const ids = [...new Set([...links.flatMap((l) => [l.fromBook, l.toBook]), ...ideas.map((r) => r.row.bookId)])];
   const books = new Map(ids.length ? db.select().from(t.book).where(inArray(t.book.id, ids)).all().map((b) => [b.id, bookRef(b)]) : []);
   return {
-    links: links.map((l) => ({ from: books.get(l.fromBook)!, to: books.get(l.toBook)!, reason: l.reason, confidence: l.confidence, fromAi: l.aiRunId !== null }))
+    links: links.map((l) => ({ from: books.get(l.fromBook)!, to: books.get(l.toBook)!, reason: l.reason, confidence: l.confidence, fromAi: l.aiRunId !== null || l.privateTo !== null }))
       .sort((a, b) => b.confidence - a.confidence),
-    ideas: ideas.map(({ row, name }) => ({ book: books.get(row.bookId)!, idea: { id: row.ideaId, name }, layer: row.layer, confidence: row.confidence, fromAi: row.aiRunId !== null }))
+    ideas: ideas.map(({ row, name, intoName }) => ({ book: books.get(row.bookId)!, idea: { id: row.ideaId, name: intoName ?? name }, layer: row.layer, confidence: row.confidence, fromAi: row.aiRunId !== null || row.privateTo !== null }))
       .sort((a, b) => b.confidence - a.confidence),
   };
 }
@@ -98,7 +91,7 @@ export function listProposals(db: Db, viewer: string) {
 const NAME_MAX = 60;
 
 /** PATCH /ideas/{id}: rename an idea, or merge it into another (the household's shared vocabulary, ADR 0005). */
-export function editIdea(db: Db, ideaId: string, body: unknown) {
+export function editIdea(db: Db, ideaId: string, body: unknown, by: string | null = null, now = new Date()) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new KnowledgeError(400, 'a JSON object is needed');
   const b = body as Record<string, unknown>;
   for (const k of Object.keys(b)) if (k !== 'name' && k !== 'mergeInto') throw new KnowledgeError(400, `unknown field ${k}`);
@@ -117,19 +110,42 @@ export function editIdea(db: Db, ideaId: string, body: unknown) {
   const into = typeof b.mergeInto === 'string' ? db.select().from(t.idea).where(eq(t.idea.id, b.mergeInto)).get() : undefined;
   if (!into || into.mergedInto) throw new KnowledgeError(404, 'no such idea to merge into');
   if (into.id === ideaId) throw new KnowledgeError(400, 'an idea cannot merge into itself');
-  const rank = { confirmed: 2, proposed: 1, rejected: 0 } as const;
+  // No row changes: a merge decides nothing (a private proposal stays its owner's, waiting). The idea points at the
+  // other one, and so do the ideas that pointed at it (one step); the log keeps what changed, for an admin's undo.
   db.transaction((tx) => {
-    for (const row of tx.select().from(t.bookIdea).where(eq(t.bookIdea.ideaId, ideaId)).all()) {
-      const there = tx.select().from(t.bookIdea).where(and(eq(t.bookIdea.bookId, row.bookId), eq(t.bookIdea.ideaId, into.id))).get();
-      // A book in both keeps the stronger decision: confirmed over proposed over rejected.
-      if (!there) tx.insert(t.bookIdea).values({ ...row, ideaId: into.id }).run();
-      else if (rank[row.state] > rank[there.state]) tx.update(t.bookIdea).set({ state: row.state, layer: row.layer, reviewedBy: row.reviewedBy, reviewedAt: row.reviewedAt }).where(and(eq(t.bookIdea.bookId, row.bookId), eq(t.bookIdea.ideaId, into.id))).run();
-      tx.delete(t.bookIdea).where(and(eq(t.bookIdea.bookId, row.bookId), eq(t.bookIdea.ideaId, ideaId))).run();
-    }
+    const repointed = tx.select({ id: t.idea.id }).from(t.idea).where(eq(t.idea.mergedInto, ideaId)).all().map((r) => r.id);
     tx.update(t.idea).set({ mergedInto: into.id }).where(eq(t.idea.mergedInto, ideaId)).run();
     tx.update(t.idea).set({ mergedInto: into.id }).where(eq(t.idea.id, ideaId)).run();
+    tx.insert(t.ideaMerge).values({ id: ulid(), ideaId, intoId: into.id, repointedJson: JSON.stringify(repointed), mergedBy: by, mergedAt: now.toISOString() }).run();
   });
   return { id: into.id, name: into.name };
+}
+
+/** GET /ideas/merges: the merge log, newest first (who, when, what; undone or not). */
+export function listMerges(db: Db) {
+  const a = alias(t.idea, 'a');
+  const b = alias(t.idea, 'b');
+  const who = alias(t.person, 'who');
+  return db.select({ m: t.ideaMerge, idea: a.name, into: b.name, by: who.name }).from(t.ideaMerge)
+    .innerJoin(a, eq(a.id, t.ideaMerge.ideaId)).innerJoin(b, eq(b.id, t.ideaMerge.intoId)).leftJoin(who, eq(who.id, t.ideaMerge.mergedBy))
+    .orderBy(desc(t.ideaMerge.mergedAt)).all()
+    .map(({ m, idea, into, by }) => ({ id: m.id, idea: { id: m.ideaId, name: idea }, into: { id: m.intoId, name: into }, mergedBy: by ?? null, mergedAt: m.mergedAt, undone: m.undoneAt !== null }));
+}
+
+/** POST /ideas/merges/{id}/undo (admins): the idea stands on its own again, with the ideas the merge re-pointed. */
+export function undoMerge(db: Db, mergeId: string, by: string, now = new Date()) {
+  const m = db.select().from(t.ideaMerge).where(eq(t.ideaMerge.id, mergeId)).get();
+  if (!m) throw new KnowledgeError(404, 'no such merge');
+  if (m.undoneAt) throw new KnowledgeError(409, 'already undone');
+  const idea = db.select().from(t.idea).where(eq(t.idea.id, m.ideaId)).get()!;
+  if (idea.mergedInto !== m.intoId) throw new KnowledgeError(409, 'the idea has been merged again since: undo that first');
+  db.transaction((tx) => {
+    tx.update(t.idea).set({ mergedInto: null }).where(eq(t.idea.id, m.ideaId)).run();
+    const back = JSON.parse(m.repointedJson) as string[];
+    if (back.length) tx.update(t.idea).set({ mergedInto: m.ideaId }).where(and(inArray(t.idea.id, back), eq(t.idea.mergedInto, m.intoId))).run();
+    tx.update(t.ideaMerge).set({ undoneBy: by, undoneAt: now.toISOString() }).where(eq(t.ideaMerge.id, mergeId)).run();
+  });
+  return { id: m.ideaId, name: idea.name };
 }
 
 /** GET /people/{id}/brain: an adult's ideas with their layers, and the edges between ideas (ADR 0005). */
@@ -145,10 +161,8 @@ export function getBrain(db: Db, personId: string): S['Brain'] {
   // each layer's "next".
   const candScore = new Map(allCandidates(db).filter((c) => c.personId === p.id && c.state === 'open').map((c) => [c.book.id, c.score ?? -Infinity]));
 
-  // What counts (spec §6): confirmed, or proposed with confidence ≥ 0.8; never rejected; merged ideas are gone.
-  const tags = db.select({ bookId: t.bookIdea.bookId, ideaId: t.idea.id, name: t.idea.name, layer: t.bookIdea.layer, state: t.bookIdea.state, confidence: t.bookIdea.confidence })
-    .from(t.bookIdea).innerJoin(t.idea, eq(t.idea.id, t.bookIdea.ideaId)).where(isNull(t.idea.mergedInto)).all()
-    .filter((r) => r.state === 'confirmed' || (r.state === 'proposed' && r.confidence >= 0.8));
+  // What counts (spec §6, knowledge/tags.ts): merged ideas read under the idea they went into; rejected never counts.
+  const tags = countedTags(db);
   const mineTags = tags.filter((r) => read.has(r.bookId) || (owned.has(r.bookId) && !notUnread.has(r.bookId)) || candScore.has(r.bookId));
   const bookIds = [...new Set(mineTags.map((r) => r.bookId))];
   const books = new Map(bookIds.length ? db.select().from(t.book).where(inArray(t.book.id, bookIds)).all().map((b) => [b.id, bookRef(b)]) : []);

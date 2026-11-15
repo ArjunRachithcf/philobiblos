@@ -1,21 +1,22 @@
 // The Backlog (spec §4): every candidate of the household, scored by packages/scoring (spec §6; the AI never sets a
 // score, ADR 0004), filtered by the query language of contracts/backlog-query.md (parsed by packages/contracts),
 // sorted, counted per tab and per facet. The backlog is shared by design (docs/security.md): every adult sees it.
-import { eq, inArray } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import { parseQuery, type ParsedQuery, type Term } from '@shelf/contracts';
 import type { components } from '@shelf/contracts/openapi';
 import { scoreAdult, scoreKid, type Layer, type ScorePart } from '@shelf/scoring';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { household, view } from '../household/people';
-import { privateRuns, visibleReason } from '../knowledge/knowledge';
+import { visibleReason } from '../knowledge/knowledge';
+import { COUNTED, countedTags } from '../knowledge/tags';
 import { bookRef } from '../library/library';
 
 type S = components['schemas'];
 type Candidate = S['Candidate'];
 type Closed = NonNullable<Candidate['closedReason']>;
 const DAY = 86_400_000;
-const COUNTED = 0.8; // a link or idea counts when confirmed, or proposed with this confidence (spec §6)
+
 
 /** A candidate's id in the API: the person and the book it joins. */
 export const candidateId = (personId: string, bookId: string) => `${personId}.${bookId}`;
@@ -53,18 +54,15 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
   const sharers = new Map(db.select({ id: t.share.id, personId: t.share.personId }).from(t.share).all().map((s) => [s.id, s.personId]));
 
   // Ideas with their layer, for candidates and for read books (main idea = the first counted one).
-  const tags = db.select({ bookId: t.bookIdea.bookId, ideaId: t.idea.id, name: t.idea.name, layer: t.bookIdea.layer, confidence: t.bookIdea.confidence, state: t.bookIdea.state })
-    .from(t.bookIdea).innerJoin(t.idea, eq(t.idea.id, t.bookIdea.ideaId)).all()
-    .filter((r) => r.state === 'confirmed' || (r.state === 'proposed' && r.confidence >= COUNTED));
+  const tags = countedTags(db);
   const ideasOfBook = new Map<string, typeof tags>();
   for (const r of tags) ideasOfBook.set(r.bookId, [...(ideasOfBook.get(r.bookId) ?? []), r]);
   const themesOfBook = new Map<string, string[]>();
   for (const r of db.select().from(t.bookTheme).orderBy(t.bookTheme.theme).all()) themesOfBook.set(r.bookId, [...(themesOfBook.get(r.bookId) ?? []), r.theme]);
   // A reason from someone's takeaways is theirs (shelf#3): everyone else sees a neutral one.
-  const runs = privateRuns(db);
   const linksFrom = new Map<string, { to: string; reason: string; confidence: number; state: string }[]>();
   for (const l of db.select().from(t.bookLink).all()) {
-    if (l.state === 'confirmed' || (l.state === 'proposed' && l.confidence >= COUNTED)) linksFrom.set(l.fromBook, [...(linksFrom.get(l.fromBook) ?? []), { to: l.toBook, reason: visibleReason(l, viewer, runs), confidence: l.confidence, state: l.state }]);
+    if (l.state === 'confirmed' || (l.state === 'proposed' && l.confidence >= COUNTED)) linksFrom.set(l.fromBook, [...(linksFrom.get(l.fromBook) ?? []), { to: l.toBook, reason: visibleReason(l, viewer), confidence: l.confidence, state: l.state }]);
   }
   // Each person's readings: what they have read (with when), and kids' feedback.
   const readBy = new Map<string, Map<string, { finished: string; feedback: string | null }>>();

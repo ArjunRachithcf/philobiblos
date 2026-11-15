@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ce4dfa6f-4a9f-4c60-9da4-595cb89f0246",
+  "id": "6bd5b011-6522-4813-8d31-fe3a46416d1f",
   "prevId": "c897284d-6a9e-4f60-a69f-2f430149ce17",
   "tables": {
     "ai_run": {
@@ -292,6 +292,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "private_to": {
+          "name": "private_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},
@@ -346,6 +353,19 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "book_idea_private_to_person_id_fk": {
+          "name": "book_idea_private_to_person_id_fk",
+          "tableFrom": "book_idea",
+          "tableTo": "person",
+          "columnsFrom": [
+            "private_to"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -429,6 +449,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "private_to": {
+          "name": "private_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},
@@ -483,6 +510,19 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "book_link_private_to_person_id_fk": {
+          "name": "book_link_private_to_person_id_fk",
+          "tableFrom": "book_link",
+          "tableTo": "person",
+          "columnsFrom": [
+            "private_to"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -996,6 +1036,126 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "idea_merge": {
+      "name": "idea_merge",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "idea_id": {
+          "name": "idea_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "into_id": {
+          "name": "into_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "repointed_json": {
+          "name": "repointed_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
+        "merged_by": {
+          "name": "merged_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "merged_at": {
+          "name": "merged_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "undone_by": {
+          "name": "undone_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "undone_at": {
+          "name": "undone_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "idea_merge_idea_id_idea_id_fk": {
+          "name": "idea_merge_idea_id_idea_id_fk",
+          "tableFrom": "idea_merge",
+          "tableTo": "idea",
+          "columnsFrom": [
+            "idea_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "idea_merge_into_id_idea_id_fk": {
+          "name": "idea_merge_into_id_idea_id_fk",
+          "tableFrom": "idea_merge",
+          "tableTo": "idea",
+          "columnsFrom": [
+            "into_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "idea_merge_merged_by_person_id_fk": {
+          "name": "idea_merge_merged_by_person_id_fk",
+          "tableFrom": "idea_merge",
+          "tableTo": "person",
+          "columnsFrom": [
+            "merged_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "idea_merge_undone_by_person_id_fk": {
+          "name": "idea_merge_undone_by_person_id_fk",
+          "tableFrom": "idea_merge",
+          "tableTo": "person",
+          "columnsFrom": [
+            "undone_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

@@ -34,6 +34,13 @@ const bookId = (title: string) => db.select().from(t.book).where(eq(t.book.title
 const ideaId = (name: string) => db.select().from(t.idea).where(eq(t.idea.name, name)).get()!.id;
 
 describe('the brain', () => {
+  it('a rejected tag never counts, even on a read book', async () => {
+    const book = bookId('A Short History of Bread');
+    db.insert(t.idea).values({ id: 'i_rej', name: 'Rejected idea' }).run();
+    db.insert(t.bookIdea).values({ bookId: book, ideaId: 'i_rej', layer: 'core', confidence: 1, state: 'rejected' }).run();
+    expect((await get('alex', `/api/people/${id.alex}/brain`)).json().ideas.map((i: { name: string }) => i.name)).not.toContain('Rejected idea');
+  });
+
   it('an adult\'s ideas, with read books per layer, the best open candidate per layer, and edges', async () => {
     // The seed's wishlist ideas are guesses (proposed, 0.5): they count once confirmed.
     db.update(t.bookIdea).set({ state: 'confirmed' }).where(and(eq(t.bookIdea.bookId, bookId('The Grand Ledger')), eq(t.bookIdea.ideaId, ideaId('Markets and value')))).run();
@@ -98,21 +105,34 @@ describe('proposals and reviews', () => {
     expect((await send('alex', method, real, body)).statusCode).toBe(status);
   });
 
-  it('a proposal from someone\'s takeaways is theirs: others never see its reason, nor decide it', async () => {
+  it('a proposal from someone\'s takeaways is theirs: others never see its reason, nor find it (404)', async () => {
     const now = new Date().toISOString();
     db.insert(t.aiRun).values({ id: 'run_sam', job: 'link', provider: 'ollama', model: 'm', promptVersion: 'v1', inputHash: 'h', startedAt: now, takeawaysOf: id.partner }).run();
     const [from, to] = [bookId('Before the First Cities'), bookId('The Long Tide of Markets')];
-    db.insert(t.bookLink).values({ fromBook: from, toBook: to, reason: 'what Sam wrote about trade', confidence: 0.9, state: 'proposed', aiRunId: 'run_sam' }).run();
+    db.insert(t.bookLink).values({ fromBook: from, toBook: to, reason: 'what Sam wrote about trade', confidence: 0.9, state: 'proposed', aiRunId: 'run_sam', privateTo: id.partner }).run();
 
     const samSees = (await get('partner', '/api/proposals')).json().links.find((l: { from: { id: string }; to: { id: string } }) => l.from.id === from && l.to.id === to);
     expect(samSees).toMatchObject({ reason: 'what Sam wrote about trade', fromAi: true });
     expect((await get('alex', '/api/proposals')).body).not.toContain('what Sam wrote');
-    // the backlog shows Alex a neutral reason for the same link (it counts: confidence 0.9)
     const backlog = (await get('alex', '/api/backlog?q=%22before%20the%20first%20cities%22')).json();
     expect(JSON.stringify(backlog)).not.toContain('what Sam wrote');
     expect(backlog.items[0].buildsOn).toContainEqual(expect.objectContaining({ reason: PRIVATE_REASON }));
-    expect((await send('alex', 'PUT', `/api/links/${from}/${to}`, { state: 'confirmed' })).statusCode).toBe(403);
+    // for Alex it does not exist: the same answer as a link that is not there
+    const r = await send('alex', 'PUT', `/api/links/${from}/${to}`, { state: 'confirmed' });
+    expect(r.statusCode).toBe(404);
+    expect(r.json()).toEqual((await send('alex', 'PUT', '/api/links/x/y', { state: 'confirmed' })).json());
+  });
+
+  it('the repro: Sam confirms, then turns the AI gate off; the reason never reaches Alex', async () => {
+    const [from, to] = [bookId('Before the First Cities'), bookId('The Long Tide of Markets')];
     expect((await send('partner', 'PUT', `/api/links/${from}/${to}`, { state: 'confirmed' })).json()).toMatchObject({ reason: 'what Sam wrote about trade' });
+    expect((await send('partner', 'PATCH', '/api/settings', { person: { takeawaysToAi: true } })).statusCode).toBe(200);
+    expect((await send('partner', 'PATCH', '/api/settings', { person: { takeawaysToAi: false } })).statusCode).toBe(200);
+    const row = db.select().from(t.bookLink).where(and(eq(t.bookLink.fromBook, from), eq(t.bookLink.toBook, to))).get()!;
+    expect(row).toMatchObject({ state: 'confirmed', aiRunId: null, privateTo: id.partner, reason: PRIVATE_REASON });
+    const backlog = await get('alex', '/api/backlog?q=%22before%20the%20first%20cities%22');
+    expect(backlog.body).not.toContain('what Sam wrote');
+    expect((await send('alex', 'PUT', `/api/links/${from}/${to}`, { state: 'rejected' })).statusCode).toBe(404);
   });
 });
 
@@ -124,20 +144,74 @@ describe('ideas: rename and merge', () => {
     for (const body of [{}, { name: '' }, { name: 'x', mergeInto: 'y' }, { colour: 'red' }]) expect((await send('partner', 'PATCH', `/api/ideas/${i}`, body)).statusCode).toBe(400);
   });
 
-  it('merges: books move to the other idea, the stronger decision wins, the merged idea is gone', async () => {
+  it('merges: the rows stay as they were, read under the idea they went into; logged; an admin undoes it', async () => {
     const from = ideaId('Care and commons');
     const into = ideaId('Markets and value');
-    const before = db.select().from(t.bookIdea).where(eq(t.bookIdea.ideaId, from)).all().map((r) => r.bookId);
-    expect(before.length).toBeGreaterThan(0);
-    const r = await send('alex', 'PATCH', `/api/ideas/${from}`, { mergeInto: into });
+    const rowsBefore = db.select().from(t.bookIdea).where(eq(t.bookIdea.ideaId, from)).all();
+    expect(rowsBefore.length).toBeGreaterThan(0);
+    const r = await send('partner', 'PATCH', `/api/ideas/${from}`, { mergeInto: into });
     expect(r.json()).toEqual({ id: into, name: 'Markets and value' });
-    expect(db.select().from(t.bookIdea).where(eq(t.bookIdea.ideaId, from)).all()).toEqual([]);
-    const after = db.select().from(t.bookIdea).where(eq(t.bookIdea.ideaId, into)).all().map((x) => x.bookId);
-    for (const b of before) expect(after).toContain(b);
+    expect(db.select().from(t.bookIdea).where(eq(t.bookIdea.ideaId, from)).all()).toEqual(rowsBefore); // nothing decided
+    const lib = (await get('alex', `/api/people/${id.alex}/library`)).json();
+    const gardens = lib.books.find((b: { book: { title: string } }) => b.book.title === 'Gardens of the Commons');
+    expect(gardens.ideas).toEqual(['Markets and value']);
     expect((await get('alex', `/api/people/${id.alex}/brain`)).json().ideas.map((i: { name: string }) => i.name)).not.toContain('Care and commons');
     expect((await send('alex', 'PATCH', `/api/ideas/${from}`, { name: 'Back' })).statusCode).toBe(404);
     expect((await send('alex', 'PATCH', `/api/ideas/${into}`, { mergeInto: into })).statusCode).toBe(400);
     expect((await send('alex', 'PATCH', `/api/ideas/${into}`, { mergeInto: 'nope' })).statusCode).toBe(404);
+
+    const log = (await get('alex', '/api/ideas/merges')).json();
+    expect(log[0]).toMatchObject({ idea: { id: from, name: 'Care and commons' }, into: { id: into }, mergedBy: 'Sam', undone: false });
+    const undo = (who: string) => built.app.inject({ method: 'POST', url: `/api/ideas/merges/${log[0].id}/undo`, headers: { cookie: cookie[who]!, origin: ORIGIN } });
+    expect((await undo('partner')).statusCode).toBe(403); // admins undo
+    expect((await undo('alex')).json()).toEqual({ id: from, name: 'Care and commons' });
+    expect((await undo('alex')).statusCode).toBe(409);
+    expect((await get('alex', `/api/people/${id.alex}/library`)).json().books.find((b: { book: { title: string } }) => b.book.title === 'Gardens of the Commons').ideas).toEqual(['Care and commons']);
+  });
+
+  it('a merge re-points the ideas already merged into it (and the undo points them back)', async () => {
+    const [x, y, z] = ['Idea X', 'Idea Y', 'Idea Z'].map((name) => { const i = `i_${name.slice(-1)}`; db.insert(t.idea).values({ id: i, name }).run(); return i; });
+    const book = bookId('A Short History of Bread');
+    db.insert(t.bookIdea).values({ bookId: book, ideaId: x!, layer: 'deep', confidence: 1, state: 'confirmed' }).run();
+    await send('alex', 'PATCH', `/api/ideas/${x}`, { mergeInto: y });
+    await send('alex', 'PATCH', `/api/ideas/${y}`, { mergeInto: z });
+    expect(db.select().from(t.idea).where(eq(t.idea.id, x!)).get()!.mergedInto).toBe(z);
+    const ideas = () => (get('alex', `/api/people/${id.alex}/library`)).then((r) => r.json().books.find((b: { book: { id: string } }) => b.book.id === book).ideas);
+    expect(await ideas()).toContain('Idea Z');
+    const last = (await get('alex', '/api/ideas/merges')).json()[0];
+    await built.app.inject({ method: 'POST', url: `/api/ideas/merges/${last.id}/undo`, headers: { cookie: cookie.alex!, origin: ORIGIN } });
+    expect(db.select().from(t.idea).where(eq(t.idea.id, x!)).get()!.mergedInto).toBe(y);
+    expect(await ideas()).toContain('Idea Y');
+  });
+
+  it('when a book has rows on both merged ideas, the stronger decision is the book\'s (confirmed > proposed > rejected)', async () => {
+    const [a, b, c] = ['Rank A', 'Rank B', 'Rank C'].map((name, n) => { const i = `i_rank${n}`; db.insert(t.idea).values({ id: i, name }).run(); return i; });
+    const book = bookId('Notes on Unpaid Work');
+    db.insert(t.bookIdea).values([
+      { bookId: book, ideaId: a!, layer: 'core', confidence: 0.5, state: 'confirmed' },
+      { bookId: book, ideaId: b!, layer: 'deep', confidence: 1, state: 'rejected' },
+    ]).run();
+    await send('alex', 'PATCH', `/api/ideas/${b}`, { mergeInto: a });
+    const names = async () => (await get('alex', `/api/people/${id.alex}/library`)).json().books.find((x: { book: { id: string } }) => x.book.id === book).ideas;
+    expect(await names()).toContain('Rank A'); // confirmed beats rejected, whatever the confidence
+    // and the other way round: a rejected row merged onto it never undoes a confirmed one
+    db.insert(t.bookIdea).values({ bookId: book, ideaId: c!, layer: 'core', confidence: 1, state: 'rejected' }).run();
+    await send('alex', 'PATCH', `/api/ideas/${a}`, { mergeInto: c });
+    expect(await names()).toContain('Rank C');
+  });
+
+  it('a merge never decides a private proposal: it stays its owner\'s, waiting', async () => {
+    const [p1, p2] = ['Private A', 'Private B'].map((name, n) => { const i = `i_priv${n}`; db.insert(t.idea).values({ id: i, name }).run(); return i; });
+    const book = bookId('Gardens of the Commons');
+    db.insert(t.bookIdea).values([
+      { bookId: book, ideaId: p1!, layer: 'core', confidence: 0.6, state: 'proposed', privateTo: id.partner },
+      { bookId: book, ideaId: p2!, layer: 'core', confidence: 1, state: 'confirmed', reviewedBy: id.alex },
+    ]).run();
+    await send('alex', 'PATCH', `/api/ideas/${p1}`, { mergeInto: p2 });
+    expect(db.select().from(t.bookIdea).where(and(eq(t.bookIdea.bookId, book), eq(t.bookIdea.ideaId, p1!))).get()).toMatchObject({ state: 'proposed', privateTo: id.partner, reviewedBy: null });
+    const sam = (await get('partner', '/api/proposals')).json().ideas;
+    expect(sam).toContainEqual(expect.objectContaining({ idea: { id: p1, name: 'Private B' }, book: expect.objectContaining({ id: book }) }));
+    expect((await get('alex', '/api/proposals')).json().ideas.some((x: { idea: { id: string } }) => x.idea.id === p1)).toBe(false);
   });
 
   it('a kid\'s session is refused (403)', async () => {

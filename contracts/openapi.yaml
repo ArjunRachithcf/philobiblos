@@ -168,14 +168,14 @@ paths:
     get:
       tags: [brain]
       operationId: listProposals
-      summary: 'Links and book ideas waiting for a person''s decision. A proposal written from someone''s takeaways is theirs alone: nobody else sees it here (shelf#3).'
+      summary: 'Links and book ideas waiting for a person''s decision (book ideas on a merged idea show its new name and keep their own idea id for the review). A proposal written from someone''s takeaways is theirs alone: nobody else sees it here (shelf#3).'
       responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Proposals' } } } } }
   /links/{fromBook}/{toBook}:
     parameters: [{ name: fromBook, in: path, required: true, schema: {type: string} }, { name: toBook, in: path, required: true, schema: {type: string} }]
     put:
       tags: [brain]
       operationId: reviewLink
-      summary: 'A person confirms or rejects a link (the reviewer is recorded). One written from someone''s takeaways only they decide (403).'
+      summary: 'A person confirms or rejects a link (the reviewer is recorded). One written from someone''s takeaways is theirs alone: for anyone else it does not exist (404).'
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [state], additionalProperties: false, properties: { state: { enum: [confirmed, rejected] } } } } } }
       responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such link, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [state, reason], properties: { state: { enum: [confirmed, rejected] }, reason: {type: string} } } } } } }
   /books/{bookId}/ideas/{ideaId}:
@@ -191,9 +191,22 @@ paths:
     patch:
       tags: [brain]
       operationId: editIdea
-      summary: 'Rename an idea, or merge it into another (the household''s shared vocabulary, ADR 0005): either name or mergeInto'
+      summary: 'Rename an idea, or merge it into another (the household''s shared vocabulary, ADR 0005): either name or mergeInto. Any adult may merge; a merge changes no book''s rows (it decides nothing, private proposals stay their owner''s) and is logged for an admin''s undo.'
       requestBody: { required: true, content: { application/json: { schema: { type: object, minProperties: 1, maxProperties: 1, additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, mergeInto: {type: string} } } } } }
       responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such idea, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: Another idea has that name, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'The idea (after a merge, the one it went into)', content: { application/json: { schema: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } } } } } }
+  /ideas/merges:
+    get:
+      tags: [brain]
+      operationId: listMerges
+      summary: 'The merge log, newest first: which idea went into which, who merged it and when, and whether it was undone'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { type: object, required: [id, idea, into, mergedBy, mergedAt, undone], properties: { id: {type: string}, idea: { $ref: '#/components/schemas/IdeaRef' }, into: { $ref: '#/components/schemas/IdeaRef' }, mergedBy: { type: [string, 'null'] }, mergedAt: {type: string}, undone: {type: boolean} } } } } } } }
+  /ideas/merges/{mergeId}/undo:
+    parameters: [{ name: mergeId, in: path, required: true, schema: {type: string} }]
+    post:
+      tags: [brain]
+      operationId: undoMerge
+      summary: 'Admins: undo a merge (the idea stands on its own again, with the ideas the merge re-pointed). A merge never changed a row, so nothing else needs restoring.'
+      responses: { '404': { description: No such merge, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'Already undone, or the idea has been merged again since', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: The idea, content: { application/json: { schema: { $ref: '#/components/schemas/IdeaRef' } } } } }
 
   /people/{personId}/library:
     parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
@@ -313,6 +326,7 @@ components:
         nextBroaden: { type: [object, 'null'], properties: { month: {type: string}, idea: {type: string}, bookId: {type: string} } }
         order: { oneOf: [ { $ref: '#/components/schemas/Order' }, { type: 'null' } ] }
     Layer: { enum: [intro, core, deep, counterpoint] }
+    IdeaRef: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } }
     Proposals:
       type: object
       required: [links, ideas]

@@ -140,11 +140,26 @@ export const bookIdea = sqliteTable('book_idea', {
   // Who decided (null: nobody yet, or the seed). Only a person moves a proposal to confirmed or rejected.
   reviewedBy: text('reviewed_by').references(() => person.id, { onDelete: 'set null' }),
   reviewedAt: text('reviewed_at'),
+  // Written from this person's takeaways (shelf#3): only they see its reason and decide it. Kept when the run is purged.
+  privateTo: text('private_to').references(() => person.id, { onDelete: 'cascade' }),
 }, (t) => [
   primaryKey({ columns: [t.bookId, t.ideaId] }),
   check('book_idea_layer', sql`${t.layer} IN ('intro','core','deep','counterpoint')`),
   check('book_idea_state', sql`${t.state} IN ('proposed','confirmed','rejected')`),
 ]);
+
+// A merge leaves the rows as they were: an idea points at the one it went into (one step; merging again re-points), and
+// readers resolve it. The log says who merged and when, and what was re-pointed, so an admin can undo it.
+export const ideaMerge = sqliteTable('idea_merge', {
+  id: text('id').primaryKey(),
+  ideaId: text('idea_id').notNull().references(() => idea.id),
+  intoId: text('into_id').notNull().references(() => idea.id),
+  repointedJson: text('repointed_json').notNull().default('[]'),
+  mergedBy: text('merged_by').references(() => person.id, { onDelete: 'set null' }),
+  mergedAt: text('merged_at').notNull(),
+  undoneBy: text('undone_by').references(() => person.id, { onDelete: 'set null' }),
+  undoneAt: text('undone_at'),
+});
 
 export const bookLink = sqliteTable('book_link', {
   fromBook: text('from_book').notNull().references(() => book.id, { onDelete: 'cascade' }),
@@ -156,6 +171,8 @@ export const bookLink = sqliteTable('book_link', {
   // Who decided (null: nobody yet, or the seed). Only a person moves a proposal to confirmed or rejected.
   reviewedBy: text('reviewed_by').references(() => person.id, { onDelete: 'set null' }),
   reviewedAt: text('reviewed_at'),
+  // Written from this person's takeaways (shelf#3): only they see its reason and decide it. Kept when the run is purged.
+  privateTo: text('private_to').references(() => person.id, { onDelete: 'cascade' }),
 }, (t) => [
   primaryKey({ columns: [t.fromBook, t.toBook] }),
   check('book_link_state', sql`${t.state} IN ('proposed','confirmed','rejected')`),

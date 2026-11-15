@@ -1,11 +1,12 @@
 // What the AI may know of a person's reading (ADR 0009, contracts/ai-plugin.md): the one place that reads takeaways
 // for an AI job. Read books with their ideas always (book metadata and idea names); a takeaway only when that person
 // has turned on `takeawaysToAi`, whichever provider runs (Ollama is local, but it is still an AI reading them).
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson } from '../household/people';
 import { bookRef, ideasOf } from './library';
+import { PRIVATE_REASON } from '../knowledge/knowledge';
 import { personSettings } from './settings';
 
 export interface ReadBookForAi { id: string; title: string; authors: string[]; ideas: string[]; takeaway?: string }
@@ -25,18 +26,24 @@ export function readBooksForAi(db: Db, personId: string): ReadBookForAi[] {
 
 /**
  * When a person turns `takeawaysToAi` off (or is removed): every AI run whose input held their takeaways goes, with its
- * cached output, and so does what it proposed and nobody has decided yet. Decisions people made stay, without the
- * link to the run. Nothing derived from a takeaway outlives the person's choice.
+ * cached output, and so does what it (or anything private to them) proposed that nobody has decided yet. Decisions
+ * stay, still private to that person (`private_to` does not depend on the run), and a link's reason written from their
+ * takeaways is replaced by a neutral one. Nothing derived from a takeaway outlives the person's choice.
  */
 export function purgeTakeawayRuns(db: Db, personId: string): number {
   const runs = db.select({ id: t.aiRun.id }).from(t.aiRun).where(eq(t.aiRun.takeawaysOf, personId)).all().map((r) => r.id);
-  if (!runs.length) return 0;
+  const fromThem = <C extends typeof t.bookLink.aiRunId | typeof t.bookIdea.aiRunId, P extends typeof t.bookLink.privateTo | typeof t.bookIdea.privateTo>(run: C, priv: P) =>
+    runs.length ? or(inArray(run, runs), eq(priv, personId)) : eq(priv, personId);
   db.transaction((tx) => {
-    tx.delete(t.bookLink).where(and(inArray(t.bookLink.aiRunId, runs), eq(t.bookLink.state, 'proposed'))).run();
-    tx.delete(t.bookIdea).where(and(inArray(t.bookIdea.aiRunId, runs), eq(t.bookIdea.state, 'proposed'))).run();
-    tx.update(t.bookLink).set({ aiRunId: null }).where(inArray(t.bookLink.aiRunId, runs)).run();
-    tx.update(t.bookIdea).set({ aiRunId: null }).where(inArray(t.bookIdea.aiRunId, runs)).run();
-    tx.delete(t.aiRun).where(inArray(t.aiRun.id, runs)).run();
+    // Undecided: gone. Decided: kept (a person decided), still private to them, the reason replaced by a neutral one.
+    tx.delete(t.bookLink).where(and(fromThem(t.bookLink.aiRunId, t.bookLink.privateTo), eq(t.bookLink.state, 'proposed'))).run();
+    tx.delete(t.bookIdea).where(and(fromThem(t.bookIdea.aiRunId, t.bookIdea.privateTo), eq(t.bookIdea.state, 'proposed'))).run();
+    tx.update(t.bookLink).set({ reason: PRIVATE_REASON }).where(fromThem(t.bookLink.aiRunId, t.bookLink.privateTo)).run();
+    if (runs.length) {
+      tx.update(t.bookLink).set({ aiRunId: null }).where(inArray(t.bookLink.aiRunId, runs)).run();
+      tx.update(t.bookIdea).set({ aiRunId: null }).where(inArray(t.bookIdea.aiRunId, runs)).run();
+      tx.delete(t.aiRun).where(inArray(t.aiRun.id, runs)).run();
+    }
   });
   return runs.length;
 }
