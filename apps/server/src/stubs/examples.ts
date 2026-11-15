@@ -64,26 +64,6 @@ export const monthPlan = (month: string): S['MonthPlan'] => ({
   order: null,
 });
 
-export const backlogPage = (queryErrors: string[]) => ({
-  items: [candidate, kidCandidate],
-  counts: { open: 2, closed: 0 },
-  facets: {
-    for: [{ value: 'alex', count: 1 }, { value: 'kid1', count: 1 }],
-    move: [{ value: 'connect', count: 1 }],
-    idea: [{ value: 'Markets and value', count: 1 }],
-    source: [{ value: 'to-buy', count: 1 }, { value: 'instagram', count: 1 }],
-  },
-  nextCursor: null,
-  queryErrors,
-});
-
-export const savedFilters = [
-  { id: 'f_tobuy', name: 'To buy now', q: 'is:open is:adult score:>40' },
-  { id: 'f_kids', name: 'Kids', q: 'is:open is:kids' },
-  { id: 'f_cheap', name: 'Cheap & good', q: 'is:open score:>30 price:<25' },
-  { id: 'f_ig', name: 'From Instagram', q: 'is:open source:instagram sort:added' },
-];
-
 export const brain: S['Brain'] = {
   ideas: [
     { id: 'i_markets', name: 'Markets and value', readCount: 2, unreadOwned: 0, isNew: false, focus: 'connect',

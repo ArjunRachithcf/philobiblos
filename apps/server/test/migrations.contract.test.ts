@@ -89,6 +89,7 @@ describe('migrations', () => {
 const RELEASED: Record<string, string> = {
   '0000_init.sql': 'a404d94116333a57b0145af574033b7f0e110f37905dbdf31dc0ac27a0d4fbaa', // contract v1 (M0)
   '0001_auth_and_household.sql': '8b7c16f8eef2aff40d747de07d65ff26369ec40c1e5d28f38c087098a4f5f75b', // contract v2 (M1 a, PR #1)
+  '0002_ai_runs_know_takeaways.sql': '9b9e3c78fdf2d18c82eb6ddf2cf3bb13f7340995338ea3513f9d905325ca3375', // contract v3 (M1 b, PR #2)
 };
 const drizzleDir = fileURLToPath(new URL('../drizzle', import.meta.url));
 

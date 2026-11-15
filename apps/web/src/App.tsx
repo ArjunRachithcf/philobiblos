@@ -1,10 +1,12 @@
-// Shelf's web app. M1 so far: sign-in, the one-time links, the household and the library. A screen never calls the network
+// Shelf's web app. M1: sign-in, the one-time links, the household, the library, the backlog and the budget. A screen never calls the network
 // beyond Shelf's own API (ADR 0003).
 import { useCallback, useEffect, useState } from 'react';
 import { api, message, type AuthSession, type Me } from './api';
 import { Enrol, takeToken } from './pages/Enrol';
 import { Household } from './pages/Household';
+import { Backlog } from './pages/Backlog';
 import { Library } from './pages/Library';
+import { Settings } from './pages/Settings';
 import { SignIn } from './pages/SignIn';
 import { Notice } from './ui';
 
@@ -54,8 +56,10 @@ export function App() {
           <nav aria-label="Shelf">
             <a className="nav-link" href="/household" aria-current={route === '/household' || route === '/' ? 'page' : undefined}
               onClick={(e) => { e.preventDefault(); go('/household'); }}>Household</a>
-            <a className="nav-link" href="/library" aria-current={route === '/library' ? 'page' : undefined}
-              onClick={(e) => { e.preventDefault(); go('/library'); }}>Library</a>
+            {([['/backlog', 'Backlog'], ['/library', 'Library'], ['/settings', 'Settings']] as const).map(([to, label]) => (
+              <a key={to} className="nav-link" href={to} aria-current={route === to ? 'page' : undefined}
+                onClick={(e) => { e.preventDefault(); go(to); }}>{label}</a>
+            ))}
           </nav>
           {session.mode === 'standalone' && <button type="button" className="btn btn-sm" onClick={signOut}>Sign out</button>}
         </div>
@@ -63,6 +67,8 @@ export function App() {
       <main className="page" id="main">
         {!me ? <p className="sr-only" role="status">Loading</p>
           : route === '/library' ? <Library me={me} />
+          : route === '/backlog' ? <Backlog me={me} />
+          : route === '/settings' ? <Settings me={me} />
           : <Household me={me} reload={loadMe} />}
       </main>
     </>

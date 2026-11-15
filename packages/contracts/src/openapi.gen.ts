@@ -323,9 +323,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** GitHub-style filtered list (grammar in contracts/backlog-query.md) */
+        /** GitHub-style filtered list (grammar in contracts/backlog-query.md), scored by packages/scoring. The backlog is shared: every adult sees every candidate. */
         get: operations["listBacklog"];
         put?: never;
+        /** A book by hand, for yourself or a kid (adults act for kids); another adult's backlog is theirs (403) */
         post: operations["addToBacklog"];
         delete?: never;
         options?: never;
@@ -342,6 +343,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** All or nothing, on your own candidates and the kids' (403 if any is another adult's). add_to_month arrives with This month (M2) and answers 400 until then. */
         post: operations["bulkBacklog"];
         delete?: never;
         options?: never;
@@ -358,11 +360,32 @@ export interface paths {
         };
         get: operations["savedFilters"];
         put?: never;
+        /** Saves one of your filters (your list starts from the defaults; at most 20) */
         post: operations["saveFilter"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/backlog/saved-filters/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes one of your saved filters (an empty list shows the defaults again) */
+        delete: operations["removeFilter"];
+        options?: never;
+        head?: never;
+        /** Renames one of your saved filters (a default too: your list starts from them) */
+        patch: operations["renameFilter"];
         trace?: never;
     };
     "/people/{personId}/brain": {
@@ -752,6 +775,7 @@ export interface components {
             addedAt?: string;
             price?: components["schemas"]["Money"];
             priceIsEstimate?: boolean;
+            /** @description absent when excluded (an adult candidate over the price limit) */
             score?: number;
             scoreParts?: components["schemas"]["ScorePart"][];
         };
@@ -908,6 +932,7 @@ export interface components {
             }[];
         };
         Settings: {
+            /** @description one shared monthly budget (centimes, 0 to 1,000,000, min ≤ max); admins set it; no rollover */
             budget?: components["schemas"]["Budget"];
             adultPicks?: number;
             newAuthorsOnly?: boolean;
@@ -1746,20 +1771,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        items?: components["schemas"]["Candidate"][];
-                        counts?: {
+                        items: components["schemas"]["Candidate"][];
+                        counts: {
                             open?: number;
                             closed?: number;
                         };
-                        facets?: {
+                        facets: {
                             [key: string]: {
                                 value?: string;
                                 count?: number;
                             }[];
                         };
-                        nextCursor?: string | null;
-                        queryErrors?: string[];
+                        nextCursor: string | null;
+                        queryErrors: string[];
                     };
+                };
+            };
+            /** @description A q over 500 characters or a limit outside 1 to 200 (bad qualifiers are queryErrors, not 400) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -1773,14 +1807,14 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
                     title: string;
                     author?: string;
                     isbn13?: string;
+                    /** @description a handle, or me (the default) */
                     for?: string;
-                    note?: string;
                 };
             };
         };
@@ -1794,8 +1828,35 @@ export interface operations {
                     "application/json": components["schemas"]["Candidate"];
                 };
             };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No one has that handle */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already in that backlog */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     bulkBacklog: {
@@ -1805,12 +1866,13 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
                     ids: string[];
                     /** @enum {unknown} */
                     action: "not_for_me" | "snooze" | "reopen" | "add_to_month";
+                    /** @default 3 */
                     months?: number;
                 };
             };
@@ -1821,10 +1883,32 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        changed: number;
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such candidate or person */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     savedFilters: {
@@ -1860,11 +1944,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
-                    name?: string;
-                    q?: string;
+                    name: string;
+                    q: string;
                 };
             };
         };
@@ -1876,8 +1960,103 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description Twenty saved already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removeFilter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such saved filter of yours */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    renameFilter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Renamed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such saved filter of yours */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getBrain: {

@@ -10,6 +10,7 @@ import { Challenges, simpleWebAuthn, type WebAuthn } from './auth/webauthn';
 import type { Config } from './config';
 import type { Db } from './db/open';
 import { authRoutes } from './routes/auth';
+import { backlogRoutes } from './routes/backlog';
 import { libraryRoutes } from './routes/library';
 import { peopleRoutes } from './routes/people';
 import { stubRoutes } from './routes/stubs';
@@ -50,6 +51,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     await authRoutes(api, cfg, db, webauthn, challenges);
     await peopleRoutes(api, cfg, db);
     await libraryRoutes(api, db);
+    await backlogRoutes(api, db);
     await stubRoutes(api, cfg, db);
   }, { prefix: '/api' });
   if (cfg.webDir && existsSync(cfg.webDir)) {

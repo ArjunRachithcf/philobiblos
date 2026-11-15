@@ -179,11 +179,20 @@ export const candidate = sqliteTable('candidate', {
   score: real('score'),
   scorePartsJson: text('score_parts_json'),
   move: text('move'),
+  snoozedUntil: text('snoozed_until'),
 }, (t) => [
   primaryKey({ columns: [t.personId, t.bookId] }),
   check('candidate_origin', sql`${t.origin} IN ('wishlist','to_buy','share','ai','manual','seed')`),
   check('candidate_state', sql`${t.state} IN ('active','not_for_me','snoozed','picked','owned')`),
 ]);
+
+export const savedFilter = sqliteTable('saved_filter', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  q: text('q').notNull(),
+  createdAt: text('created_at').notNull(),
+});
 
 // Orders -----------------------------------------------------------------
 export const order = sqliteTable('order', {
