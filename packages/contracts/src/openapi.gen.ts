@@ -184,7 +184,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Admins, standalone: a one-time link (7 days) for an adult to enrol a passkey; the link is in this response only */
+        /** Admins, standalone: a one-time link (7 days) for an adult's first passkey; the link is in this response only. Needs a sign-in in the last 10 minutes (403 otherwise). People who have a passkey add more themselves (/me/passkeys/invite). */
         post: operations["invitePerson"];
         delete?: never;
         options?: never;
@@ -208,6 +208,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/passkeys/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Standalone: a one-time link (24 hours) to add a passkey on another device for yourself; the link is in this response only. Needs a sign-in in the last 10 minutes (403 otherwise). */
+        post: operations["inviteMyself"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/sessions/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Standalone: ends every session of yours, this one too */
+        post: operations["signOutEverywhere"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me/passkeys/{id}": {
         parameters: {
             query?: never;
@@ -218,6 +252,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
+        /** Removes one of your passkeys and ends the sessions it signed in */
         delete: operations["removePasskey"];
         options?: never;
         head?: never;
@@ -661,6 +696,8 @@ export interface components {
             createdAt: string;
             lastUsedAt?: string | null;
             backedUp?: boolean;
+            /** @description the name of the admin whose invite made it; null for your own or the setup link */
+            invitedBy?: string | null;
         };
         Budget: {
             min?: components["schemas"]["Money"];
@@ -1134,6 +1171,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description This passkey is already enrolled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description Too many attempts */
             429: {
                 headers: {
@@ -1439,7 +1485,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description Kids never sign in; or managed by HomersLab */
+            /** @description Kids never sign in; the person already has a passkey; or managed by HomersLab */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1470,6 +1516,78 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description Not under HomersLab (HomersLab holds the passkeys) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    inviteMyself: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        url: string;
+                        expiresAt: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Not under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    signOutEverywhere: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out everywhere */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Not under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     removePasskey: {
@@ -1492,7 +1610,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description No such passkey of yours */
+            /** @description No such passkey of yours; or under HomersLab */
             404: {
                 headers: {
                     [name: string]: unknown;

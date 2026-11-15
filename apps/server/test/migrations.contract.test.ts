@@ -1,9 +1,15 @@
 // contracts/schema.sql is the source of truth: the migrations, applied in order, build exactly that database, and
 // the Drizzle schema in src/db/schema.ts describes it too. (0000_init.sql was the contract's v1, verbatim.)
-import { readFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { generateSQLiteDrizzleJson, generateSQLiteMigration } from 'drizzle-kit/api';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { openDb } from '../src/db/open';
 import * as schema from '../src/db/schema';
 
@@ -76,5 +82,44 @@ describe('migrations', () => {
     const snapshot = JSON.parse(readFileSync(new URL(`../drizzle/meta/${latestSnapshot()}`, import.meta.url), 'utf8'));
     const current = await generateSQLiteDrizzleJson(schema, snapshot.id);
     expect(await generateSQLiteMigration(snapshot, current)).toEqual([]);
+  });
+});
+
+// A released migration never changes: databases that ran it would never run the new text.
+const RELEASED: Record<string, string> = {
+  '0000_init.sql': 'a404d94116333a57b0145af574033b7f0e110f37905dbdf31dc0ac27a0d4fbaa', // contract v1 (M0)
+};
+const drizzleDir = fileURLToPath(new URL('../drizzle', import.meta.url));
+
+describe('upgrades', () => {
+  it.each(Object.entries(RELEASED))('%s is unchanged', (file, sha) => {
+    expect(createHash('sha256').update(readFileSync(join(drizzleDir, file))).digest('hex')).toBe(sha);
+  });
+
+  it('a v1 database with rows migrates to the latest, keeping them', () => {
+    // The migrations folder as it was at v1: only 0000 in the journal.
+    const v1Dir = join(mkdtempSync(join(tmpdir(), 'shelf-mig-')), 'drizzle');
+    cpSync(drizzleDir, v1Dir, { recursive: true });
+    const journal = JSON.parse(readFileSync(join(v1Dir, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
+    writeFileSync(join(v1Dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.slice(0, 1) }));
+
+    const client = new Database(':memory:');
+    client.pragma('foreign_keys = ON');
+    const db = drizzle(client);
+    migrate(db, { migrationsFolder: v1Dir });
+    const now = '2026-11-01T00:00:00Z';
+    client.prepare(`INSERT INTO person (id, external_id, name, role, birth_year) VALUES ('p_alex', 'hl-alex', 'Alex', 'admin', NULL), ('p_kid1', NULL, 'Kid 1', 'kid', 2021)`).run();
+    client.prepare(`INSERT INTO book (id, title, authors_json, audience, norm_key, created_at) VALUES ('b_tide', 'The Long Tide of Markets', '["Mira Okafor"]', 'adult', 'long tide|okafor', ?)`).run(now);
+    client.prepare(`INSERT INTO reading (person_id, book_id, status, updated_at) VALUES ('p_alex', 'b_tide', 'reading', ?)`).run(now);
+    client.prepare(`INSERT INTO share_token (id, person_id, label, token_hash, created_at) VALUES ('st1', 'p_alex', 'Phone', 'h', ?)`).run(now);
+
+    migrate(db, { migrationsFolder: drizzleDir });
+    expect(describeDb(client)).toEqual(describeDb(fromSql([contractSql])));
+    expect(client.prepare('SELECT id, name, role, handle FROM person ORDER BY id').all()).toEqual([
+      { id: 'p_alex', name: 'Alex', role: 'admin', handle: null }, { id: 'p_kid1', name: 'Kid 1', role: 'kid', handle: null },
+    ]);
+    expect(client.prepare('SELECT person_id, book_id, status FROM reading').all()).toEqual([{ person_id: 'p_alex', book_id: 'b_tide', status: 'reading' }]);
+    expect(client.prepare('SELECT id FROM share_token').all()).toEqual([{ id: 'st1' }]);
+    expect(client.pragma('foreign_key_check')).toEqual([]);
   });
 });

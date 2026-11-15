@@ -19,6 +19,13 @@ export interface Config {
   rpId: string;
 }
 
+/**
+ * What HomersLab's edge must promise before Shelf trusts its identity headers (HomersLab #236): it deletes every
+ * X-HomersLab-* header a client sends and sets X-HomersLab-Person, -Name and -Role itself. HomersLab sets
+ * SHELF_EDGE_IDENTITY to this value once its edge does that; until then homerslab mode does not start.
+ */
+export const EDGE_IDENTITY = 'homerslab-v1';
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const mode = env.SHELF_MODE ?? 'standalone';
   if (mode !== 'homerslab' && mode !== 'standalone') throw new Error(`SHELF_MODE must be homerslab or standalone, not ${mode}`);
@@ -26,6 +33,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const port = Number(env.SHELF_PORT ?? 8080);
   // Under HomersLab the address is HomersLab's to give; a guess would make every passkey and Origin check wrong.
   if (mode === 'homerslab' && !env.SHELF_ORIGIN) throw new Error('SHELF_ORIGIN must be set in homerslab mode');
+  if (mode === 'homerslab' && env.SHELF_EDGE_IDENTITY !== EDGE_IDENTITY) {
+    throw new Error(`homerslab mode needs an edge that strips and sets the X-HomersLab-* headers (HomersLab #236): SHELF_EDGE_IDENTITY=${EDGE_IDENTITY}`);
+  }
+  if (mode === 'homerslab' && !env.SHELF_TRUSTED_PROXY) throw new Error('SHELF_TRUSTED_PROXY must be set in homerslab mode');
   const origin = parseOrigin(env.SHELF_ORIGIN ?? `http://localhost:${port}`);
   return {
     mode,

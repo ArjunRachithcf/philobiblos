@@ -25,6 +25,7 @@ export const passkey = sqliteTable('passkey', {
   label: text('label').notNull(),
   createdAt: text('created_at').notNull(),
   lastUsedAt: text('last_used_at'),
+  invitedBy: text('invited_by').references(() => person.id, { onDelete: 'set null' }),
 });
 
 export const session = sqliteTable('session', {
@@ -33,6 +34,7 @@ export const session = sqliteTable('session', {
   createdAt: text('created_at').notNull(),
   lastSeenAt: text('last_seen_at').notNull(),
   expiresAt: text('expires_at').notNull(),
+  passkeyId: text('passkey_id').references(() => passkey.id, { onDelete: 'cascade' }),
 });
 
 export const invite = sqliteTable('invite', {

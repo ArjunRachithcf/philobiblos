@@ -15,6 +15,13 @@
       "when": 1794769119206,
       "tag": "0001_auth_and_household",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794771123143,
+      "tag": "0002_sessions_follow_passkeys",
+      "breakpoints": true
     }
   ]
 }

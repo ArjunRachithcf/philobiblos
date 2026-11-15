@@ -42,7 +42,7 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
                 </span>
                 <span className="row-trail">
                   {p.role !== 'kid' && me.mode === 'standalone' && !p.signsIn && <span className="pill pill-orange">No passkey yet</span>}
-                  {editable && p.role !== 'kid' && p.id !== me.person?.id && (
+                  {editable && p.role !== 'kid' && p.id !== me.person?.id && !p.signsIn && (
                     <button type="button" className="btn btn-sm" aria-label={`Invite ${p.name} to make a passkey`}
                       onClick={() => act(async () => setInvite({ name: p.name, ...(await api<{ url: string; expiresAt: string }>(`/people/${p.id}/invites`, { method: 'POST' })) }))}>
                       Invite
@@ -61,23 +61,25 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
         </section>
         {invite && <InviteLink {...invite} onDone={() => setInvite(null)} />}
         {editable && <AddPerson onAdded={reload} />}
-        {me.mode === 'standalone' && <Passkeys />}
+        {me.mode === 'standalone' && <Passkeys name={me.person?.name ?? ''} />}
       </div>
     </>
   );
 }
 
-function InviteLink({ name, url, expiresAt, onDone }: { name: string; url: string; expiresAt: string; onDone: () => void }) {
+function InviteLink({ name, url, expiresAt, onDone, self = false }: { name: string; url: string; expiresAt: string; onDone: () => void; self?: boolean }) {
   const id = useId();
   const [copied, setCopied] = useState(false);
-  const until = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long' });
+  const until = new Date(expiresAt).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
   return (
     <section className="card stack" aria-labelledby={`${id}-h`}>
-      <h2 className="card-title" id={`${id}-h`}>A link for {name}</h2>
+      <h2 className="card-title" id={`${id}-h`}>{self ? 'A link for your other device' : `A link for ${name}`}</h2>
       <div className="field">
-        <label className="field-label" htmlFor={id}>Send it to {name} yourself; it works once, until {until}.</label>
+        <label className="field-label" htmlFor={id}>
+          {self ? `Open it on the other device; it works once, until ${until}.` : `Send it to ${name} yourself; it works once, until ${until}.`}
+        </label>
         <input className="input mono" id={id} readOnly value={url} onFocus={(e) => e.target.select()} />
-        <span className="hint">Shelf shows it only now. Anyone with the link can make a passkey as {name}.</span>
+        <span className="hint">Shelf shows it only now. Anyone with the link can make a passkey as {self ? 'you' : name}.</span>
       </div>
       <div className="btn-row">
         <button type="button" className="btn btn-primary" onClick={() => navigator.clipboard?.writeText(url).then(() => setCopied(true))}>
@@ -140,11 +142,20 @@ function AddPerson({ onAdded }: { onAdded: () => Promise<void> }) {
   );
 }
 
-function Passkeys() {
+function Passkeys({ name }: { name: string }) {
   const [keys, setKeys] = useState<Passkey[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [link, setLink] = useState<{ url: string; expiresAt: string } | null>(null);
   const load = useCallback(() => api<Passkey[]>('/me/passkeys').then(setKeys, (e) => setError(message(e))), []);
   useEffect(() => { void load(); }, [load]);
+  const addDevice = () => {
+    setError(null);
+    api<{ url: string; expiresAt: string }>('/me/passkeys/invite', { method: 'POST' }).then(setLink, (e) => setError(message(e)));
+  };
+  const everywhere = () => {
+    if (!confirm('Sign out on every device, this one too?')) return;
+    api('/me/sessions/end', { method: 'POST' }).then(() => location.assign('/'), (e) => setError(message(e)));
+  };
   return (
     <section className="group-block" aria-labelledby="keys-h">
       <div className="group-head"><h2 id="keys-h">Your passkeys</h2></div>
@@ -154,8 +165,9 @@ function Passkeys() {
           <li className="row" key={k.id}>
             <span className="row-main">
               <span className="row-title">{k.label}</span>
-              <span className="row-sub">
+              <span className="row-sub wrap">
                 Made {new Date(k.createdAt).toLocaleDateString()}
+                {k.invitedBy ? ` from ${k.invitedBy}’s invite` : ''}
                 {k.lastUsedAt ? ` · last used ${new Date(k.lastUsedAt).toLocaleDateString()}` : ''}
                 {k.backedUp ? ' · synced' : ''}
               </span>
@@ -169,7 +181,15 @@ function Passkeys() {
           </li>
         ))}
       </ul>
-      <p className="group-foot">Your last passkey stays. To add one on another device, an admin sends you a link.</p>
+      {link && <InviteLink self name={name} {...link} onDone={() => { setLink(null); void load(); }} />}
+      <div className="btn-row">
+        <button type="button" className="btn" onClick={addDevice}>Add a passkey on another device</button>
+        <button type="button" className="btn" onClick={everywhere}>Sign out everywhere</button>
+      </div>
+      <p className="group-foot">
+        Your last passkey stays. Removing a passkey signs out the browsers it signed in. Adding a passkey, or inviting
+        someone, needs a sign-in in the last 10 minutes: if Shelf asks, sign out and in again.
+      </p>
     </section>
   );
 }

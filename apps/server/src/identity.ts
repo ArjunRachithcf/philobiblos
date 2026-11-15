@@ -23,7 +23,9 @@ export function resolveIdentity(cfg: Pick<Config, 'mode' | 'trustedProxy'>, remo
   if (normaliseIp(remoteAddress) !== normaliseIp(cfg.trustedProxy)) return null;
   const id = one(headers, PERSON_HEADER);
   if (!id || id.length > 200) return null;
-  const role = one(headers, ROLE_HEADER);
+  // The role exactly as HomersLab sends it: no case folding, no trimming.
+  const rawRole = headers[ROLE_HEADER];
+  const role = typeof rawRole === 'string' ? rawRole : null;
   const name = one(headers, NAME_HEADER);
   return {
     externalId: id,

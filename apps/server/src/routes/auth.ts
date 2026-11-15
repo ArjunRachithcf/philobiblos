@@ -5,7 +5,7 @@ import { ulid } from 'ulid';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { findInvite, removeSetupLink, useInvite } from '../auth/invites';
+import { findInvite, openRecovery, removeSetupLink, useInvite } from '../auth/invites';
 import { SESSION_COOKIE, SESSION_DAYS, cookieOptions, createSession, endSession, sessionPerson } from '../auth/sessions';
 import type { Challenges, WebAuthn } from '../auth/webauthn';
 import { getPerson, setupNeeded, suggestHandle, view } from '../household/people';
@@ -19,8 +19,10 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     void reply.code(404).send({ error: 'HomersLab signs people in' });
     return false;
   };
-  const signIn = (reply: FastifyReply, personId: string) => {
-    const { token } = createSession(db, personId);
+  // A sign-in replaces this browser's earlier session, and remembers the passkey (removing it ends the session).
+  const signIn = (req: FastifyRequest, reply: FastifyReply, personId: string, passkeyId: string) => {
+    endSession(db, req.cookies?.[SESSION_COOKIE]);
+    const { token } = createSession(db, personId, passkeyId);
     void reply.setCookie(SESSION_COOKIE, token, cookieOptions(SESSION_DAYS * 86_400));
     return { mode: cfg.mode, signedIn: true, setupNeeded: false, person: view(db, getPerson(db, personId)!) };
   };
@@ -59,10 +61,14 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (!pending?.inviteId) return reply.code(401).send({ error: 'this sign-in step expired; start again' });
     const cred = await webauthn.verifyRegistration({ response: req.body?.response, challenge: pending.challenge });
     if (!cred) return reply.code(401).send({ error: 'the passkey could not be verified' });
+    // One answer, whoever's passkey it is.
+    const taken = () => reply.code(409).send({ error: 'this passkey is already enrolled' });
+    if (db.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.id, cred.id)).get()) return taken();
     const label = typeof req.body?.label === 'string' && req.body.label.trim() ? req.body.label.trim().slice(0, 40) : 'Passkey';
     const now = new Date().toISOString();
     let personId: string | null = null;
-    db.transaction((tx) => {
+    let recovery = false;
+    try { db.transaction((tx) => {
       const invite = tx.select().from(t.invite).where(eq(t.invite.id, pending.inviteId!)).get();
       if (!invite || !useInvite(tx as unknown as Db, invite.id)) return;
       if (invite.purpose === 'setup') {
@@ -75,16 +81,22 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
         if (!claim) tx.insert(t.person).values({ id: personId, name, role: 'admin', handle: suggestHandle(tx as unknown as Db, name), settingsJson: '{}' }).run();
       } else {
         personId = invite.personId;
+        recovery = invite.createdBy === null;
       }
       if (!personId) return;
       tx.insert(t.passkey).values({
         id: cred.id, personId, publicKey: Buffer.from(cred.publicKey), counter: cred.counter,
         transportsJson: JSON.stringify(cred.transports), backedUp: cred.backedUp ? 1 : 0, label, createdAt: now,
+        invitedBy: invite.createdBy && invite.createdBy !== personId ? invite.createdBy : null,
       }).run();
-    });
+    }); } catch (e) {
+      // Two enrolments of one passkey at once: the primary key decides.
+      if ((e as { code?: string }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY') return taken();
+      throw e;
+    }
     if (!personId) return reply.code(401).send({ error: 'this link is unknown, used or expired' });
-    if (!setupNeeded(db)) removeSetupLink(cfg);
-    return signIn(reply, personId);
+    if ((recovery || !setupNeeded(db)) && !openRecovery(db)) removeSetupLink(cfg);
+    return signIn(req, reply, personId, cred.id);
   });
 
   app.post('/auth/sign-in/options', { config: limited }, async (_req, reply) => {
@@ -109,7 +121,7 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     });
     if (!ok) return refuse();
     db.update(t.passkey).set({ counter: ok.newCounter, lastUsedAt: new Date().toISOString() }).where(eq(t.passkey.id, key.id)).run();
-    return signIn(reply, p.id);
+    return signIn(req, reply, p.id, key.id);
   });
 
   app.post('/auth/sign-out', { config: { auth: 'public' } }, async (req, reply) => {

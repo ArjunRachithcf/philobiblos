@@ -1,18 +1,18 @@
 // Sign-in, step by step (ADR 0010), with a stand-in authenticator (helpers.fakeWebAuthn); the real WebAuthn runs in
 // the e2e tests.
-import { mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { buildApp, type BuiltApp } from '../src/app';
-import { createInvite, ensureSetupLink, findInvite, SETUP_FILE } from '../src/auth/invites';
-import { IDLE_DAYS, createSession, sessionPerson } from '../src/auth/sessions';
+import { createInvite, createRecoveryLink, ensureSetupLink, findInvite, SETUP_FILE } from '../src/auth/invites';
+import { FRESH_MINUTES, IDLE_DAYS, createSession, sessionPerson } from '../src/auth/sessions';
 import { Challenges } from '../src/auth/webauthn';
 import { loadConfig, type Config } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
-import { ORIGIN, fakeWebAuthn, household } from './helpers';
+import { ORIGIN, fakeWebAuthn, household, sessionCookie } from './helpers';
 
 const H = { origin: ORIGIN };
 let cfg: Config;
@@ -180,20 +180,25 @@ describe('sessions, invites and challenges expire', () => {
   it('a session ends after a week idle or 30 days', () => {
     const hh = household();
     const t0 = new Date('2026-11-01T00:00:00Z');
-    const { token } = createSession(hh, 'p_alex', t0);
+    const { token } = createSession(hh, 'p_alex', null, t0);
     expect(sessionPerson(hh, token, new Date(t0.getTime() + 86_400_000))).toBe('p_alex');
     expect(sessionPerson(hh, token, new Date(t0.getTime() + (IDLE_DAYS + 2) * 86_400_000))).toBeNull();
-    const s2 = createSession(hh, 'p_alex', t0);
+    const s2 = createSession(hh, 'p_alex', null, t0);
     for (let d = 0; d < 29; d += 5) expect(sessionPerson(hh, s2.token, new Date(t0.getTime() + d * 86_400_000))).toBe('p_alex');
     expect(sessionPerson(hh, s2.token, new Date(t0.getTime() + 31 * 86_400_000))).toBeNull();
     expect(sessionPerson(hh, 'not a token')).toBeNull();
   });
-  it('an invite lasts 7 days', () => {
+  it('an admin\'s invite lasts 7 days; your own link and a recovery link 24 hours', () => {
     const hh = household();
     const t0 = new Date('2026-11-01T00:00:00Z');
-    const { token } = createInvite(hh, cfg, { purpose: 'enrol', personId: 'p_sam', now: t0 });
+    const { token } = createInvite(hh, cfg, { purpose: 'enrol', personId: 'p_sam', createdBy: 'p_alex', now: t0 });
     expect(findInvite(hh, token, new Date(t0.getTime() + 6 * 86_400_000))).not.toBeNull();
     expect(findInvite(hh, token, new Date(t0.getTime() + 8 * 86_400_000))).toBeNull();
+    for (const createdBy of ['p_alex', undefined]) {
+      const own = createInvite(hh, cfg, { purpose: 'enrol', personId: 'p_alex', createdBy, now: t0 });
+      expect(findInvite(hh, own.token, new Date(t0.getTime() + 23 * 3_600_000))).not.toBeNull();
+      expect(findInvite(hh, own.token, new Date(t0.getTime() + 25 * 3_600_000))).toBeNull();
+    }
   });
   it('a challenge lasts 5 minutes and is used once', () => {
     const c = new Challenges();
@@ -204,5 +209,104 @@ describe('sessions, invites and challenges expire', () => {
     const id3 = c.put({ challenge: 'c', kind: 'sign-in' }, 0);
     expect(c.take(id3, 'sign-in', 1)).toMatchObject({ challenge: 'c' });
     expect(c.take(id3, 'sign-in', 2)).toBeNull();
+  });
+});
+
+describe('passkeys after the first (review round 1)', () => {
+  let hh: Db;
+  let a: BuiltApp['app'];
+  beforeEach(async () => { hh = household(); a = (await buildApp(cfg, hh, { webauthn: fakeWebAuthn() })).app; });
+  afterEach(() => a.close());
+  const call = (method: 'POST' | 'GET' | 'DELETE', url: string, cookie: string, payload?: object) =>
+    a.inject({ method, url, payload, headers: { ...H, cookie } });
+  async function enrolWith(token: string, credId: string) {
+    const o = (await call('POST', '/api/auth/enrol/options', '', { token })).json();
+    return call('POST', '/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: credId, challenge: o.options.challenge }, label: 'Phone' });
+  }
+  const stale = (personId: string) => {
+    const old = new Date(Date.now() - (FRESH_MINUTES + 1) * 60_000);
+    return `shelf_session=${createSession(hh, personId, null, old).token}`;
+  };
+
+  it('you add a passkey on another device with your own link; it needs a fresh sign-in', async () => {
+    expect((await call('POST', '/api/me/passkeys/invite', stale('p_alex'))).statusCode).toBe(403);
+    const inv = await call('POST', '/api/me/passkeys/invite', sessionCookie(hh, 'p_alex'));
+    expect(inv.statusCode).toBe(201);
+    const v = await enrolWith(inv.json().url.split('#')[1], 'cred-alex-phone');
+    expect(v.json().person).toMatchObject({ id: 'p_alex' });
+    const mine = (await call('GET', '/api/me/passkeys', cookieOf(v))).json();
+    expect(mine.find((k: { id: string }) => k.id === 'cred-alex-phone')).toMatchObject({ label: 'Phone', invitedBy: null });
+  });
+
+  it('an admin invites only someone without a passkey, with a fresh sign-in; the passkey shows who invited it', async () => {
+    expect((await call('POST', '/api/people/p_sam/invites', stale('p_alex'))).statusCode).toBe(403);
+    const inv = await call('POST', '/api/people/p_sam/invites', sessionCookie(hh, 'p_alex'));
+    const v = await enrolWith(inv.json().url.split('#')[1], 'cred-sam');
+    expect((await call('GET', '/api/me/passkeys', cookieOf(v))).json()).toMatchObject([{ id: 'cred-sam', invitedBy: 'Alex' }]);
+    const again = await call('POST', '/api/people/p_sam/invites', sessionCookie(hh, 'p_alex'));
+    expect(again.statusCode).toBe(409);
+  });
+
+  it('a passkey that is already enrolled answers 409', async () => {
+    const inv = await call('POST', '/api/me/passkeys/invite', sessionCookie(hh, 'p_alex'));
+    const v = await enrolWith(inv.json().url.split('#')[1], 'pk1');
+    expect(v.statusCode).toBe(409);
+    expect(v.json()).toEqual({ error: 'this passkey is already enrolled' });
+  });
+
+  it('removing a passkey ends the sessions it signed in; sign out everywhere ends all', async () => {
+    const viaPk1 = `shelf_session=${createSession(hh, 'p_alex', 'pk1').token}`;
+    const viaPk2 = `shelf_session=${createSession(hh, 'p_alex', 'pk2').token}`;
+    const other = `shelf_session=${createSession(hh, 'p_alex', 'pk2').token}`;
+    expect((await call('DELETE', '/api/me/passkeys/pk1', viaPk2)).statusCode).toBe(204);
+    expect((await call('GET', '/api/me', viaPk1)).statusCode).toBe(401);
+    expect((await call('GET', '/api/me', other)).statusCode).toBe(200);
+    expect((await call('POST', '/api/me/sessions/end', viaPk2)).statusCode).toBe(204);
+    for (const c of [viaPk2, other]) expect((await call('GET', '/api/me', c)).statusCode).toBe(401);
+  });
+
+  it('a sign-in replaces the browser\'s earlier session and records the passkey', async () => {
+    const before = sessionCookie(hh, 'p_alex');
+    const o = (await call('POST', '/api/auth/sign-in/options', '')).json();
+    const res = await call('POST', '/api/auth/sign-in/verify', before, { challengeId: o.challengeId, response: { id: 'pk2', challenge: o.options.challenge } });
+    expect(res.statusCode).toBe(200);
+    expect((await call('GET', '/api/me', before)).statusCode).toBe(401);
+    expect(hh.select().from(t.session).all().map((s) => s.passkeyId)).toEqual(['pk2']);
+  });
+
+  it('a share token is the only credential of its request: no fallback to the cookie', async () => {
+    const cookie = sessionCookie(hh, 'p_alex');
+    const r = await a.inject({ method: 'POST', url: '/api/shares', headers: { cookie, origin: ORIGIN, authorization: 'Bearer wrong-token-wrong-token-wrong' } });
+    expect(r.statusCode).toBe(401);
+  });
+});
+
+describe('recovery and the link file', () => {
+  it('shelf recover writes a one-time link for an admin, removed once used; the file survives a restart meanwhile', async () => {
+    const hh = household();
+    const a = (await buildApp(cfg, hh, { webauthn: fakeWebAuthn() })).app;
+    expect(() => createRecoveryLink(hh, cfg, 'partner')).toThrow(/no admin/);
+    const file = createRecoveryLink(hh, cfg, 'alex');
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readFileSync(file, 'utf8')).toMatch(new RegExp(`^${ORIGIN}/enrol#[A-Za-z0-9_-]{43}\\n$`));
+    expect(ensureSetupLink(hh, cfg)).toBeNull();
+    expect(existsSync(file)).toBe(true);
+    const token = readFileSync(file, 'utf8').trim().split('#')[1]!;
+    const o = (await a.inject({ method: 'POST', url: '/api/auth/enrol/options', headers: H, payload: { token } })).json();
+    expect(o.person).toEqual({ name: 'Alex' });
+    const v = await a.inject({ method: 'POST', url: '/api/auth/enrol/verify', headers: H, payload: { challengeId: o.challengeId, response: { id: 'cred-new', challenge: o.options.challenge } } });
+    expect(v.json().person).toMatchObject({ id: 'p_alex' });
+    expect(existsSync(file)).toBe(false);
+    await a.close();
+  });
+
+  it('never writes through a symlink someone put in its place', () => {
+    const target = join(cfg.dataDir, 'elsewhere.txt');
+    writeFileSync(target, 'keep\n');
+    symlinkSync(target, join(cfg.dataDir, SETUP_FILE));
+    const file = ensureSetupLink(db, cfg)!;
+    expect(lstatSync(file).isSymbolicLink()).toBe(false);
+    expect(readFileSync(target, 'utf8')).toBe('keep\n');
+    expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 });

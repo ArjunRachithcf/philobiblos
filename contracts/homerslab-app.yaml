@@ -12,14 +12,20 @@ env:
   SHELF_MODE: homerslab
   SHELF_DATA_DIR: /data
   SHELF_TZ: Europe/Zurich
+  # Shelf refuses to start in homerslab mode without both (ADR 0010):
+  SHELF_EDGE_IDENTITY: homerslab-v1        # HomersLab's promise, once its edge does it (HomersLab #236): the edge deletes
+                                           # every X-HomersLab-* header a client sends and sets the three below itself
+  SHELF_TRUSTED_PROXY: ${EDGE_ADDRESS}     # the edge's address on the app network; only it may reach Shelf's port
+                                           # (HomersLab ADR 0020's per-app firewall makes the address mean something)
 identity:
-  # All three are trusted only from the proxy address HomersLab configures (SHELF_TRUSTED_PROXY); a person is added
-  # to Shelf the first time HomersLab sends them, and their name and role follow HomersLab on every request.
+  # All three are trusted only from SHELF_TRUSTED_PROXY; a person is added to Shelf the first time HomersLab sends
+  # them, with exactly the role HomersLab sends (admin | adult | kid; anything else: 403), and their name and role
+  # follow HomersLab on every request.
   forwarded_header: X-HomersLab-Person     # stable person id
   forwarded_name_header: X-HomersLab-Name
   forwarded_role_header: X-HomersLab-Role  # admin | adult | kid
   household_api: true                      # later: kids' birth years (not yet defined by HomersLab)
-audience: household                        # adults full access; kids: no access (adults act for them)
+audience: adults                           # adults full access; kids: no access (adults act for them)
 secrets:
   - { key: SHELF_SEALING_KEY, file: true, description: Key that seals the delivery address (outside the database) }
   - { key: SHELF_IMAP_PASSWORD, optional: true, description: App password of the Shelf-only mailbox (IMAP over TLS, read-only) }

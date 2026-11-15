@@ -1,4 +1,4 @@
--- Shelf database schema v2 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Shelf database schema v3 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -25,7 +25,8 @@ CREATE TABLE passkey (                     -- WebAuthn credentials; user verific
   backed_up       INTEGER NOT NULL DEFAULT 0,
   label           TEXT NOT NULL,           -- e.g. 'Laptop'
   created_at      TEXT NOT NULL,
-  last_used_at    TEXT
+  last_used_at    TEXT,
+  invited_by      TEXT REFERENCES person(id) ON DELETE SET NULL -- whose invite made it (null: the setup link, or the person's own)
 );
 
 CREATE TABLE session (                     -- a signed-in browser; the cookie holds a random value, this table its hash
@@ -33,7 +34,8 @@ CREATE TABLE session (                     -- a signed-in browser; the cookie ho
   person_id    TEXT NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   created_at   TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
-  expires_at   TEXT NOT NULL               -- absolute end; idle sessions end earlier (see ADR 0010)
+  expires_at   TEXT NOT NULL,              -- absolute end; idle sessions end earlier (see ADR 0010)
+  passkey_id   TEXT REFERENCES passkey(id) ON DELETE CASCADE -- the passkey that signed in: removing it ends the session
 );
 
 CREATE TABLE invite (                      -- one-time link to enrol a passkey: the first admin's, or a person's

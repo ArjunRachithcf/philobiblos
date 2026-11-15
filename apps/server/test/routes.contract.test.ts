@@ -3,26 +3,33 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
+import * as t from '../src/db/schema';
 import { ORIGIN, expectValid, fakeWebAuthn, household, isPublic, ops, request, security, sessionCookie } from './helpers';
 
 const standalone = () => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent' });
-const homerslab = () => loadConfig({ SHELF_MODE: 'homerslab', SHELF_TRUSTED_PROXY: '127.0.0.1', SHELF_ORIGIN: ORIGIN, SHELF_DATA_DIR: '/nonexistent' });
+const homerslab = () => loadConfig({ SHELF_MODE: 'homerslab', SHELF_EDGE_IDENTITY: 'homerslab-v1', SHELF_TRUSTED_PROXY: '127.0.0.1', SHELF_ORIGIN: ORIGIN, SHELF_DATA_DIR: '/nonexistent' });
 const HL_ADULT = { 'x-homerslab-person': 'hl-sam', 'x-homerslab-name': 'Sam', 'x-homerslab-role': 'adult' };
 const HL_KID = { 'x-homerslab-person': 'hl-kid', 'x-homerslab-name': 'Kid 1', 'x-homerslab-role': 'kid' };
 
 let built: BuiltApp;
+let db0: ReturnType<typeof household>;
 let admin: string;
 let adult: string;
 let kid: string;
 beforeAll(async () => {
-  const db = household();
-  admin = sessionCookie(db, 'p_alex');
-  adult = sessionCookie(db, 'p_sam');
-  kid = sessionCookie(db, 'p_kid1');
-  built = await buildApp(standalone(), db, { webauthn: fakeWebAuthn() });
+  db0 = household();
+  admin = sessionCookie(db0, 'p_alex');
+  adult = sessionCookie(db0, 'p_sam');
+  kid = sessionCookie(db0, 'p_kid1');
+  built = await buildApp(standalone(), db0, { webauthn: fakeWebAuthn() });
   await built.app.ready();
 });
 afterAll(() => built.app.close());
+
+const outsider = () => {
+  db0.insert(t.person).values({ id: 'p_out', name: 'Pat', role: 'adult', handle: 'pat' }).run();
+  return sessionCookie(db0, 'p_out');
+};
 
 describe('contracts/openapi.yaml', () => {
   it('the server has exactly the spec\'s routes', () => {
@@ -34,7 +41,9 @@ describe('contracts/openapi.yaml', () => {
   // In spec order, signed in as the household's admin (public operations without the cookie).
   it.each(ops.map((o) => [`${o.method} ${o.path} (${o.op.operationId})`, o] as const))('%s', async (_name, o) => {
     const req = request(o);
-    const res = await built.app.inject({ ...req, headers: { ...req.headers, ...(isPublic(o) ? {} : { cookie: admin }) } });
+    // Signing out everywhere would end the admin's sessions for the operations after it: someone else signs out.
+    const cookie = o.op.operationId === 'signOutEverywhere' ? outsider() : admin;
+    const res = await built.app.inject({ ...req, headers: { ...req.headers, ...(isPublic(o) ? {} : { cookie }) } });
     if (!isPublic(o)) expect(res.statusCode, res.body).toBeLessThan(300);
     expectValid(o, res.statusCode, res.body ? res.json() : undefined);
     if (o.op.operationId === 'listBacklog') expect(res.json().queryErrors).toEqual(['unknown qualifier "nonsense:"']);
@@ -107,8 +116,23 @@ describe('homerslab mode', () => {
     const session = (await hl.app.inject({ url: '/api/auth/session', headers: HL_ADULT })).json();
     expect(session).toMatchObject({ mode: 'homerslab', signedIn: true, setupNeeded: false, person: { name: 'Sam' } });
   });
-  it('needs SHELF_ORIGIN', () => {
+  it('passkeys and sessions are not Shelf\'s under HomersLab: 404', async () => {
+    const h = { ...HL_ADULT, origin: ORIGIN };
+    for (const [method, url] of [['GET', '/api/me/passkeys'], ['POST', '/api/me/passkeys/invite'], ['POST', '/api/me/sessions/end'], ['DELETE', '/api/me/passkeys/pk1']] as const) {
+      expect((await hl.app.inject({ method, url, headers: h })).statusCode, url).toBe(404);
+    }
+  });
+  it('a change needs Shelf\'s Origin under HomersLab too', async () => {
+    expect((await hl.app.inject({ method: 'PATCH', url: '/api/settings', headers: HL_ADULT, payload: {} })).statusCode).toBe(403);
+  });
+  it('the role must be exactly admin, adult or kid', async () => {
+    expect((await hl.app.inject({ url: '/api/me', headers: { ...HL_ADULT, 'x-homerslab-person': 'hl-pad', 'x-homerslab-role': ' admin' } })).statusCode).toBe(403);
+    expect((await hl.app.inject({ url: '/api/me', headers: { ...HL_ADULT, 'x-homerslab-person': 'hl-up', 'x-homerslab-role': 'Admin' } })).statusCode).toBe(403);
+  });
+  it('needs SHELF_ORIGIN, the edge\'s promise (HomersLab #236) and the trusted proxy', () => {
     expect(() => loadConfig({ SHELF_MODE: 'homerslab' })).toThrow(/SHELF_ORIGIN/);
+    expect(() => loadConfig({ SHELF_MODE: 'homerslab', SHELF_ORIGIN: ORIGIN, SHELF_TRUSTED_PROXY: '127.0.0.1' })).toThrow(/SHELF_EDGE_IDENTITY/);
+    expect(() => loadConfig({ SHELF_MODE: 'homerslab', SHELF_ORIGIN: ORIGIN, SHELF_EDGE_IDENTITY: 'homerslab-v1' })).toThrow(/SHELF_TRUSTED_PROXY/);
   });
 });
 

@@ -13,12 +13,13 @@ test('a new Shelf asks for its first admin', async ({ page }) => {
   const done = noForeignRequests(page, ORIGIN);
   await page.goto('/');
   await expect(page.getByText('Shelf needs its first admin.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toHaveCount(0);
+  // the button stays: an admin whose passkey a restore lost still gets in once the setup is done
+  await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
   await expectAccessible(page, 'sign-in, setup needed');
   done();
 });
 
-test('the setup link makes Alex the admin with a passkey, then the household is set up', async ({ page }) => {
+test('the setup link makes Alex the admin with a passkey, then the household is set up', async ({ page, browser }) => {
   const done = noForeignRequests(page, ORIGIN);
   await addAuthenticator(page);
   await page.goto(setupLink());
@@ -63,11 +64,33 @@ test('the setup link makes Alex the admin with a passkey, then the household is 
   expect(await page.locator('header.bar').evaluate((el) => getComputedStyle(el).backdropFilter)).toBe('none');
   await cdp.send('Emulation.setEmulatedMedia', { features: [] });
 
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
   await expectAccessible(page, 'sign-in');
   await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
   await expect(page.getByText('Alex (you)')).toBeVisible();
+
+  // another device: Alex's own one-time link, then a passkey there
+  await expect(page.getByRole('button', { name: 'Invite Sam to make a passkey' })).toBeVisible();
+  await page.getByRole('button', { name: 'Add a passkey on another device' }).click();
+  const own = page.getByLabel(/Open it on the other device/);
+  await expect(own).toHaveValue(new RegExp(`^${ORIGIN}/enrol#`));
+  const ownLink = await own.inputValue();
+  const other = await (await browser.newContext()).newPage();
+  await addAuthenticator(other);
+  await other.goto(ownLink);
+  await expect(other.getByRole('heading', { name: 'Welcome, Alex' })).toBeVisible();
+  await other.getByRole('button', { name: 'Create a passkey' }).click();
+  await expect(other.getByText('Alex (you)')).toBeVisible();
+  await expect(other.getByRole('button', { name: /Remove the passkey/ })).toHaveCount(2);
+  await expectAccessible(other, 'household with two passkeys');
+
+  // sign out everywhere: both browsers are signed out
+  other.once('dialog', (d) => void d.accept());
+  await other.getByRole('button', { name: 'Sign out everywhere' }).click();
+  await expect(other.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
   done();
 });
 

@@ -40,9 +40,11 @@ export function getPerson(db: Db, id: string): Person | undefined {
   return db.select().from(t.person).where(eq(t.person.id, id)).get();
 }
 
-export function adminCount(db: Db, except?: string): number {
-  const where = except ? and(eq(t.person.role, 'admin'), ne(t.person.id, except)) : eq(t.person.role, 'admin');
-  return db.select({ n: count() }).from(t.person).where(where).get()?.n ?? 0;
+/** Admins who can sign in (standalone): at least one must stay. */
+export function adminsWithPasskey(db: Db, except?: string): number {
+  const rows = db.selectDistinct({ id: t.person.id }).from(t.person).innerJoin(t.passkey, eq(t.passkey.personId, t.person.id))
+    .where(except ? and(eq(t.person.role, 'admin'), ne(t.person.id, except)) : eq(t.person.role, 'admin')).all();
+  return rows.length;
 }
 
 /** No admin can sign in yet (standalone): the household needs its setup link. */
@@ -83,7 +85,7 @@ export function addPerson(db: Db, i: PersonInput): Person {
 export function editPerson(db: Db, id: string, patch: Partial<PersonInput>): Person {
   const p = getPerson(db, id);
   if (!p) throw new HouseholdError(404, 'no such person');
-  if (patch.role && patch.role !== 'admin' && p.role === 'admin' && adminCount(db, id) === 0) throw new HouseholdError(409, 'the household needs an admin');
+  if (patch.role && patch.role !== 'admin' && p.role === 'admin' && adminsWithPasskey(db, id) === 0) throw new HouseholdError(409, 'the household needs an admin who can sign in');
   if (patch.handle) checkHandle(db, patch.handle, id);
   const role = patch.role ?? p.role;
   db.transaction((tx) => {
@@ -107,7 +109,7 @@ export function removePerson(db: Db, id: string, by: string): void {
   const p = getPerson(db, id);
   if (!p) throw new HouseholdError(404, 'no such person');
   if (id === by) throw new HouseholdError(409, 'you cannot remove yourself');
-  if (p.role === 'admin' && adminCount(db, id) === 0) throw new HouseholdError(409, 'the household needs an admin');
+  if (p.role === 'admin' && adminsWithPasskey(db, id) === 0) throw new HouseholdError(409, 'the household needs an admin who can sign in');
   try {
     db.delete(t.person).where(eq(t.person.id, id)).run();
   } catch {

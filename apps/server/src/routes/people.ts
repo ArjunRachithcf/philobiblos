@@ -1,12 +1,14 @@
 // The household (ADR 0001): everyone signed in sees it; admins change it. Under HomersLab, people are managed in
 // HomersLab and arrive with each request, so the changes here answer 409.
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { and, count, eq } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { requireAdmin } from '../auth/hook';
 import { createInvite } from '../auth/invites';
+import { SESSION_COOKIE, endAllSessions, isFresh } from '../auth/sessions';
 import { HouseholdError, addPerson, editPerson, getPerson, household, removePerson, view, type PersonInput } from '../household/people';
 
 const ROLES = new Set(['admin', 'adult', 'kid']);
@@ -49,6 +51,20 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     void reply.code(409).send({ error: 'people are managed in HomersLab' });
     return true;
   };
+  // Passkeys and sessions are Shelf's own only in standalone mode; under HomersLab these routes do not exist.
+  const standaloneOnly = (reply: FastifyReply) => {
+    if (cfg.mode === 'standalone') return true;
+    void reply.code(404).send({ error: 'HomersLab holds the passkeys' });
+    return false;
+  };
+  // Adding a passkey (to anyone) needs a sign-in of the last few minutes: an old, stolen cookie cannot.
+  const fresh = (req: FastifyRequest, reply: FastifyReply) => {
+    const s = req.caller?.session;
+    if (s && isFresh(s)) return true;
+    void reply.code(403).send({ error: 'sign in again to do this' });
+    return false;
+  };
+  const hasPasskey = (personId: string) => Boolean(db.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.personId, personId)).get());
 
   app.get('/me', async (req) => ({
     person: view(db, getPerson(db, req.caller!.personId)!),
@@ -80,20 +96,41 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     const p = getPerson(db, req.params.personId);
     if (!p) return reply.code(404).send({ error: 'no such person' });
     if (p.role === 'kid') return reply.code(409).send({ error: 'kids never sign in; adults act for them' });
+    // Once someone has a passkey, only they add more (an admin cannot slip a passkey into an adult's account).
+    if (hasPasskey(p.id)) return reply.code(409).send({ error: 'they already sign in; they add passkeys themselves' });
+    if (!fresh(req, reply)) return;
     const { url, expiresAt } = createInvite(db, cfg, { purpose: 'enrol', personId: p.id, createdBy: req.caller!.personId });
     return reply.code(201).send({ url, expiresAt: expiresAt.toISOString() });
   });
 
-  app.get('/me/passkeys', async (req) =>
-    db.select().from(t.passkey).where(eq(t.passkey.personId, req.caller!.personId)).all()
-      .map((k) => ({ id: k.id, label: k.label, createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, backedUp: k.backedUp === 1 })));
+  app.get('/me/passkeys', async (req, reply) => {
+    if (!standaloneOnly(reply)) return;
+    const by = alias(t.person, 'by');
+    return db.select({ k: t.passkey, by: by.name }).from(t.passkey).leftJoin(by, eq(by.id, t.passkey.invitedBy))
+      .where(eq(t.passkey.personId, req.caller!.personId)).all()
+      .map(({ k, by }) => ({ id: k.id, label: k.label, createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, backedUp: k.backedUp === 1, invitedBy: by ?? null }));
+  });
+
+  app.post('/me/passkeys/invite', async (req, reply) => {
+    if (!standaloneOnly(reply) || !fresh(req, reply)) return;
+    const me = req.caller!.personId;
+    const { url, expiresAt } = createInvite(db, cfg, { purpose: 'enrol', personId: me, createdBy: me });
+    return reply.code(201).send({ url, expiresAt: expiresAt.toISOString() });
+  });
+
+  app.post('/me/sessions/end', async (req, reply) => {
+    if (!standaloneOnly(reply)) return;
+    endAllSessions(db, req.caller!.personId);
+    return reply.clearCookie(SESSION_COOKIE, { path: '/' }).code(204).send();
+  });
 
   app.delete<{ Params: { id: string } }>('/me/passkeys/:id', async (req, reply) => {
+    if (!standaloneOnly(reply)) return;
     const mine = and(eq(t.passkey.id, req.params.id), eq(t.passkey.personId, req.caller!.personId));
     if (!db.select().from(t.passkey).where(mine).get()) return reply.code(404).send({ error: 'no such passkey of yours' });
     const n = db.select({ n: count() }).from(t.passkey).where(eq(t.passkey.personId, req.caller!.personId)).get()?.n ?? 0;
     if (n <= 1) return reply.code(409).send({ error: 'your last passkey stays' });
-    db.delete(t.passkey).where(mine).run();
+    db.delete(t.passkey).where(mine).run(); // its sessions end with it (ON DELETE CASCADE)
     return reply.code(204).send();
   });
 }
