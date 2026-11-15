@@ -1,9 +1,9 @@
 // Waiting for a decision (ADR 0005): ideas proposed for books and links between books, until a person confirms or
 // rejects them; moving an idea to another layer confirms it there. A proposal written from someone's takeaways is
 // theirs alone: the server sends it only to them, marked "Only you see this".
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, message, type Layer, type Proposals as Data } from '../api';
-import { Notice, PageHead } from '../ui';
+import { MenuButton, Notice, PageHead } from '../ui';
 import { LAYERS } from './Brain';
 
 type IdeaP = Data['ideas'][number];
@@ -22,7 +22,7 @@ export function Proposals() {
 
   const load = useCallback(() => api<Data>('/proposals').then(setData, (e) => setError(message(e))), []);
   useEffect(() => { void load(); }, [load]);
-  // After a decision the row goes: focus moves to the next one's first control, or to the list's heading.
+  // After a decision the row goes: focus moves to the next one's Confirm, or to the list's heading.
   useEffect(() => {
     const r = refocus.current;
     if (!r || !data) return;
@@ -30,7 +30,7 @@ export function Proposals() {
     const sec = (r.list === 'ideas' ? ideasRef : linksRef).current;
     const rows = sec?.querySelectorAll<HTMLElement>('[data-row]') ?? [];
     const row = rows[Math.min(r.at, rows.length - 1)];
-    (row?.querySelector<HTMLElement>('select, button') ?? sec?.querySelector<HTMLElement>('h2'))?.focus();
+    (row?.querySelector<HTMLElement>('.pr-confirm') ?? sec?.querySelector<HTMLElement>('h2'))?.focus();
   }, [data]);
 
   const decide = async (list: 'ideas' | 'links', at: number, path: string, body: object, said: string) => {
@@ -93,7 +93,6 @@ function Pills({ fromAi, onlyYou }: { fromAi: boolean; onlyYou: boolean }) {
 }
 
 function IdeaRow({ p, busy, onDecide }: { p: IdeaP; busy: boolean; onDecide: (b: { state?: 'confirmed' | 'rejected'; layer?: Layer }) => void }) {
-  const id = useId();
   const what = `${p.idea.name} on ${p.book.title}`;
   return (
     <li className="row pr-row" data-row>
@@ -103,13 +102,12 @@ function IdeaRow({ p, busy, onDecide }: { p: IdeaP; busy: boolean; onDecide: (b:
         <Pills fromAi={p.fromAi} onlyYou={p.onlyYou} />
       </span>
       <span className="row-trail pr-trail">
-        <label className="sr-only" htmlFor={`${id}-l`}>Layer of {what}</label>
-        <select className="input select pr-layer" id={`${id}-l`} value={p.layer} disabled={busy} aria-describedby={`${id}-d`}
-          onChange={(e) => onDecide({ layer: e.target.value as Layer })}>
-          {LAYERS.map(([l, label]) => <option key={l} value={l}>{label}</option>)}
-        </select>
-        <span className="sr-only" id={`${id}-d`}>Choosing another layer confirms it there.</span>
-        <button type="button" className="btn btn-sm btn-primary" disabled={busy} aria-label={`Confirm ${what}`} onClick={() => onDecide({ state: 'confirmed' })}>Confirm</button>
+        {/* Another layer is a decision (it confirms the idea there), so it is a menu of explicit choices, never a
+            select that saves on change (WCAG 3.2.2: arrow keys on a closed select change it). */}
+        <MenuButton label={`${LAYERS.find(([l]) => l === p.layer)?.[1]} layer`} name={`Layer of ${what}`}
+          items={LAYERS.filter(([l]) => l !== p.layer).map(([l, label]) => ({ value: l, text: `Confirm in ${label}` }))}
+          onPick={(l) => { if (!busy) onDecide({ layer: l as Layer }); }} />
+        <button type="button" className="btn btn-sm btn-primary pr-confirm" disabled={busy} aria-label={`Confirm ${what}`} onClick={() => onDecide({ state: 'confirmed' })}>Confirm</button>
         <button type="button" className="btn btn-sm" disabled={busy} aria-label={`Reject ${what}`} onClick={() => onDecide({ state: 'rejected' })}>Reject</button>
       </span>
     </li>
@@ -126,7 +124,7 @@ function LinkRow({ p, busy, onDecide }: { p: LinkP; busy: boolean; onDecide: (s:
         <Pills fromAi={p.fromAi} onlyYou={p.onlyYou} />
       </span>
       <span className="row-trail pr-trail">
-        <button type="button" className="btn btn-sm btn-primary" disabled={busy} aria-label={`Confirm ${what}`} onClick={() => onDecide('confirmed')}>Confirm</button>
+        <button type="button" className="btn btn-sm btn-primary pr-confirm" disabled={busy} aria-label={`Confirm ${what}`} onClick={() => onDecide('confirmed')}>Confirm</button>
         <button type="button" className="btn btn-sm" disabled={busy} aria-label={`Reject ${what}`} onClick={() => onDecide('rejected')}>Reject</button>
       </span>
     </li>

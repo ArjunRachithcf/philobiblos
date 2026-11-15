@@ -272,6 +272,38 @@ describe('writing from an AI run (shelf#3)', () => {
     expect(db.select().from(t.bookLink).where(eq(t.bookLink.aiRunId, 'run_w_plain')).all()).toHaveLength(1);
   });
 
+  it('the database enforces it for any writer, raw SQL included: filled in, a mismatch refused', () => {
+    const c = db.$client;
+    run('run_w_alex', id.alex!);
+    const [a, b, c2] = ['The Grand Ledger', 'Value Beyond Price', 'Care at the Centre'].map(bookId);
+    const priv = (from: string, to: string) => (c.prepare('SELECT private_to AS p FROM book_link WHERE from_book = ? AND to_book = ?').get(from, to) as { p: string | null }).p;
+    // no private_to given: the run's person gets it
+    c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_alex')`).run(a, b);
+    expect(priv(a!, b!)).toBe(id.alex);
+    // someone else's, or private on a run without takeaways: refused
+    expect(() => c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id, private_to) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_alex', ?)`).run(a, c2, id.partner)).toThrow(/private_to must be its run/);
+    expect(() => c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id, private_to) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_plain', ?)`).run(a, c2, id.alex)).toThrow(/private_to must be its run/);
+    // a plain run stays public
+    c.prepare(`INSERT INTO book_link (from_book, to_book, reason, confidence, state, ai_run_id) VALUES (?, ?, 'raw', 0.9, 'proposed', 'run_w_plain')`).run(a, c2);
+    expect(priv(a!, c2!)).toBeNull();
+    // updates: taking private_to off, or moving a row onto someone's run without making it theirs, is refused
+    expect(() => c.prepare('UPDATE book_link SET private_to = NULL WHERE from_book = ? AND to_book = ?').run(a, b)).toThrow(/private_to must be its run/);
+    expect(() => c.prepare(`UPDATE book_link SET ai_run_id = 'run_w_alex' WHERE from_book = ? AND to_book = ?`).run(a, c2)).toThrow(/private_to must be its run/);
+    expect(() => db.update(t.bookLink).set({ privateTo: id.partner }).where(and(eq(t.bookLink.fromBook, a!), eq(t.bookLink.toBook, b!))).run()).toThrow(/private_to must be its run/);
+    c.prepare(`UPDATE book_link SET ai_run_id = 'run_w_alex', private_to = ? WHERE from_book = ? AND to_book = ?`).run(id.alex, a, c2);
+    expect(priv(a!, c2!)).toBe(id.alex);
+    // clearing the run (the purge) keeps private_to
+    c.prepare('UPDATE book_link SET ai_run_id = NULL WHERE from_book = ? AND to_book = ?').run(a, b);
+    expect(priv(a!, b!)).toBe(id.alex);
+    // the same for book ideas
+    c.prepare(`INSERT INTO idea (id, name) VALUES ('i_w_raw', 'Raw idea')`).run();
+    c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state, ai_run_id) VALUES (?, 'i_w_raw', 'core', 0.9, 'proposed', 'run_w_alex')`).run(a);
+    expect((c.prepare(`SELECT private_to AS p FROM book_idea WHERE idea_id = 'i_w_raw'`).get() as { p: string }).p).toBe(id.alex);
+    expect(() => c.prepare(`INSERT INTO book_idea (book_id, idea_id, layer, confidence, state, ai_run_id, private_to) VALUES (?, 'i_w_raw', 'core', 0.9, 'proposed', 'run_w_alex', ?)`).run(b, id.partner)).toThrow(/private_to must be its run/);
+    expect(() => c.prepare(`UPDATE book_idea SET private_to = NULL WHERE idea_id = 'i_w_raw'`).run()).toThrow(/private_to must be its run/);
+    purgeTakeawayRuns(db, id.alex!);
+  });
+
   it('nothing else in src/ inserts a link or a book idea (the seed writes decided rows, without a run)', () => {
     const root = fileURLToPath(new URL('../src/', import.meta.url));
     const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => statSync(join(dir, f)).isDirectory() ? files(join(dir, f)) : /\.ts$/.test(f) ? [join(dir, f)] : []);

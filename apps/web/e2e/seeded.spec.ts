@@ -276,10 +276,28 @@ test('the brain: the map, its table, views; proposals confirmed, rejected and mo
   await page.getByRole('button', { name: 'Confirm Markets and value on The Grand Ledger' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Markets and value on The Grand Ledger: confirmed.' })).toBeAttached();
   await expect(page.getByRole('button', { name: 'Confirm Markets and value on The Grand Ledger' })).toHaveCount(0);
-  // focus moved to the next proposal, not lost
-  await expect(page.locator('.pr-row').first().locator('select')).toBeFocused();
-  await page.getByLabel('Layer of Markets and value on Value Beyond Price').selectOption('deep');
-  await expect(page.getByLabel('Layer of Markets and value on Value Beyond Price')).toHaveCount(0);
+  // focus moved to the next proposal's Confirm, not lost
+  await expect(page.locator('.pr-row').first().locator('.pr-confirm')).toBeFocused();
+  // another layer, by keyboard only: arrows on the menu button open the menu and move in it, deciding nothing
+  const layer = page.getByRole('button', { name: 'Layer of Markets and value on Value Beyond Price: Core layer' });
+  await layer.focus();
+  await page.keyboard.press('ArrowDown');
+  const menu = page.getByRole('menu');
+  await expect(menu.getByRole('menuitem', { name: 'Confirm in Intro' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowUp');
+  await expect(menu.getByRole('menuitem', { name: 'Confirm in Deep' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(layer).toBeFocused();
+  await expect(menu).toHaveCount(0);
+  await expectAccessible(page, 'proposals, nothing decided by the arrows');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('status').filter({ hasText: 'Markets and value on Value Beyond Price: confirmed, Deep layer.' })).toBeAttached();
+  await expect(layer).toHaveCount(0);
+  await expect(page.locator('.pr-row').first().locator('.pr-confirm')).toBeFocused();
   const reject = page.getByRole('button', { name: /^Reject / }).first();
   const rejected = (await reject.getAttribute('aria-label'))!.replace(/^Reject /, '');
   await reject.click();
@@ -312,6 +330,9 @@ test('the brain: the map, its table, views; proposals confirmed, rejected and mo
   await expect(page.getByRole('list').filter({ hasText: 'Would connect them: A Deep Book' })).toBeVisible();
   await show.getByRole('radio', { name: 'This month’s focus' }).click();
   await expect(table.locator('tbody tr')).toHaveCount(1);
+  // outside the view the shapes fade, the words do not (labels and counts keep body text's contrast)
+  expect(await page.evaluate(() => [...document.querySelectorAll('.brain-node.is-dim')].flatMap((g) => [...g.querySelectorAll('.brain-label, .brain-count')])
+    .map((el) => { let o = 1; for (let n: Element | null = el; n && n.tagName !== 'svg'; n = n.parentElement) o *= Number(getComputedStyle(n).opacity); return o; }))).toEqual(Array(16).fill(1));
   await show.getByRole('radio', { name: 'All ideas' }).click();
   await page.screenshot({ path: 'test-results/brain-full.png', fullPage: true });
   await expectAccessible(page, 'a fuller brain');

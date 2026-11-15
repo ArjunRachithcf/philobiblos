@@ -97,7 +97,11 @@ dialog.lib-sheet::backdrop { background: var(--scrim); -webkit-backdrop-filter: 
 .brain-tools, .brain-top, .brain-section { min-width: 0; }
 .brain-map { display: block; width: 100%; height: auto; max-height: 620px; padding: var(--space-3); }
 .brain-node { cursor: pointer; transition: opacity var(--dur-spring) var(--spring); }
-.brain-node.is-dim { opacity: 0.28; }
+/* Outside the chosen view a node's shapes fade, never its words: the label and the count stay at full contrast on the
+   card (the same tokens as body text, ≥ 4.5:1), since sighted readers read them even while the map is aria-hidden. */
+.brain-node.is-dim :is(.brain-ring, .brain-halo) { opacity: 0.28; }
+.brain-node.is-dim .brain-dot { fill: var(--surface); stroke: var(--text-2); stroke-width: 2; stroke-dasharray: none; }
+.brain-node.is-dim .brain-count { fill: var(--text); }
 .brain-dot { fill: var(--text); transition: fill var(--dur-fast); }
 .brain-node.is-sel .brain-dot { fill: var(--accent); }
 .brain-count { fill: var(--surface); font-size: 20px; font-weight: var(--weight-bold); text-anchor: middle; }
@@ -144,7 +148,7 @@ dialog.lib-sheet::backdrop { background: var(--scrim); -webkit-backdrop-filter: 
 .pr-row { align-items: flex-start; }
 .pr-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .pr-trail { flex-wrap: wrap; justify-content: flex-end; }
-.pr-layer { width: auto; height: 30px; font-size: var(--fs-sub); padding-left: 10px; }
+.pr-trail .bl-menu { left: auto; right: 0; transform-origin: top right; }
 @media (max-width: 560px) {
   .pr-row { flex-wrap: wrap; }
   .pr-trail { flex-basis: 100%; }
