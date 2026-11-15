@@ -1,12 +1,14 @@
 // The Backlog (spec §4, contracts/backlog-query.md). The rules are in src/backlog/.
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { Config } from '../config';
 import type { Db } from '../db/open';
+import { MonthError, changePicks, currentMonth } from '../month/plan';
 import { BacklogError, addToBacklog, bulk, removeFilter, renameFilter, saveFilter, savedFilters } from '../backlog/actions';
-import { LIMIT_MAX, getCandidate, listBacklog } from '../backlog/backlog';
+import { LIMIT_MAX, getCandidate, listBacklog, parseCandidateId } from '../backlog/backlog';
 
-export async function backlogRoutes(app: FastifyInstance, db: Db) {
+export async function backlogRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   const fail = (reply: FastifyReply, e: unknown) => {
-    if (e instanceof BacklogError) return reply.code(e.status).send({ error: e.message });
+    if (e instanceof BacklogError || e instanceof MonthError) return reply.code(e.status).send({ error: e.message });
     throw e;
   };
 
@@ -26,7 +28,21 @@ export async function backlogRoutes(app: FastifyInstance, db: Db) {
   });
 
   app.post('/backlog/bulk', async (req, reply) => {
-    try { return { changed: bulk(db, req.caller!.personId, req.body) }; } catch (e) { return fail(reply, e); }
+    try {
+      const b = req.body as { ids?: unknown; action?: unknown } | null;
+      if (b && typeof b === 'object' && b.action === 'add_to_month') {
+        // To this month's picks (This month): all or nothing, your own candidates and the kids'.
+        if (!Array.isArray(b.ids) || b.ids.length === 0 || b.ids.length > 50) throw new BacklogError(400, 'ids: 1 to 50 candidate ids');
+        const add = b.ids.map((id) => {
+          const k = parseCandidateId(id);
+          if (!k) throw new BacklogError(400, 'ids: candidate ids from the list');
+          return { bookId: k.bookId, for: k.personId };
+        });
+        changePicks(db, currentMonth(cfg.timezone), req.caller!.personId, { add });
+        return { changed: add.length };
+      }
+      return { changed: bulk(db, req.caller!.personId, req.body) };
+    } catch (e) { return fail(reply, e); }
   });
 
   app.get('/backlog/saved-filters', async (req) => savedFilters(db, req.caller!.personId));

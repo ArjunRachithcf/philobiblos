@@ -165,7 +165,7 @@ describe('bulk actions (POST /backlog/bulk)', () => {
     [400, { ids: [], action: 'reopen' }],
     [400, { ids: ['x'], action: 'reopen' }],
     [400, { ids: ['a.b'], action: 'burn' }],
-    [400, { ids: ['a.b'], action: 'add_to_month' }],
+    [404, { ids: ['a.b'], action: 'add_to_month' }],
     [400, { ids: ['a.b'], action: 'snooze', months: 99 }],
     [404, { ids: ['nobody.book'], action: 'reopen' }],
   ])('%i: %j', async (status, body) => {

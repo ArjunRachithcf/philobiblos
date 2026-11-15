@@ -356,3 +356,69 @@ test('the brain: the map, its table, views; proposals confirmed, rejected and mo
   await page.unroute('**/api/people/*/brain');
   done();
 });
+
+test('this month: picks, the budget bar by keyboard, a pick removed, Compose', async () => {
+  const done = noForeignRequests(page, ORIGIN);
+  // where orders go (admins; the delivery address is sealed and never shown again)
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByLabel('The bookshop’s e-mail address').fill('orders@bookshop.example');
+  await page.getByLabel(/^Delivery address/).fill('Alex Example\nExample Street 1\n8000 Zurich');
+  await page.getByRole('button', { name: 'Save where orders go' }).click();
+  await expect(page.getByText('The delivery address is kept sealed')).toBeVisible();
+  await expect(page.getByLabel(/^Delivery address \(saved/)).toHaveValue('');
+  await expectAccessible(page, 'settings, where orders go');
+
+  await page.getByRole('link', { name: 'This month' }).click();
+  await expect(page.getByRole('heading', { name: 'This month', level: 1 })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'For you · non-fiction' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'For Kid 1' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'This month your brain grows here' })).toBeVisible();
+  expect(await page.locator('svg.mo-mini:not([aria-hidden="true"])').count()).toBe(0); // the miniature is for the eye
+  await expect(page.getByRole('listitem').filter({ has: page.getByText('Picked', { exact: true }) })).toHaveAttribute('aria-current', 'step');
+  await expectAccessible(page, 'this month');
+
+  // the budget bar: arrows move a draft only; a button applies it for this month
+  const max = page.getByRole('slider', { name: 'Budget, highest total' });
+  await expect(max).toHaveAttribute('aria-valuetext', 'CHF 180');
+  await max.focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowLeft');
+  await expect(max).toHaveAttribute('aria-valuetext', 'CHF 170');
+  await expect(page.getByText('Monthly budget', { exact: true })).toBeVisible(); // nothing applied yet
+  await page.keyboard.press('PageDown');
+  await expect(max).toHaveAttribute('aria-valuetext', 'CHF 120');
+  const min = page.getByRole('slider', { name: 'Budget, lowest total' });
+  await min.focus();
+  await page.keyboard.press('End'); // never past the other end
+  await expect(min).toHaveAttribute('aria-valuetext', 'CHF 120');
+  await page.keyboard.press('Home');
+  await page.getByRole('button', { name: 'Use for this month' }).click();
+  await expect(page.getByText('This month only', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'This month’s budget is CHF 0 to CHF 120' })).toBeAttached();
+  await page.getByRole('button', { name: 'Back to the usual budget' }).click();
+  await expect(page.getByText('Monthly budget', { exact: true })).toBeVisible();
+
+  // a pick of your own comes off the list
+  const remove = page.getByRole('button', { name: /^Remove .* from this month$/ }).first();
+  const title = (await remove.getAttribute('aria-label'))!.replace(/^Remove (.*) from this month$/, '$1');
+  await remove.click();
+  await expect(page.getByRole('status').filter({ hasText: `${title} is off this month’s list.` })).toBeAttached();
+
+  // Compose: a mailto to the bookshop with the order; the text in full, no card number
+  await page.getByRole('button', { name: 'Compose the order' }).click();
+  const open = page.getByRole('link', { name: 'Open in your mail app' });
+  await expect(open).toHaveAttribute('href', /^mailto:orders@bookshop\.example\?subject=Book%20order%2C%20/);
+  const text = await page.getByLabel('The order text').inputValue();
+  expect(text).toContain('Example Street 1');
+  expect(text).not.toMatch(/\b(?:\d[ -]?){13,19}\b|card number/i);
+  await expect(page.getByRole('listitem').filter({ has: page.getByText('Composed', { exact: true }) })).toHaveAttribute('aria-current', 'step');
+  await expectAccessible(page, 'this month, composed');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/month-phone.png', fullPage: true });
+  await expectAccessible(page, 'this month on a phone');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.screenshot({ path: 'test-results/month.png', fullPage: true });
+  done();
+});

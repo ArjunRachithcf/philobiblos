@@ -268,7 +268,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** The month's picks, budget, focus and order progress */
+        /** The month's picks (packages/scoring, spec §5), budget, the viewer's focus and the order's progress. Computed on each look until someone changes it; then kept as the month's order. */
         get: operations["getMonth"];
         put?: never;
         post?: never;
@@ -288,7 +288,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** One-month override (null clears it) */
+        /** Admins: this month only (null goes back to the household's budget). The adults' picks stay; the kids' are made again within the range. */
         put: operations["setMonthBudget"];
         post?: never;
         delete?: never;
@@ -308,7 +308,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Add, remove or swap a pick; or recompute (ask AI again) */
+        /** Add or remove picks (your own and the kids'; another adult's: 403), or start again from the scoring (recompute). A change after Compose needs Compose again. */
         post: operations["changePicks"];
         delete?: never;
         options?: never;
@@ -343,7 +343,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** All or nothing, on your own candidates and the kids' (403 if any is another adult's). add_to_month arrives with This month (M2) and answers 400 until then. */
+        /** All or nothing, on your own candidates and the kids' (403 if any is another adult's). add_to_month adds them to this month's picks (up to 50). */
         post: operations["bulkBacklog"];
         delete?: never;
         options?: never;
@@ -669,7 +669,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Turn the month's picks into an order and its Compose link, a mailto with the text filled in (never sends) */
+        /** Turn the month's picks into an order and its Compose link, a mailto with the text filled in (Shelf never sends mail; the text asks for a quote and never holds a card number). The month defaults to the current one. */
         post: operations["createOrderDraft"];
         delete?: never;
         options?: never;
@@ -706,7 +706,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** M1: `person` (your own settings) is stored. The household parts are admins' (403 for others) and answer 400 until their screens store them */
+        /** `person` (your own settings) is stored, and the household's `budget` and `order` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` needs the sealing key (409 without it). */
         patch: operations["patchSettings"];
         trace?: never;
     };
@@ -1023,6 +1023,11 @@ export interface components {
             status?: "picked" | "drafted" | "quoted" | "invoiced" | "closed";
             /** @description mailto: link to the bookshop with the order text filled in (never the card number: the text leaves it for the person to fill in) */
             composeUrl?: string;
+            /** @description false when the whole text would make the link too long for mail apps: the link then asks the person to paste composeText */
+            composeComplete?: boolean;
+            composeSubject?: string;
+            /** @description the order text in full (only in the Compose answer) */
+            composeText?: string;
             estimate?: components["schemas"]["Money"];
             quoted?: components["schemas"]["Money"];
             invoiced?: components["schemas"]["Money"];
@@ -1081,6 +1086,15 @@ export interface components {
                 day?: number;
                 time?: string;
                 timezone?: string;
+            };
+            /** @description Where orders go (admins set it): both sealed at rest with a key outside the database (docs/security.md) */
+            order?: {
+                bookshopEmail?: string | null;
+                /** @description never sent back; only in a Compose text */
+                deliveryAddress?: string | null;
+                readonly hasDelivery?: boolean;
+                /** @description false under HomersLab without SHELF_SEALING_KEY */
+                readonly canSeal?: boolean;
             };
             /** @description IMAP mailbox that receives only the forwarded bookshop mail (ADR 0007); its app password is a secret, never in the API */
             mail?: {
@@ -1791,6 +1805,15 @@ export interface operations {
                     "application/json": components["schemas"]["MonthPlan"];
                 };
             };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
         };
@@ -1804,9 +1827,12 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
-                "application/json": components["schemas"]["Budget"];
+                "application/json": {
+                    min: components["schemas"]["Money"];
+                    max: components["schemas"]["Money"];
+                } | null;
             };
         };
         responses: {
@@ -1819,8 +1845,26 @@ export interface operations {
                     "application/json": components["schemas"]["MonthPlan"];
                 };
             };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description The bookshop has the order already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     changePicks: {
@@ -1832,7 +1876,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
                     add?: components["schemas"]["PickRef"][];
@@ -1851,8 +1895,35 @@ export interface operations {
                     "application/json": components["schemas"]["MonthPlan"];
                 };
             };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No open candidate for that person and book */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The bookshop has the order already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listBacklog: {
@@ -2761,8 +2832,26 @@ export interface operations {
                     "application/json": components["schemas"]["Order"];
                 };
             };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No bookshop address yet, nothing picked, or the bookshop has the order already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getOrder: {
@@ -2787,6 +2876,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such order */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getSettings: {
@@ -2842,6 +2940,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No sealing key */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     runJob: {

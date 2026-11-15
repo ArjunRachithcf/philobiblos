@@ -26,7 +26,7 @@ export function parseCandidateId(id: unknown): { personId: string; bookId: strin
   return m ? { personId: m[1]!, bookId: m[2]! } : null;
 }
 
-interface Row extends Candidate {
+export interface Row extends Candidate {
   book: S['BookRef']; id: string; personId: string; handle: string | null; role: 'admin' | 'adult' | 'kid'; addedBy: string | null;
   authors: string[]; isFiction: boolean; audience: 'adult' | 'kids'; links: number; score?: number;
   ideaNames: string[]; layers: Layer[]; themes: string[];

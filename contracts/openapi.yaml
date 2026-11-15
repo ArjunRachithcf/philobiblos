@@ -95,24 +95,24 @@ paths:
     get:
       tags: [month]
       operationId: getMonth
-      summary: The month's picks, budget, focus and order progress
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
+      summary: 'The month''s picks (packages/scoring, spec §5), budget, the viewer''s focus and the order''s progress. Computed on each look until someone changes it; then kept as the month''s order.'
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
   /month/{month}/budget:
-    parameters: [{ name: month, in: path, required: true, schema: { type: string } }]
+    parameters: [{ name: month, in: path, required: true, schema: { type: string, pattern: '^\d{4}-\d{2}$' } }]
     put:
       tags: [month]
       operationId: setMonthBudget
-      summary: One-month override (null clears it)
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Budget' } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Recomputed plan, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
+      summary: 'Admins: this month only (null goes back to the household''s budget). The adults'' picks stay; the kids'' are made again within the range.'
+      requestBody: { required: true, content: { application/json: { schema: { oneOf: [ { type: object, required: [min, max], additionalProperties: false, properties: { min: { $ref: '#/components/schemas/Money' }, max: { $ref: '#/components/schemas/Money' } } }, { type: 'null' } ] } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The bookshop has the order already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Recomputed plan, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
   /month/{month}/picks:
-    parameters: [{ name: month, in: path, required: true, schema: { type: string } }]
+    parameters: [{ name: month, in: path, required: true, schema: { type: string, pattern: '^\d{4}-\d{2}$' } }]
     post:
       tags: [month]
       operationId: changePicks
-      summary: Add, remove or swap a pick; or recompute (ask AI again)
-      requestBody: { content: { application/json: { schema: { type: object, properties: { add: { type: array, items: { $ref: '#/components/schemas/PickRef' } }, remove: { type: array, items: { $ref: '#/components/schemas/PickRef' } }, recompute: { type: boolean } } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
+      summary: 'Add or remove picks (your own and the kids''; another adult''s: 403), or start again from the scoring (recompute). A change after Compose needs Compose again.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, minProperties: 1, properties: { add: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/PickRef' } }, remove: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/PickRef' } }, recompute: { type: boolean } } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: 'No open candidate for that person and book', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The bookshop has the order already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MonthPlan' } } } } }
 
   /backlog:
     get:
@@ -145,7 +145,7 @@ paths:
     post:
       tags: [backlog]
       operationId: bulkBacklog
-      summary: 'All or nothing, on your own candidates and the kids'' (403 if any is another adult''s). add_to_month arrives with This month (M2) and answers 400 until then.'
+      summary: 'All or nothing, on your own candidates and the kids'' (403 if any is another adult''s). add_to_month adds them to this month''s picks (up to 50).'
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [ids, action], properties: { ids: { type: array, minItems: 1, maxItems: 200, items: {type: string} }, action: { enum: [not_for_me, snooze, reopen, add_to_month] }, months: { type: integer, minimum: 1, maximum: 24, default: 3 } } } } } }
       responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such candidate or person, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [changed], properties: { changed: {type: integer} } } } } } }
   /backlog/saved-filters:
@@ -256,15 +256,15 @@ paths:
     post:
       tags: [orders]
       operationId: createOrderDraft
-      summary: Turn the month's picks into an order and its Compose link, a mailto with the text filled in (never sends)
-      requestBody: { content: { application/json: { schema: { type: object, properties: { month: {type: string} } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } } }
+      summary: 'Turn the month''s picks into an order and its Compose link, a mailto with the text filled in (Shelf never sends mail; the text asks for a quote and never holds a card number). The month defaults to the current one.'
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: false, properties: { month: { type: string, pattern: '^\d{4}-\d{2}$' } } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'No bookshop address yet, nothing picked, or the bookshop has the order already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } } }
   /orders/{id}:
-    get: { tags: [orders], operationId: getOrder, parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } } } }
+    get: { tags: [orders], operationId: getOrder, parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '404': { description: No such order, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } } } }
 
   /settings:
     get: { tags: [settings], operationId: getSettings, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } } } }
-    patch: { tags: [settings], operationId: patchSettings, summary: 'M1: `person` (your own settings) is stored. The household parts are admins'' (403 for others) and answer 400 until their screens store them', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
+    patch: { tags: [settings], operationId: patchSettings, summary: '`person` (your own settings) is stored, and the household''s `budget` and `order` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` needs the sealing key (409 without it).', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: No sealing key, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
   /jobs/{job}/run:
     post: { tags: [system], operationId: runJob, parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, ai_suggest] } }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started } } }
 
@@ -368,6 +368,9 @@ components:
         month: {type: string}
         status: { enum: [picked, drafted, quoted, invoiced, closed] }
         composeUrl: { type: string, description: 'mailto: link to the bookshop with the order text filled in (never the card number: the text leaves it for the person to fill in)' }
+        composeComplete: { type: boolean, description: 'false when the whole text would make the link too long for mail apps: the link then asks the person to paste composeText' }
+        composeSubject: {type: string}
+        composeText: { type: string, description: 'the order text in full (only in the Compose answer)' }
         estimate: { $ref: '#/components/schemas/Money' }
         quoted: { $ref: '#/components/schemas/Money' }
         invoiced: { $ref: '#/components/schemas/Money' }
@@ -382,5 +385,6 @@ components:
         person: { type: object, description: settings of the current person, properties: { mix: { enum: [deepen_connect, deepen_broaden, ai] }, unreadLimit: {type: integer}, counterpoints: {type: boolean}, takeaways: {type: boolean}, takeawaysToAi: { type: boolean, description: 'whether any AI (local or not) may read your takeaways; off unless you turn it on' }, fiction: {type: boolean}, weights: { type: object, additionalProperties: {type: number} } } }
         kidsThemes: { type: array, items: { type: object, properties: { theme: {type: string}, enabled: {type: boolean} } } }
         cycle: { type: object, properties: { day: {type: integer}, time: {type: string}, timezone: {type: string} } }
+        order: { type: object, description: 'Where orders go (admins set it): both sealed at rest with a key outside the database (docs/security.md)', properties: { bookshopEmail: { type: [string, 'null'] }, deliveryAddress: { type: [string, 'null'], maxLength: 300, writeOnly: true, description: 'never sent back; only in a Compose text' }, hasDelivery: { type: boolean, readOnly: true }, canSeal: { type: boolean, readOnly: true, description: 'false under HomersLab without SHELF_SEALING_KEY' } } }
         mail: { type: object, description: 'IMAP mailbox that receives only the forwarded bookshop mail (ADR 0007); its app password is a secret, never in the API', properties: { host: {type: string}, port: { type: integer, default: 993 }, user: {type: string}, folder: { type: string, default: INBOX }, configured: { type: boolean, readOnly: true } } }
     ShareToken: { type: object, required: [id, label, createdAt], properties: { id: {type: string}, label: {type: string}, createdAt: {type: string}, lastUsedAt: { type: [string, 'null'] }, revoked: {type: boolean} } }

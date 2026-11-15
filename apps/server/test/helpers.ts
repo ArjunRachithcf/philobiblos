@@ -11,6 +11,8 @@ import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 
 export const ORIGIN = 'http://localhost:8080';
+/** A sealing key for tests (32 bytes, base64); never a real one. */
+export const TEST_SEALING_KEY = Buffer.alloc(32, 7).toString('base64');
 
 export interface Schema { type?: string | string[]; enum?: unknown[]; pattern?: string; required?: string[]; properties?: Record<string, Schema>; items?: Schema; $ref?: string; allOf?: Schema[] }
 export interface Op { operationId: string; security?: Record<string, string[]>[]; parameters?: Param[]; requestBody?: { content: Record<string, { schema: Schema }> }; responses: Record<string, { content?: Record<string, { schema: Schema }> }> }
@@ -70,6 +72,7 @@ export const isPublic = (o: { op: Op }) => security(o).length === 0;
 const PARAMS: Record<string, Record<string, string>> = {
   getBrain: { personId: 'p_alex' }, reviewLink: { fromBook: 'b_ledger', toBook: 'b_tide' }, reviewBookIdea: { bookId: 'b_tide', ideaId: 'i_markets' }, editIdea: { ideaId: 'i_markets' },
   undoMerge: { mergeId: 'm_old' },
+  getOrder: { id: 'o_old' },
   renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
@@ -80,6 +83,7 @@ const BODIES: Record<string, unknown> = {
   bulkBacklog: { ids: ['p_alex.b_tide'], action: 'reopen' },
   reviewLink: { state: 'confirmed' }, reviewBookIdea: { state: 'confirmed' }, editIdea: { name: 'Markets and value' },
   addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
+  setMonthBudget: { min: 10000, max: 15000 }, changePicks: { recompute: true }, createOrderDraft: { month: '2026-12' },
 };
 
 export function request(o: SpecOp) {
@@ -138,6 +142,8 @@ export function household(): Db {
   db.insert(t.bookIdea).values({ bookId: 'b_tide', ideaId: 'i_markets', layer: 'core', confidence: 0.5, state: 'proposed' }).run();
   db.insert(t.idea).values({ id: 'i_old', name: 'Prices', mergedInto: 'i_markets' }).run();
   db.insert(t.ideaMerge).values({ id: 'm_old', ideaId: 'i_old', intoId: 'i_markets', mergedBy: 'p_alex', mergedAt: now }).run();
+  db.insert(t.order).values({ id: 'o_old', month: '2026-01', status: 'closed', createdAt: now }).run();
+  db.insert(t.orderLine).values({ orderId: 'o_old', bookId: 'b_ledger', forPerson: 'p_alex', estimateC: 3000, state: 'delivered' }).run();
   for (const id of ['pk1', 'pk2']) {
     db.insert(t.passkey).values({ id, personId: 'p_alex', publicKey: Buffer.from([1]), label: id, createdAt: now }).run();
   }

@@ -8,7 +8,7 @@ shared posts, PDFs, videos and web pages it did not write. Security comes before
 | Asset | Where | Why it matters |
 |---|---|---|
 | People, kids' names and birth years, reading and takeaways | SQLite | private to the household; kids especially |
-| Delivery address | `sealed_secret`, key outside the database | physical address |
+| Delivery address, the bookshop's address | `sealed_secret` (AES-256-GCM, bound to its name), key outside the database: `SHELF_SEALING_KEY` or `SHELF_SEALING_KEY_FILE`; standalone makes `sealing.key` (0600) in the data folder | physical address; where orders go |
 | IMAP app password of the Shelf-only mailbox | secret (env/file) | reads the bookshop's mail |
 | Claude API key (if opted in) | secret (env/file) | costs money, sends data out |
 | Share tokens | hashed in `share_token` | anyone holding one can drop shares into a person's Inbox |
@@ -30,6 +30,7 @@ shared posts, PDFs, videos and web pages it did not write. Security comes before
 | **A malicious book page** (price lookup, Open Library) | oversized or script-laden pages, decompression bombs, redirects elsewhere | allowlisted hosts in one HTTP client; size/time limits; parsed as text; covers re-encoded by the worker |
 | **Someone with a copy of the database** (a backup) | read the address | sealed with a key that is not in the database or its backup |
 
+| **Whoever writes the order mail** (Compose) | add recipients or headers through the bookshop's address; make Shelf send mail | Shelf never sends mail: Compose is a `mailto:` the person opens; the address must be one plain address (no `?`, `&`, `%`, commas, spaces or line breaks), and the text never holds a card number (`month/order-mail.ts`); the delivery address is write-only in Settings and appears only in the Compose text |
 | **Another website the person visits** | make the browser change something in Shelf (CSRF) | SameSite=Strict session cookie; every change must carry Shelf's own `Origin`; CSP `frame-ancestors 'none'` |
 | **Whoever reads Shelf's data folder** | the setup link | the same person could replace the database; the link works once, for 24 hours, and only while no admin can sign in |
 
