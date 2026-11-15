@@ -94,15 +94,6 @@ export const brain: S['Brain'] = {
   edges: [{ a: 'i_markets', b: 'i_care', weight: 1, via: ['b_unpaid'], kind: 'read' }],
 };
 
-export const reading: S['Reading'] = { status: 'read', feedback: null, takeaway: 'Prices leave out most of what matters.', finishedAt: '2026-07-20' };
-
-export const library = (personId: string): S['Library'] => ({
-  person: personId === kid.id ? kid : alex,
-  books: [{ book: longTide, reading, ideas: ['Markets and value'] }],
-  stats: { read: 1, reading: 0, unreadPile: 2, unreadLimit: 6, takeaways: 1 },
-  themes: [{ theme: 'Courage & resilience', books: 0, loved: 0 }],
-});
-
 export const inbox: S['InboxItem'][] = [{
   id: 'in_share1',
   kind: 'share',
@@ -121,7 +112,7 @@ export const settings: S['Settings'] = {
   adultPicks: 2,
   newAuthorsOnly: true,
   ai: { provider: 'ollama', model: 'llama3.2-vision', ollamaUrl: 'http://ollama:11434', leaves: [], jobs: { read: true, link: true, suggest: true, explain: true, wildcards: true } },
-  person: { mix: 'deepen_connect', unreadLimit: 6, counterpoints: true, takeaways: true, takeawaysToClaude: false, fiction: false, weights: {} },
+  person: { mix: 'deepen_connect', unreadLimit: 4, counterpoints: true, takeaways: true, takeawaysToAi: false, fiction: false, weights: {} },
   kidsThemes: [{ theme: 'Friendship', enabled: true }],
   cycle: { day: 1, time: '20:17', timezone: 'Europe/Zurich' },
   mail: { host: '', port: 993, user: '', folder: 'INBOX', configured: false },

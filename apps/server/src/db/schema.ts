@@ -263,6 +263,9 @@ export const aiRun = sqliteTable('ai_run', {
   startedAt: text('started_at').notNull(),
   finishedAt: text('finished_at'),
   error: text('error'),
+  // Whose takeaways were in the input (null: nobody's). Turning takeawaysToAi off deletes these runs and what they
+  // proposed (src/library/ai-context.ts).
+  takeawaysOf: text('takeaways_of').references(() => person.id, { onDelete: 'cascade' }),
 });
 
 export const jobRun = sqliteTable('job_run', {

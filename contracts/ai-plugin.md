@@ -39,5 +39,6 @@ Prompts are versioned files in `packages/ai/prompts/<job>.v<N>.md`. Every call s
 version, input hash, output, cost. Identical input hash + prompt version reuses the stored output (cache).
 
 Privacy: with Ollama nothing leaves the server. With Claude (opt-in), only book metadata, idea names and shared images
-leave it; a person's takeaways go only if that person turns on `takeawaysToClaude` (off by default). Settings shows
+leave it. A person's takeaways reach no AI, Ollama included, unless that person turns on `takeawaysToAi` (off by
+default; `apps/server/src/library/ai-context.ts` is the one place that hands them out). Settings shows
 this list (`Settings.ai.leaves`) before the opt-in and while Claude is on. Names of people and kids never leave.

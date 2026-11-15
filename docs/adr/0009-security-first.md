@@ -11,7 +11,7 @@ Status: **Accepted** · 2026-11-15
 - **AI output is data only.** It is validated against `contracts/ai/*.schema.json`, stored, and shown as plain text; it
   never triggers an action, a request or a URL fetch, and never sets scores (ADR 0004). Inputs from mail, shares and web
   pages are marked untrusted in prompts. Ollama is the default provider; Claude is an explicit opt-in that shows what
-  leaves; takeaways go to Claude only if that person turns it on.
+  leaves; takeaways go to no AI (local or not) unless that person turns it on.
 - **Phone-share tokens** are per person, write-only (`POST /api/shares` only), stored as a SHA-256 hash, shown once,
   listed by label and revocable.
 - **Identity.** In `homerslab` mode the `X-HomersLab-Person` header is trusted only from the configured proxy address

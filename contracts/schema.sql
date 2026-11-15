@@ -1,4 +1,4 @@
--- Shelf database schema v2 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Shelf database schema v3 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -225,7 +225,8 @@ CREATE TABLE sealed_secret (               -- the delivery address (ADR 0009); t
 CREATE TABLE ai_run (
   id TEXT PRIMARY KEY NOT NULL, job TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
   prompt_version TEXT NOT NULL, input_hash TEXT NOT NULL, output_json TEXT, cost_c INTEGER,
-  started_at TEXT NOT NULL, finished_at TEXT, error TEXT
+  started_at TEXT NOT NULL, finished_at TEXT, error TEXT,
+  takeaways_of TEXT REFERENCES person(id) ON DELETE CASCADE -- whose takeaways the input held; purged when they opt out
 );
 
 CREATE TABLE job_run (

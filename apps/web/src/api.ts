@@ -8,6 +8,9 @@ export type Me = components['schemas']['Me'];
 export type Passkey = components['schemas']['Passkey'];
 export type PersonInput = components['schemas']['PersonInput'];
 export type PersonPatch = components['schemas']['PersonPatch'];
+export type Library = components['schemas']['Library'];
+export type Reading = components['schemas']['Reading'];
+export type Settings = components['schemas']['Settings'];
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); }

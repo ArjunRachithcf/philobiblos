@@ -429,6 +429,7 @@ export interface paths {
             };
             cookie?: never;
         };
+        /** A person's library: owned books of their audience and every book they have a status for. Another adult's takeaways are never included. */
         get: operations["getLibrary"];
         put?: never;
         post?: never;
@@ -449,6 +450,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
+        /** Your own status and takeaway, or a kid's status and feedback (adults act for kids). Not another adult's (403). */
         put: operations["setReading"];
         post?: never;
         delete?: never;
@@ -605,6 +607,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** M1: `person` (your own settings) is stored. The household parts are admins' (403 for others) and answer 400 until their screens store them */
         patch: operations["patchSettings"];
         trace?: never;
     };
@@ -822,16 +825,24 @@ export interface components {
             takeaway?: string | null;
             finishedAt?: string | null;
         };
-        ReadingUpdate: components["schemas"]["Reading"];
+        ReadingUpdate: {
+            /** @enum {unknown} */
+            status?: "to_read" | "reading" | "read" | "abandoned";
+            /** @enum {unknown} */
+            feedback?: "loved" | "meh" | "not_yet" | null;
+            takeaway?: string | null;
+            finishedAt?: string | null;
+        };
         Library: {
-            person?: components["schemas"]["Person"];
-            books?: {
-                book?: components["schemas"]["BookRef"];
-                reading?: components["schemas"]["Reading"];
+            person: components["schemas"]["Person"];
+            books: {
+                book: components["schemas"]["BookRef"];
+                reading: components["schemas"]["Reading"];
                 ideas?: string[];
-                theme?: string;
+                /** @description kids' books: one or two themes (spec §3) */
+                themes?: string[];
             }[];
-            stats?: {
+            stats: {
                 read?: number;
                 reading?: number;
                 unreadPile?: number;
@@ -925,8 +936,8 @@ export interface components {
                 unreadLimit?: number;
                 counterpoints?: boolean;
                 takeaways?: boolean;
-                /** @description off unless the person turns it on */
-                takeawaysToClaude?: boolean;
+                /** @description whether any AI (local or not) may read your takeaways; off unless you turn it on */
+                takeawaysToAi?: boolean;
                 fiction?: boolean;
                 weights?: {
                     [key: string]: number;
@@ -1974,6 +1985,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such person */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     setReading: {
@@ -1986,7 +2006,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": components["schemas"]["ReadingUpdate"];
             };
@@ -2001,8 +2021,26 @@ export interface operations {
                     "application/json": components["schemas"]["Reading"];
                 };
             };
+            /** @description Bad request: a takeaway for a kid, feedback for an adult, or an invalid value */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such person or book */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getInbox: {
@@ -2295,6 +2333,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
