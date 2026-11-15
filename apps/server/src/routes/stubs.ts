@@ -3,7 +3,6 @@
 import type { FastifyInstance } from 'fastify';
 import { and, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import { parseQuery } from '@shelf/contracts';
 import { hashToken, newToken } from '../auth/tokens';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
@@ -18,11 +17,6 @@ export async function stubRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.put<{ Params: { month: string } }>('/month/:month/budget', async (req) => ex.monthPlan(req.params.month));
   app.post<{ Params: { month: string } }>('/month/:month/picks', async (req) => ex.monthPlan(req.params.month));
 
-  app.get<{ Querystring: { q?: string } }>('/backlog', async (req) => ex.backlogPage(parseQuery(req.query.q ?? 'is:open sort:score').errors));
-  app.post('/backlog', async (_req, reply) => reply.code(201).send(ex.candidate));
-  app.post('/backlog/bulk', async () => ({}));
-  app.get('/backlog/saved-filters', async () => ex.savedFilters);
-  app.post('/backlog/saved-filters', async (_req, reply) => reply.code(201).send());
 
   app.get('/people/:personId/brain', async () => ex.brain);
   app.put('/links/:fromBook/:toBook', async () => ({}));

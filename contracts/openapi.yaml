@@ -118,17 +118,18 @@ paths:
     get:
       tags: [backlog]
       operationId: listBacklog
-      summary: GitHub-style filtered list (grammar in contracts/backlog-query.md)
+      summary: 'GitHub-style filtered list (grammar in contracts/backlog-query.md), scored by packages/scoring. The backlog is shared: every adult sees every candidate.'
       parameters:
         - { name: q, in: query, schema: { type: string, default: 'is:open sort:score' }, example: 'is:open is:adult move:deepen price:<30 sort:score' }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
       responses:
+        '400': { description: 'A q over 500 characters or a limit outside 1 to 200 (bad qualifiers are queryErrors, not 400)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '200':
           description: OK
-          content: { application/json: { schema: { type: object, properties: {
+          content: { application/json: { schema: { type: object, required: [items, counts, facets, nextCursor, queryErrors], properties: {
             items: { type: array, items: { $ref: '#/components/schemas/Candidate' } },
             counts: { type: object, properties: { open: {type: integer}, closed: {type: integer} } },
             facets: { type: object, additionalProperties: { type: array, items: { type: object, properties: { value: {type: string}, count: {type: integer} } } } },
@@ -137,17 +138,19 @@ paths:
     post:
       tags: [backlog]
       operationId: addToBacklog
-      requestBody: { content: { application/json: { schema: { type: object, required: [title], properties: { title: {type: string}, author: {type: string}, isbn13: {type: string}, for: {type: string}, note: {type: string} } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Candidate' } } } } }
+      summary: 'A book by hand, for yourself or a kid (adults act for kids); another adult''s backlog is theirs (403)'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], additionalProperties: false, properties: { title: { type: string, maxLength: 300 }, author: { type: string, maxLength: 200 }, isbn13: { type: string, pattern: '^97[89]\d{10}$' }, for: { type: string, description: 'a handle, or me (the default)' } } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No one has that handle, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: Already in that backlog, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Candidate' } } } } }
   /backlog/bulk:
     post:
       tags: [backlog]
       operationId: bulkBacklog
-      requestBody: { content: { application/json: { schema: { type: object, required: [ids, action], properties: { ids: { type: array, items: {type: string} }, action: { enum: [not_for_me, snooze, reopen, add_to_month] }, months: {type: integer} } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } }
+      summary: 'All or nothing, on your own candidates and the kids'' (403 if any is another adult''s). add_to_month arrives with This month (M2) and answers 400 until then.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [ids, action], properties: { ids: { type: array, minItems: 1, maxItems: 200, items: {type: string} }, action: { enum: [not_for_me, snooze, reopen, add_to_month] }, months: { type: integer, minimum: 1, maximum: 24, default: 3 } } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such candidate or person, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [changed], properties: { changed: {type: integer} } } } } } }
   /backlog/saved-filters:
     get: { tags: [backlog], operationId: savedFilters, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { type: object, properties: { id: {type: string}, name: {type: string}, q: {type: string} } } } } } } } }
-    post: { tags: [backlog], operationId: saveFilter, requestBody: { content: { application/json: { schema: { type: object, properties: { name: {type: string}, q: {type: string} } } } } }, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created } } }
+    post: { tags: [backlog], operationId: saveFilter, summary: 'Saves one of your filters (your list starts from the defaults; at most 20)', requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name, q], additionalProperties: false, properties: { name: { type: string, maxLength: 40 }, q: { type: string, maxLength: 500 } } } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: Twenty saved already, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created } } }
 
   /people/{personId}/brain:
     parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
@@ -269,7 +272,7 @@ components:
         addedAt: { type: string, format: date-time }
         price: { $ref: '#/components/schemas/Money' }
         priceIsEstimate: {type: boolean}
-        score: {type: number}
+        score: { type: number, description: 'absent when excluded (an adult candidate over the price limit)' }
         scoreParts: { type: array, items: { $ref: '#/components/schemas/ScorePart' } }
     PickRef: { type: object, required: [bookId, for], properties: { bookId: {type: string}, for: {type: string} } }
     Pick:
@@ -328,7 +331,7 @@ components:
     Settings:
       type: object
       properties:
-        budget: { $ref: '#/components/schemas/Budget' }
+        budget: { allOf: [ { $ref: '#/components/schemas/Budget' } ], description: 'one shared monthly budget (centimes, 0 to 1,000,000, min ≤ max); admins set it; no rollover' }
         adultPicks: {type: integer}
         newAuthorsOnly: {type: boolean}
         ai: { type: object, properties: { provider: { enum: [claude, ollama, none], description: 'ollama for a new household; claude only by explicit opt-in' }, model: {type: string}, ollamaUrl: {type: string}, leaves: { type: array, readOnly: true, items: {type: string}, description: 'what leaves the server with this provider, shown before opting in' }, jobs: { type: object, properties: { read: {type: boolean}, link: {type: boolean}, suggest: {type: boolean}, explain: {type: boolean}, wildcards: {type: boolean} } } } }

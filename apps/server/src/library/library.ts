@@ -23,6 +23,9 @@ export const KIDS_THEMES = [
   'Mindfulness', 'Curiosity & imagination',
 ] as const;
 
+/** A kids' book has one or two themes (spec §3). */
+export const MAX_THEMES = 2;
+
 export class LibraryError extends Error {
   constructor(readonly status: 400 | 403 | 404, message: string) { super(message); }
 }
@@ -65,7 +68,8 @@ export function getLibrary(db: Db, viewerId: string, personId: string): S['Libra
   const themes = new Map<string, string[]>();
   if (ids.length && p.role === 'kid') {
     for (const r of db.select().from(t.bookTheme).where(inArray(t.bookTheme.bookId, ids)).orderBy(t.bookTheme.theme).all()) {
-      themes.set(r.bookId, [...(themes.get(r.bookId) ?? []), r.theme]);
+      const now = themes.get(r.bookId) ?? [];
+      if (now.length < MAX_THEMES) themes.set(r.bookId, [...now, r.theme]); // never more than two (contract maxItems)
     }
   }
   const items = books.map((b): Item => {

@@ -7,6 +7,7 @@ import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { suggestHandle } from '../household/people';
+import { MAX_THEMES } from '../library/library';
 
 export interface SeedCounts {
   people: number; books: number; copies: number; readings: number; offers: number; candidates: number;
@@ -227,6 +228,8 @@ export function importSeed(db: Db, dir: string, now = new Date().toISOString()):
       const theme = themeOfTopic.get((meta.topic ?? '').toLowerCase());
       const b = byTitle.get(n) ?? findBook(n);
       if (!b || !theme) continue;
+      // One or two themes per kids' book (spec §3): a third is not added.
+      if (tx.select({ theme: t.bookTheme.theme }).from(t.bookTheme).where(eq(t.bookTheme.bookId, b)).all().filter((x) => x.theme !== theme).length >= MAX_THEMES) { c.skipped++; continue; }
       const r = tx.insert(t.bookTheme).values({ bookId: b, theme }).onConflictDoNothing().run();
       c.themes += r.changes;
     }

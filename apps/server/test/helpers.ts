@@ -72,6 +72,12 @@ const PARAMS: Record<string, Record<string, string>> = {
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
 };
 
+/** Request bodies that name something real in household() where a sample would be refused. */
+const BODIES: Record<string, unknown> = {
+  bulkBacklog: { ids: ['p_alex.b_tide'], action: 'reopen' },
+  addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
+};
+
 export function request(o: SpecOp) {
   let url = '/api' + o.path;
   const query: Record<string, string> = {};
@@ -84,7 +90,7 @@ export function request(o: SpecOp) {
   let payload: string | undefined;
   const headers: Record<string, string> = { origin: ORIGIN };
   if (content['application/json']) {
-    payload = JSON.stringify(sample(content['application/json'].schema));
+    payload = JSON.stringify(BODIES[o.op.operationId] ?? sample(content['application/json'].schema));
     headers['content-type'] = 'application/json';
   } else if (content['multipart/form-data']) {
     const m = multipart();
@@ -121,6 +127,7 @@ export function household(): Db {
   ]).run();
   const now = new Date().toISOString();
   db.insert(t.book).values({ id: 'b_tide', title: 'The Long Tide of Markets', authorsJson: '["Mira Okafor"]', audience: 'adult', normKey: 'tide', createdAt: now }).run();
+  db.insert(t.candidate).values({ personId: 'p_alex', bookId: 'b_tide', origin: 'wishlist', addedAt: now, touchedAt: now }).run();
   for (const id of ['pk1', 'pk2']) {
     db.insert(t.passkey).values({ id, personId: 'p_alex', publicKey: Buffer.from([1]), label: id, createdAt: now }).run();
   }

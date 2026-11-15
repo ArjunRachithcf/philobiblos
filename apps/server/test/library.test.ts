@@ -221,7 +221,7 @@ describe('the takeaway boundary (architecture)', () => {
 
   it.each([
     ['the takeaway column or field', /\btakeaway\b/],
-    ['a select from the reading table', /\.from\(t\.reading\)|\bfrom\s+reading\b/i],
+    ['a whole-row select from the reading table (it holds the takeaway)', /select\(\)\s*\.from\(t\.reading\)|select\s+\*\s+from\s+reading\b/i],
   ])('nothing else mentions %s', (_n, re) => {
     expect(sources.length).toBeGreaterThan(20);
     const hits = sources.map((f) => relative(root, f)).filter((f) => !ALLOWED.has(f) && re.test(readFileSync(join(root, f), 'utf8')));

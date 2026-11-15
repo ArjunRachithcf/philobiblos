@@ -1,4 +1,4 @@
--- Shelf database schema v3 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Shelf database schema v4 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -165,7 +165,16 @@ CREATE TABLE candidate (
   score       REAL,                        -- cache; recomputed by packages/scoring
   score_parts_json TEXT,
   move        TEXT,
+  snoozed_until TEXT,                      -- a snoozed candidate opens again after this
   PRIMARY KEY (person_id, book_id)
+);
+
+CREATE TABLE saved_filter (                -- the Backlog's saved filters, per person (contracts/backlog-query.md)
+  id          TEXT PRIMARY KEY NOT NULL,
+  person_id   TEXT NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  q           TEXT NOT NULL,
+  created_at  TEXT NOT NULL
 );
 
 -- Orders -----------------------------------------------------------------

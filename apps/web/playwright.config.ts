@@ -11,8 +11,8 @@ export default defineConfig({
   reporter: [['list']],
   use: { trace: 'retain-on-failure', locale: 'en-GB', timezoneId: 'Europe/Zurich' },
   projects: [
-    { name: 'chromium', testIgnore: /library/, use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${PORT}` } },
-    { name: 'chromium-seeded', testMatch: /library/, use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${SEEDED_PORT}` } },
+    { name: 'chromium', testIgnore: /seeded/, use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${PORT}` } },
+    { name: 'chromium-seeded', testMatch: /seeded/, use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${SEEDED_PORT}` } },
   ],
   webServer: [
     { command: `node e2e/serve.mjs ${PORT}`, url: `http://localhost:${PORT}/api/health`, reuseExistingServer: false, stdout: 'ignore', stderr: 'pipe' },
