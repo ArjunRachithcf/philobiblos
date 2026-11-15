@@ -14,6 +14,7 @@ Shelf plans and buys. It is not an ebook reader or a daily reading log; Kavita, 
 ## 2. People
 
 - **Household**: from HomersLab (or the standalone household). Roles: admin, adult, kid. Kids have a birth year.
+  Sign-in: passkeys in standalone, HomersLab's sign-in under HomersLab (ADR 0010). Kids never sign in.
 - **Adults** each have their own brain, picks and reading status. One shared monthly budget.
 - **Kids** each have a profile: age band and their own emotional map. Adults give feedback for them.
 - **Everyone adult** can share posts to the Inbox, add to the backlog and mark orders.

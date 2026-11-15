@@ -18,9 +18,9 @@ shared posts, PDFs, videos and web pages it did not write. Security comes before
 
 | Actor | Could try | Controls |
 |---|---|---|
-| **A household adult** | read another adult's takeaways, change their settings | per-person routes act on the signed-in person; shared data (budget, backlog) is shared by design; admins manage people |
+| **A household adult** | read another adult's takeaways, change their settings, add or remove people | per-person routes act on the signed-in person; shared data (budget, backlog) is shared by design; admins manage people; the last admin cannot be removed or demoted |
 | **A kid** | sign in, change picks or feedback | `audience: household`: kids have no access; adults act for them |
-| **A stranger on the LAN** | reach the app, forge `X-HomersLab-Person` | standalone binds `127.0.0.1` by default; in homerslab mode the header counts only from the configured proxy address; no passwords to guess (passkeys) |
+| **A stranger on the LAN** | reach the app, forge `X-HomersLab-Person`, guess a sign-in | standalone binds `127.0.0.1` by default; in homerslab mode the headers count only from the configured proxy address; passkeys only, nothing to guess; sign-in steps rate limited; setup and invite links one-time, hashed, in the fragment (ADR 0010) |
 | **A stranger on the internet** | the same, through whatever exposes Shelf | Shelf is never public by itself (`public: false`); HomersLab's proxy and sign-in are in front |
 | **Whoever holds a share token** (lost phone, leaked Shortcut) | post shares; read anything | write-only to `POST /api/shares`; revocable; hashed at rest; shown once |
 | **Hostile mail** (spoofed "bookshop" mail, a forwarded phishing mail) | fake quotes or invoices, links to click, malicious PDFs | sender + DKIM/ARC checks before any effect; unverified mail changes nothing; links never followed; PDFs in the media worker; size limits |
@@ -29,6 +29,9 @@ shared posts, PDFs, videos and web pages it did not write. Security comes before
 | **A compromised or manipulated AI provider, prompt injection** | make Shelf act, fetch URLs, leak data, skew picks | AI output is schema-validated data only; no tool use, no URLs fetched from output; scores come from `packages/scoring`; people confirm links; Ollama by default, Claude only by opt-in with a visible list of what leaves |
 | **A malicious book page** (price lookup, Open Library) | oversized or script-laden pages, decompression bombs, redirects elsewhere | allowlisted hosts in one HTTP client; size/time limits; parsed as text; covers re-encoded by the worker |
 | **Someone with a copy of the database** (a backup) | read the address | sealed with a key that is not in the database or its backup |
+
+| **Another website the person visits** | make the browser change something in Shelf (CSRF) | SameSite=Strict session cookie; every change must carry Shelf's own `Origin`; CSP `frame-ancestors 'none'` |
+| **Whoever reads Shelf's data folder** | the setup link | the same person could replace the database; the link works once, for 24 hours, and only while no admin can sign in |
 
 ## Rules that follow
 

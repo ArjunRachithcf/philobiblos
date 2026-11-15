@@ -1,0 +1,25 @@
+/* Shelf's own layout, on HomersLab's tokens (design/tokens.css). Never edit design/; add here. */
+.auth { width: 100%; max-width: 440px; margin: 0 auto; padding: var(--space-16) var(--gutter) var(--space-10); display: grid; gap: var(--space-5); align-content: start; }
+.auth-sub { color: var(--text-2); font-size: var(--fs-headline); }
+.auth .page-head { padding: 0; }
+.footnote { font-size: var(--fs-sub); color: var(--text-2); }
+code { font-family: var(--mono); font-size: 0.95em; }
+h1[tabindex="-1"]:focus { outline: none; }
+.bar { position: sticky; top: 0; z-index: 10; }
+.bar-inner { display: flex; align-items: center; gap: var(--space-4); height: var(--bar-height); }
+.bar nav { flex: 1; display: flex; gap: var(--space-2); }
+.brand-name { font-weight: var(--weight-bold); font-size: var(--fs-headline); color: var(--text); text-decoration: none; }
+.nav-link { color: var(--text); text-decoration: none; padding: 6px 10px; border-radius: var(--radius-inner); font-weight: var(--weight-medium); }
+.nav-link:hover { background: var(--hover); }
+.nav-link[aria-current="page"] { color: var(--accent-text, var(--accent)); background: var(--fill); }
+.skip:focus { position: fixed; top: 8px; left: 8px; width: auto; height: auto; clip: auto; padding: 8px 12px; background: var(--surface); z-index: 20; border-radius: var(--radius-inner); }
+ul.group { list-style: none; margin: 0; padding: 0; }
+.row .avatar { flex: none; }
+.av-admin { background: #cfe7e2; color: #12423d; }
+.av-adult { background: #e3d9f5; color: #4a2a75; }
+.av-kid { background: #fde7c8; color: #6b3d00; }
+.card:not(.stack) > .card-title { margin-bottom: var(--space-3); }
+@media (max-width: 560px) {
+  .row:has(.row-trail .btn) { flex-wrap: wrap; }
+  .row:has(.row-trail .btn) .row-trail { flex-basis: 100%; justify-content: flex-end; flex-wrap: wrap; }
+}

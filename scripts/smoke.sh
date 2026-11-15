@@ -38,6 +38,7 @@ SHELF_IMAGE="$tag" SHELF_PORT="$port" SHELF_UID="$(id -u)" SHELF_GID="$(id -g)" 
   docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" up -d --no-build
 wait_health "http://127.0.0.1:$port/api/health" standalone
 test -s "$work/data/shelf.sqlite"
+grep -q "^http://localhost:$port/setup#" "$work/data/setup-link.txt"
 
 # 2. HomersLab: the manifest's image settings (port, volume, env).
 env_args=()
@@ -45,7 +46,7 @@ while IFS= read -r line; do env_args+=(-e "$line"); done < <(
   awk '/^env:/{f=1;next} f&&/^[^ ]/{f=0} f&&/^  [A-Z_]+:/{sub(/^  /,""); sub(/: */,"="); print}' contracts/homerslab-app.yaml)
 [ "${#env_args[@]}" -gt 0 ] || { echo "no env in the manifest" >&2; exit 1; }
 port2=$((port + 1))
-docker run -d --name "$hl" "${env_args[@]}" -e SHELF_TRUSTED_PROXY=127.0.0.1 \
+docker run -d --name "$hl" "${env_args[@]}" -e SHELF_TRUSTED_PROXY=127.0.0.1 -e SHELF_ORIGIN=https://shelf.example.org \
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
   -v "$hl-data:/data" -p "127.0.0.1:$port2:8080" "$tag" >/dev/null
 wait_health "http://127.0.0.1:$port2/api/health" homerslab

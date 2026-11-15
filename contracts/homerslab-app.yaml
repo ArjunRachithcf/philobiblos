@@ -25,6 +25,7 @@ secrets:
   - { key: SHELF_IMAP_PASSWORD, optional: true, description: App password of the Shelf-only mailbox (IMAP over TLS, read-only) }
   - { key: ANTHROPIC_API_KEY, optional: true, description: Claude provider, only after an explicit opt-in in Settings }
 config:
+  - { key: SHELF_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
   - { key: SHELF_IMAP_HOST, optional: true, description: IMAP host of the Shelf-only mailbox (port 993, TLS only) }
   - { key: SHELF_IMAP_USER, optional: true, description: Its user name }
   - { key: OLLAMA_URL, optional: true, description: The local Ollama (the default AI provider) }
