@@ -12,15 +12,27 @@ env:
   SHELF_MODE: homerslab
   SHELF_DATA_DIR: /data
   SHELF_TZ: Europe/Zurich
+  # Not set here: HomersLab gives SHELF_ORIGIN, SHELF_TRUSTED_PROXY (the edge's address on the app network; HomersLab
+  # ADR 0020's per-app firewall makes it mean something) and, once its edge keeps identity.edge's promise,
+  # SHELF_EDGE_IDENTITY. Shelf refuses to start in homerslab mode without all three (ADR 0010).
 identity:
-  forwarded_header: X-HomersLab-Person     # trusted only from the proxy address HomersLab configures (SHELF_TRUSTED_PROXY)
-  household_api: true                      # reads people, roles and kids' birth years
-audience: household                        # adults full access; kids: no access (adults act for them)
+  # Required of HomersLab, not set by Shelf: the edge deletes every X-HomersLab-* header a client sends and sets the
+  # three below itself (HomersLab #236). HomersLab answers by setting SHELF_EDGE_IDENTITY to this value.
+  edge: homerslab-v1
+  # All three are trusted only from SHELF_TRUSTED_PROXY; a person is added to Shelf the first time HomersLab sends
+  # them, with exactly the role HomersLab sends (admin | adult | kid; anything else: 403), and their name and role
+  # follow HomersLab on every request.
+  forwarded_header: X-HomersLab-Person     # stable person id
+  forwarded_name_header: X-HomersLab-Name
+  forwarded_role_header: X-HomersLab-Role  # admin | adult | kid
+  household_api: true                      # later: kids' birth years (not yet defined by HomersLab)
+audience: adults                           # adults full access; kids: no access (adults act for them)
 secrets:
   - { key: SHELF_SEALING_KEY, file: true, description: Key that seals the delivery address (outside the database) }
   - { key: SHELF_IMAP_PASSWORD, optional: true, description: App password of the Shelf-only mailbox (IMAP over TLS, read-only) }
   - { key: ANTHROPIC_API_KEY, optional: true, description: Claude provider, only after an explicit opt-in in Settings }
 config:
+  - { key: SHELF_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
   - { key: SHELF_IMAP_HOST, optional: true, description: IMAP host of the Shelf-only mailbox (port 993, TLS only) }
   - { key: SHELF_IMAP_USER, optional: true, description: Its user name }
   - { key: OLLAMA_URL, optional: true, description: The local Ollama (the default AI provider) }

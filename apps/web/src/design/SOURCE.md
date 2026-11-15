@@ -1,0 +1,9 @@
+# The HomersLab design system (copied, never edited)
+
+These files are copied unchanged from HomersLab (Apache-2.0), `prototypes/design/` at commit
+`a9a3d6d0c1fc43993b684b63638e9f78527728e6` (github.com/ArjunRachithcf/homerslab). To update them, copy the files again from a newer commit and
+change the commit here; Shelf's own styles live in `apps/web/src/app.css`, never in these files.
+
+- `tokens.css`, `components.css`: tokens and components (glass, groups, rows, buttons, fields, notices)
+- `motion.js`: screen changes and springs (`window.HL`); `icons.js`: icons and the mark (`window.I`)
+- `mark.svg`; `fonts/inter.woff2` (Inter, SIL Open Font License 1.1, `fonts/OFL-inter.txt`)

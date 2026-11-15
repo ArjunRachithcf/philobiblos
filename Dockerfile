@@ -23,6 +23,8 @@ COPY --from=build /out/dist ./dist
 COPY --from=build /out/drizzle ./drizzle
 COPY --from=build /out/web ./web
 COPY LICENSE NOTICE ./
+# `docker exec <container> shelf recover <admin handle>` (ADR 0010)
+RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/shelf && chmod 755 /usr/local/bin/shelf
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME /data

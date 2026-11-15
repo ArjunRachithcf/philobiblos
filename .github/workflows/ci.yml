@@ -40,7 +40,7 @@ jobs:
       - name: Generated files match contracts/
         run: |
           pnpm gen:api
-          pnpm --filter @shelf/server exec tsx scripts/schema-to-migration.ts
+          pnpm --filter @shelf/server exec drizzle-kit generate --name check
           git -c safe.directory='*' diff --exit-code
       - run: pnpm typecheck
       - run: pnpm lint
@@ -48,6 +48,27 @@ jobs:
       - run: pnpm test:contract
       - name: The importer runs on the sample seed
         run: SHELF_DATA_DIR=$RUNNER_TEMP/seed-data pnpm seed seed-sample
+
+  e2e:
+    name: End-to-end (Chromium, real passkeys, axe)
+    runs-on: ubuntu-24.04
+    needs: check
+    container:
+      image: node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
+    env:
+      CI: "true"
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - name: git
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm --filter @shelf/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @shelf/web e2e
 
   smoke:
     name: Image starts standalone and with the HomersLab manifest
