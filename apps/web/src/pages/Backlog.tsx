@@ -268,7 +268,7 @@ function MenuButton({ label, name, items, onPick, checked, empty = 'Nothing here
 
   useEffect(() => {
     if (!open) return;
-    const i = first.current === 'last' ? items.length - 1 : Math.max(0, items.findIndex((x) => x.value === checked));
+    const i = first.current === 'last' ? Math.max(0, items.length - 1) : Math.max(0, items.findIndex((x) => x.value === checked));
     refs.current[i]?.focus();
     const away = (e: PointerEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
     document.addEventListener('pointerdown', away);
@@ -300,7 +300,13 @@ function MenuButton({ label, name, items, onPick, checked, empty = 'Nothing here
       </button>
       {open && (
         <div className="menu is-open bl-menu" role="menu" id={`${id}-m`} aria-labelledby={`${id}-b`}>
-          {items.length === 0 ? <p className="menu-label">{empty}</p> : items.map((it, i) => (
+          {/* An empty menu still holds one item (disabled), so it has focus to give and Escape to hear. */}
+          {items.length === 0 ? (
+            <button ref={(el) => { refs.current[0] = el; }} type="button" role="menuitem" aria-disabled="true" tabIndex={-1} className="menu-item"
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } else if (e.key === 'Tab') close(false); else if (e.key !== 'Enter' && e.key !== ' ') e.preventDefault(); }}>
+              {empty}
+            </button>
+          ) : items.map((it, i) => (
             <button key={it.value} ref={(el) => { refs.current[i] = el; }} type="button" role={role} tabIndex={-1} className="menu-item"
               {...(role === 'menuitemradio' ? { 'aria-checked': it.value === checked } : {})}
               onClick={() => { close(); onPick(it.value); }} onKeyDown={(e) => onMenuKey(e, i)}>

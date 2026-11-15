@@ -81,3 +81,4 @@ dialog.lib-sheet::backdrop { background: var(--scrim); -webkit-backdrop-filter: 
 }
 .bl-manage { flex-basis: 100%; }
 .bl-manage-row .row-main { gap: 4px; }
+.bl-menu .menu-item[aria-disabled="true"] { color: var(--text-2); cursor: default; }
