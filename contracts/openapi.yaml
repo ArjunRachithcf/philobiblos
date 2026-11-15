@@ -226,7 +226,7 @@ paths:
 
   /settings:
     get: { tags: [settings], operationId: getSettings, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } } } }
-    patch: { tags: [settings], operationId: patchSettings, summary: 'M1: `person` (your own settings) is stored; the household parts follow with their screens', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
+    patch: { tags: [settings], operationId: patchSettings, summary: 'M1: `person` (your own settings) is stored. The household parts are admins'' (403 for others) and answer 400 until their screens store them', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
   /jobs/{job}/run:
     post: { tags: [system], operationId: runJob, parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, ai_suggest] } }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started } } }
 
@@ -300,7 +300,7 @@ components:
       required: [person, books, stats]
       properties:
         person: { $ref: '#/components/schemas/Person' }
-        books: { type: array, items: { type: object, required: [book, reading], properties: { book: { $ref: '#/components/schemas/BookRef' }, reading: { $ref: '#/components/schemas/Reading' }, ideas: { type: array, items: {type: string} }, theme: {type: string} } } }
+        books: { type: array, items: { type: object, required: [book, reading], properties: { book: { $ref: '#/components/schemas/BookRef' }, reading: { $ref: '#/components/schemas/Reading' }, ideas: { type: array, items: {type: string} }, themes: { type: array, maxItems: 2, items: {type: string}, description: 'kids'' books: one or two themes (spec §3)' } } } }
         stats: { type: object, properties: { read: {type: integer}, reading: {type: integer}, unreadPile: {type: integer}, unreadLimit: {type: integer}, takeaways: {type: integer} } }
         themes: { type: array, items: { type: object, properties: { theme: {type: string}, books: {type: integer}, loved: {type: integer} } } }
     InboxItem:

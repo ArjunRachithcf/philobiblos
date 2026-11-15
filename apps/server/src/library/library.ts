@@ -27,7 +27,7 @@ export class LibraryError extends Error {
   constructor(readonly status: 400 | 403 | 404, message: string) { super(message); }
 }
 
-interface Item { book: S['BookRef']; reading: S['Reading']; ideas?: string[]; theme?: string }
+interface Item { book: S['BookRef']; reading: S['Reading']; ideas?: string[]; themes?: string[] }
 
 const ORDER: Record<Status, number> = { reading: 0, to_read: 1, read: 2, abandoned: 3 };
 
@@ -61,11 +61,13 @@ export function getLibrary(db: Db, viewerId: string, personId: string): S['Libra
   const books = ids.length ? db.select().from(t.book).where(inArray(t.book.id, ids)).all() : [];
 
   const ideas = ideasOf(db, ids);
-  const themes = new Map<string, string>();
+  // A kids' book has one or two themes (spec §3); it counts under each.
+  const themes = new Map<string, string[]>();
   if (ids.length && p.role === 'kid') {
-    for (const r of db.select().from(t.bookTheme).where(inArray(t.bookTheme.bookId, ids)).all()) if (!themes.has(r.bookId)) themes.set(r.bookId, r.theme);
+    for (const r of db.select().from(t.bookTheme).where(inArray(t.bookTheme.bookId, ids)).orderBy(t.bookTheme.theme).all()) {
+      themes.set(r.bookId, [...(themes.get(r.bookId) ?? []), r.theme]);
+    }
   }
-
   const items = books.map((b): Item => {
     const r = readings.get(b.id);
     const reading: S['Reading'] = {
@@ -76,7 +78,7 @@ export function getLibrary(db: Db, viewerId: string, personId: string): S['Libra
     };
     return {
       book: bookRef(b), reading,
-      ...(p.role === 'kid' ? { theme: themes.get(b.id) } : { ideas: ideas.get(b.id) ?? [] }),
+      ...(p.role === 'kid' ? { themes: themes.get(b.id) ?? [] } : { ideas: ideas.get(b.id) ?? [] }),
     };
   }).sort((a, b) => ORDER[a.reading.status!] - ORDER[b.reading.status!]
     || (b.reading.finishedAt ?? '').localeCompare(a.reading.finishedAt ?? '')
@@ -94,7 +96,7 @@ export function getLibrary(db: Db, viewerId: string, personId: string): S['Libra
   if (p.role === 'kid') {
     // The emotional map: books per theme (spec §6 counts a loved book twice when thinning a theme; the bar shows both).
     out.themes = KIDS_THEMES.map((theme) => {
-      const inTheme = items.filter((i) => i.theme === theme);
+      const inTheme = items.filter((i) => i.themes?.includes(theme));
       return { theme, books: inTheme.length, loved: inTheme.filter((i) => i.reading.feedback === 'loved').length };
     });
   }
@@ -154,8 +156,9 @@ export function setReading(db: Db, viewerId: string, personId: string, bookId: s
   // A kid's loved or meh book has been read, whatever its status was.
   const status = u.status ?? (u.feedback === 'loved' || u.feedback === 'meh' ? 'read' : before?.status ?? 'to_read');
   const today = now.toISOString().slice(0, 10);
+  // Finished is a fact of `read` only: leaving it clears the date (it feeds the sort and spec §6's `stale`).
   const finishedAt = u.finishedAt !== undefined ? u.finishedAt
-    : status === 'read' ? (before?.status === 'read' ? before.finishedAt : today) : before?.finishedAt ?? null;
+    : status === 'read' ? (before?.status === 'read' ? before.finishedAt : today) : null;
   const row = {
     personId: p.id, bookId, status,
     feedback: u.feedback !== undefined ? u.feedback : before?.feedback ?? null,

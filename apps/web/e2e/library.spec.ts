@@ -24,14 +24,28 @@ test('the library: statuses, a takeaway, another adult\'s and a kid\'s', async (
   await expect(status.getByRole('radio', { name: 'Read', exact: true })).toHaveAttribute('aria-checked', 'true');
   await expectAccessible(page, 'library');
 
-  // keyboard: arrows move along the status like a native radio group
+  // keyboard (manual activation): arrows move focus only, past "Read" too; Space chooses; focus stays after the re-sort
   await status.getByRole('radio', { name: 'Read', exact: true }).focus();
   await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowLeft');
+  await expect(status.getByRole('radio', { name: 'To read' })).toBeFocused();
+  await expect(status.getByRole('radio', { name: 'Read', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Space');
   await expect(status.getByRole('radio', { name: 'Reading', exact: true })).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByRole('listitem').filter({ hasText: 'Reading' }).first()).toBeVisible();
+  await expect(status.getByRole('radio', { name: 'Reading', exact: true })).toBeFocused();
+  // stepping past "Read" to "Stopped" and back chooses nothing and asks nothing
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(status.getByRole('radio', { name: 'Stopped' })).toBeFocused();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowLeft');
+  await expect(status.getByRole('radio', { name: 'Reading', exact: true })).toHaveAttribute('aria-checked', 'true');
 
-  // marking it read asks for a takeaway
-  await status.getByRole('radio', { name: 'Read', exact: true }).click();
+  // choosing "Read" on purpose (Enter) asks for a takeaway
+  await status.getByRole('radio', { name: 'Read', exact: true }).focus();
+  await page.keyboard.press('Enter');
   const sheet = page.getByRole('dialog', { name: 'Finished The Long Tide of Markets' });
   await expect(sheet).toBeVisible();
   await expect(sheet.getByLabel('Takeaway (optional)')).toBeFocused();

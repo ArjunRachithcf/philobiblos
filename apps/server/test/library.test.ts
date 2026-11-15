@@ -7,7 +7,10 @@ import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
-import { readBooksForAi } from '../src/library/ai-context';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { purgeTakeawayRuns, readBooksForAi } from '../src/library/ai-context';
+import { removePerson } from '../src/household/people';
 import { KIDS_THEMES } from '../src/library/library';
 import { importSeed } from '../src/seed/import';
 import { ORIGIN, sessionCookie } from './helpers';
@@ -63,6 +66,19 @@ describe('a library', () => {
     expect(lib.themes.reduce((n: number, x: { books: number }) => n + x.books, 0)).toBeGreaterThan(0);
   });
 
+  it('a kids\' book with two themes counts under both', async () => {
+    const lib = (await get('alex', `/api/people/${id.kid2}/library`)).json();
+    const b = lib.books[0];
+    const extra = KIDS_THEMES.find((x) => !b.themes.includes(x))!;
+    db.insert(t.bookTheme).values({ bookId: b.book.id, theme: extra }).run();
+    const after = (await get('alex', `/api/people/${id.kid2}/library`)).json();
+    expect(after.books.find((x: { book: { id: string } }) => x.book.id === b.book.id).themes).toEqual([...b.themes, extra].sort());
+    const n = (l: { themes: { theme: string; books: number }[] }, th: string) => l.themes.find((x) => x.theme === th)!.books;
+    expect(n(after, extra)).toBe(n(lib, extra) + 1);
+    expect(n(after, b.themes[0])).toBe(n(lib, b.themes[0]));
+    db.delete(t.bookTheme).where(eq(t.bookTheme.theme, extra)).run();
+  });
+
   it('an unknown person is 404', async () => {
     expect((await get('alex', '/api/people/nobody/library')).statusCode).toBe(404);
   });
@@ -114,6 +130,15 @@ describe('statuses and takeaways', () => {
     expect((await put('alex', `/api/people/${id.alex}/reading/${tide()}`, body)).statusCode).toBe(400);
   });
 
+  it('leaving read clears the finishing day, whichever way it goes', async () => {
+    const url = `/api/people/${id.alex}/reading/${bookId('A Short History of Bread')}`;
+    await put('alex', url, { status: 'to_read' });
+    for (const status of ['abandoned', 'to_read', 'reading']) {
+      expect((await put('alex', url, { status: 'read' })).json().finishedAt).toMatch(/^\d{4}-/);
+      expect((await put('alex', url, { status })).json()).toMatchObject({ status, finishedAt: null });
+    }
+  });
+
   it('404 for an unknown book', async () => {
     expect((await put('alex', `/api/people/${id.alex}/reading/nope`, { status: 'read' })).statusCode).toBe(404);
   });
@@ -137,11 +162,69 @@ describe('your settings and the AI gate', () => {
     expect(readBooksForAi(db, id.kid2!)).toEqual([]);
   });
 
+  it('turning the AI gate off purges the runs built from your takeaways, and what they proposed', async () => {
+    const now = new Date().toISOString();
+    const run = (rid: string, of: string | null) => db.insert(t.aiRun).values({ id: rid, job: 'link', provider: 'ollama', model: 'm', promptVersion: 'v1', inputHash: rid, outputJson: '{}', startedAt: now, takeawaysOf: of }).run();
+    run('run_sam', id.partner!);
+    run('run_plain', null);
+    const [a, b2, c] = ['The Long Tide of Markets', 'A Short History of Bread', 'Gardens of the Commons'].map(bookId);
+    db.insert(t.bookLink).values([
+      { fromBook: a!, toBook: b2!, reason: 'proposed from a takeaway', confidence: 0.6, state: 'proposed', aiRunId: 'run_sam' },
+      { fromBook: c!, toBook: a!, reason: 'confirmed by a person', confidence: 0.9, state: 'confirmed', aiRunId: 'run_sam' },
+      { fromBook: c!, toBook: b2!, reason: 'no takeaways in it', confidence: 0.6, state: 'proposed', aiRunId: 'run_plain' },
+    ]).run();
+    expect((await patch('partner', { person: { takeawaysToAi: true } })).statusCode).toBe(200);
+    expect((await patch('partner', { person: { takeawaysToAi: false } })).statusCode).toBe(200);
+    expect(db.select({ id: t.aiRun.id }).from(t.aiRun).all()).toEqual([{ id: 'run_plain' }]);
+    expect(db.select({ reason: t.bookLink.reason, run: t.bookLink.aiRunId }).from(t.bookLink).where(eq(t.bookLink.toBook, a!)).all())
+      .toContainEqual({ reason: 'confirmed by a person', run: null });
+    expect(db.select().from(t.bookLink).where(eq(t.bookLink.reason, 'proposed from a takeaway')).all()).toEqual([]);
+    expect(db.select().from(t.bookLink).where(eq(t.bookLink.reason, 'no takeaways in it')).all()).toHaveLength(1);
+    expect(purgeTakeawayRuns(db, id.partner!)).toBe(0);
+  });
+
+  it('a removed person\'s runs go with them', () => {
+    db.insert(t.person).values({ id: 'p_gone', name: 'Robin', role: 'adult', handle: 'robin' }).run();
+    db.insert(t.aiRun).values({ id: 'run_gone', job: 'link', provider: 'ollama', model: 'm', promptVersion: 'v1', inputHash: 'g', startedAt: new Date().toISOString(), takeawaysOf: 'p_gone' }).run();
+    db.insert(t.bookIdea).values({ bookId: bookId('Gardens of the Commons'), ideaId: db.select().from(t.idea).get()!.id, layer: 'deep', confidence: 0.5, state: 'proposed', aiRunId: 'run_gone' }).run();
+    removePerson(db, 'p_gone', id.alex!);
+    expect(db.select().from(t.aiRun).where(eq(t.aiRun.id, 'run_gone')).all()).toEqual([]);
+    expect(db.select().from(t.bookIdea).where(eq(t.bookIdea.aiRunId, 'run_gone')).all()).toEqual([]);
+  });
+
+  it('the household\'s settings: 403 for an adult, 400 for an admin until they are stored; never a silent 200', async () => {
+    expect((await patch('partner', { budget: { minC: 1 } })).statusCode).toBe(403);
+    expect((await patch('partner', { person: { unreadLimit: 5 }, adultPicks: 3 })).statusCode).toBe(403);
+    expect((await patch('alex', { budget: { minC: 1 } })).statusCode).toBe(400);
+  });
+
   it('your unread limit shows in your library; bad values are refused', async () => {
     expect((await patch('alex', { person: { unreadLimit: 6 } })).statusCode).toBe(200);
     expect((await get('alex', `/api/people/${id.alex}/library`)).json().stats.unreadLimit).toBe(6);
     for (const person of [{ unreadLimit: -1 }, { unreadLimit: 2.5 }, { takeawaysToAi: 'yes' }, { weights: {} }, { nickname: 'x' }, 'x']) {
       expect((await patch('alex', { person })).statusCode, JSON.stringify(person)).toBe(400);
     }
+  });
+});
+
+describe('the takeaway boundary (architecture)', () => {
+  // Only the Library and the AI gate read takeaways; everything else, AI jobs included, goes through
+  // library/ai-context.ts. db/schema.ts declares the column; packages/ai/src/provider.ts types what a provider gets.
+  const ALLOWED = new Set(['apps/server/src/library/library.ts', 'apps/server/src/library/ai-context.ts', 'apps/server/src/db/schema.ts', 'packages/ai/src/provider.ts']);
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
+    const p = join(dir, f);
+    if (statSync(p).isDirectory()) return f === 'node_modules' || f === 'dist' ? [] : files(p);
+    return /\.tsx?$/.test(f) && !f.endsWith('.gen.ts') ? [p] : [];
+  });
+  const sources = [join(root, 'apps/server/src'), ...readdirSync(join(root, 'packages')).map((d) => join(root, 'packages', d, 'src'))].flatMap(files);
+
+  it.each([
+    ['the takeaway column or field', /\btakeaway\b/],
+    ['a select from the reading table', /\.from\(t\.reading\)|\bfrom\s+reading\b/i],
+  ])('nothing else mentions %s', (_n, re) => {
+    expect(sources.length).toBeGreaterThan(20);
+    const hits = sources.map((f) => relative(root, f)).filter((f) => !ALLOWED.has(f) && re.test(readFileSync(join(root, f), 'utf8')));
+    expect(hits).toEqual([]);
   });
 });

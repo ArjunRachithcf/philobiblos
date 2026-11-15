@@ -15,6 +15,13 @@
       "when": 1794772359345,
       "tag": "0001_auth_and_household",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794773901933,
+      "tag": "0002_ai_runs_know_takeaways",
+      "breakpoints": true
     }
   ]
 }

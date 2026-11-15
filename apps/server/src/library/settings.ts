@@ -5,6 +5,7 @@ import type { components } from '@shelf/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import type { Person } from '../household/people';
+import { purgeTakeawayRuns } from './ai-context';
 
 type PersonSettings = Required<Omit<NonNullable<components['schemas']['Settings']['person']>, 'weights'>>;
 
@@ -12,7 +13,7 @@ export const DEFAULTS: PersonSettings = {
   mix: 'deepen_connect',
   unreadLimit: 4,
   counterpoints: true,
-  takeaways: true, // the takeaway prompt when a book is marked read
+  takeaways: true, // ask for one line when a book is marked read
   takeawaysToAi: false, // no AI reads takeaways unless the person turns this on (ADR 0009)
   fiction: false,
 };
@@ -47,6 +48,8 @@ export function updatePersonSettings(db: Db, p: Person, patch: unknown): PersonS
     if (err) throw new SettingsError(err);
     next[k] = v;
   }
+  const wasOn = personSettings(p).takeawaysToAi;
   db.update(t.person).set({ settingsJson: JSON.stringify(next) }).where(eq(t.person.id, p.id)).run();
+  if (wasOn && next.takeawaysToAi === false) purgeTakeawayRuns(db, p.id);
   return next as PersonSettings;
 }

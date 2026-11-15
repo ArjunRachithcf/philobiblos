@@ -607,7 +607,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** M1: `person` (your own settings) is stored; the household parts follow with their screens */
+        /** M1: `person` (your own settings) is stored. The household parts are admins' (403 for others) and answer 400 until their screens store them */
         patch: operations["patchSettings"];
         trace?: never;
     };
@@ -839,7 +839,8 @@ export interface components {
                 book: components["schemas"]["BookRef"];
                 reading: components["schemas"]["Reading"];
                 ideas?: string[];
-                theme?: string;
+                /** @description kids' books: one or two themes (spec §3) */
+                themes?: string[];
             }[];
             stats: {
                 read?: number;

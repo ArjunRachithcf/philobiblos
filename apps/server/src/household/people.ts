@@ -5,6 +5,7 @@ import { ulid } from 'ulid';
 import type { components } from '@shelf/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
+import { purgeTakeawayRuns } from '../library/ai-context';
 import type { Identity, Role } from '../identity';
 
 export type Person = typeof t.person.$inferSelect;
@@ -119,6 +120,7 @@ export function removePerson(db: Db, id: string, by: string): void {
   try {
     db.transaction((tx) => {
       revokeInvitesBy(tx as unknown as Db, id); // otherwise they would outlive their admin, with no one behind them
+      purgeTakeawayRuns(tx as unknown as Db, id); // their runs go with them (ai_run.takeaways_of cascades)
       tx.delete(t.person).where(eq(t.person.id, id)).run();
     });
   } catch {
