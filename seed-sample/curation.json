@@ -1,0 +1,81 @@
+{
+ "_comment": "Reading threads (made up). 'owned' = books read in the thread with the month; 'next' = wishlist titles in reading order with why.",
+ "adultThreads": [
+  {
+   "id": "markets",
+   "name": "Markets and value",
+   "owned": [
+    [
+     "The Long Tide of Markets",
+     "2026-07"
+    ],
+    [
+     "A Short History of Bread",
+     "2026-05"
+    ]
+   ],
+   "next": [
+    [
+     "The Grand Ledger",
+     "The sequel to The Long Tide"
+    ],
+    [
+     "Value Beyond Price",
+     "Fills the core of this thread"
+    ]
+   ]
+  },
+  {
+   "id": "care",
+   "name": "Care and the commons",
+   "owned": [
+    [
+     "Notes on Unpaid Work",
+     "2026-05"
+    ],
+    [
+     "Gardens of the Commons",
+     "2026-01"
+    ]
+   ],
+   "next": [
+    [
+     "Care at the Centre",
+     "The classic the others build on"
+    ]
+   ]
+  }
+ ],
+ "redundant": {
+  "A Short Summary of The Long Tide": "A summary of a book already read",
+  "Markets Made Simple": "Intro-level; you have read the full book"
+ },
+ "kids": {
+  "_comment": "topic: one book per topic per month. next: continues an author you own.",
+  "The Brave Little Kite": {
+   "topic": "being brave"
+  },
+  "When Grandpa Became a Star": {
+   "topic": "missing someone"
+  },
+  "Hedgehog Finds a Friend": {
+   "topic": "strong feelings",
+   "next": "Lena Paulsen, like The Quiet Hedgehog"
+  },
+  "My Body Is Mine": {
+   "topic": "my body"
+  },
+  "Breathe Like a Bear Cub": {
+   "topic": "calm"
+  },
+  "Small Hands, Loud Hearts": {
+   "topic": "strong feelings"
+  },
+  "The Quiet Hedgehog": {
+   "topic": "nerves"
+  },
+  "Bear Says Sorry": {
+   "topic": "saying sorry"
+  }
+ }
+}

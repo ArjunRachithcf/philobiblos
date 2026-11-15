@@ -1,0 +1,5 @@
+# post | title | author
+SAMPLEPOST1 | Care at the Centre | Ruth Adeyemi
+SAMPLEPOST1 | The Patient Parent | Dana Weiss
+SAMPLEPOST2 | The Brave Little Kite | Noor Haddad
+SAMPLEPOST2 | Rain on the Window | Mo Achebe

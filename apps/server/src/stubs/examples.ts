@@ -1,0 +1,128 @@
+// Example payloads for the M0 stubs. contracts/openapi.yaml has no `example`s, so these are made up; they are typed
+// against the generated API types and checked against the spec at runtime (test/routes.contract.test.ts).
+import type { components } from '@shelf/contracts/openapi';
+
+type S = components['schemas'];
+
+export const alex: S['Person'] = { id: 'p_alex', name: 'Alex', role: 'admin', ageBand: null };
+export const sam: S['Person'] = { id: 'p_sam', name: 'Sam', role: 'adult', ageBand: null };
+export const kid: S['Person'] = { id: 'p_kid1', name: 'Kid 1', role: 'kid', ageBand: '3-5' };
+
+const valueBeyondPrice: S['BookRef'] = { id: 'b_value', title: 'Value Beyond Price', authors: ['Mira Okafor'], audience: 'adult', isFiction: false };
+const longTide: S['BookRef'] = { id: 'b_tide', title: 'The Long Tide of Markets', authors: ['Mira Okafor'], audience: 'adult', isFiction: false };
+const kite: S['BookRef'] = { id: 'b_kite', title: 'The Brave Little Kite', authors: ['Noor Haddad'], audience: 'kids', isFiction: false };
+
+export const candidate: S['Candidate'] = {
+  id: 'p_alex:b_value',
+  book: valueBeyondPrice,
+  for: alex,
+  state: 'open',
+  closedReason: null,
+  move: 'connect',
+  ideas: [{ id: 'i_markets', name: 'Markets and value', layer: 'core' }],
+  theme: null,
+  buildsOn: [{ book: longTide, reason: "the same author's sequel", confidence: 1, state: 'confirmed' }],
+  source: 'to_buy',
+  addedAt: '2026-06-02T00:00:00.000Z',
+  price: 2490,
+  priceIsEstimate: true,
+  score: 49,
+  scoreParts: [
+    { label: 'Builds on books read', value: 30, kind: 'links' },
+    { label: 'Bridges ideas', value: 8, kind: 'bridge' },
+    { label: 'Idea not fed lately', value: 6, kind: 'stale' },
+    { label: 'On the To buy list', value: 5, kind: 'source' },
+  ],
+};
+
+const kidCandidate: S['Candidate'] = {
+  ...candidate, id: 'p_kid1:b_kite', book: kite, for: kid, move: undefined, ideas: [], theme: 'Courage & resilience',
+  buildsOn: [], source: 'share', price: 2500, score: 37.57, scoreParts: [{ label: 'A new theme for this kid', value: 15, kind: 'themeNew' }],
+};
+
+export const order: S['Order'] = {
+  id: 'o_2026_12',
+  month: '2026-12',
+  status: 'picked',
+  composeUrl: 'mailto:english-orders@orellfuessli.ch?subject=Book%20order&body=Dear%20English%20Bookshop%20Team',
+  estimate: 4990,
+  lines: [
+    { book: valueBeyondPrice, for: alex.id, estimate: 2490, state: 'planned' },
+    { book: kite, for: kid.id, estimate: 2500, state: 'planned' },
+  ],
+};
+
+export const monthPlan = (month: string): S['MonthPlan'] => ({
+  month,
+  budget: { min: 10000, max: 15000 },
+  budgetIsOverride: false,
+  total: 4990,
+  adults: [{ person: alex, picks: [{ candidate, move: 'connect', why: "Builds on The Long Tide of Markets: the same author's sequel", idea: 'Markets and value' }], unreadPile: 2, unreadLimit: 6 }],
+  kids: [{ person: kid, picks: [{ candidate: kidCandidate, move: undefined, why: 'A theme the shelf does not have yet', idea: 'Courage & resilience' }] }],
+  focus: [{ move: 'connect', ideas: ['Markets and value', 'Care and the commons'], bookId: valueBeyondPrice.id, sentence: 'Connect markets with care this month.' }],
+  nextBroaden: { month: '2027-02', idea: 'Early history', bookId: 'b_cities' },
+  order: null,
+});
+
+export const backlogPage = (queryErrors: string[]) => ({
+  items: [candidate, kidCandidate],
+  counts: { open: 2, closed: 0 },
+  facets: {
+    for: [{ value: 'alex', count: 1 }, { value: 'kid1', count: 1 }],
+    move: [{ value: 'connect', count: 1 }],
+    idea: [{ value: 'Markets and value', count: 1 }],
+    source: [{ value: 'to-buy', count: 1 }, { value: 'instagram', count: 1 }],
+  },
+  nextCursor: null,
+  queryErrors,
+});
+
+export const savedFilters = [
+  { id: 'f_tobuy', name: 'To buy now', q: 'is:open is:adult score:>40' },
+  { id: 'f_kids', name: 'Kids', q: 'is:open is:kids' },
+  { id: 'f_cheap', name: 'Cheap & good', q: 'is:open score:>30 price:<25' },
+  { id: 'f_ig', name: 'From Instagram', q: 'is:open source:instagram sort:added' },
+];
+
+export const brain: S['Brain'] = {
+  ideas: [
+    { id: 'i_markets', name: 'Markets and value', readCount: 2, unreadOwned: 0, isNew: false, focus: 'connect',
+      layers: { intro: { books: [], next: null }, core: { books: [longTide], next: valueBeyondPrice }, deep: { books: [], next: null }, counterpoint: { books: [], next: null } } },
+    { id: 'i_care', name: 'Care and the commons', readCount: 2, unreadOwned: 0, isNew: false,
+      layers: { core: { books: [{ id: 'b_unpaid', title: 'Notes on Unpaid Work', authors: ['Ruth Adeyemi'] }], next: null } } },
+  ],
+  edges: [{ a: 'i_markets', b: 'i_care', weight: 1, via: ['b_unpaid'], kind: 'read' }],
+};
+
+export const reading: S['Reading'] = { status: 'read', feedback: null, takeaway: 'Prices leave out most of what matters.', finishedAt: '2026-07-20' };
+
+export const library = (personId: string): S['Library'] => ({
+  person: personId === kid.id ? kid : alex,
+  books: [{ book: longTide, reading, ideas: ['Markets and value'] }],
+  stats: { read: 1, reading: 0, unreadPile: 2, unreadLimit: 6, takeaways: 1 },
+  themes: [{ theme: 'Courage & resilience', books: 0, loved: 0 }],
+});
+
+export const inbox: S['InboxItem'][] = [{
+  id: 'in_share1',
+  kind: 'share',
+  by: alex,
+  title: '@example.parenting · 3 slides',
+  createdAt: '2026-11-15T10:00:00.000Z',
+  mediaCount: 3,
+  found: [{ title: 'Care at the Centre', author: 'Ruth Adeyemi', verdict: 'add', idea: 'Care and the commons', layer: 'core', buildsOn: ['Notes on Unpaid Work'], decided: null }],
+}];
+
+export const share = (id: string): S['Share'] => ({ id, status: 'reading', progress: { done: 1, total: 3 }, found: [] });
+
+
+export const settings: S['Settings'] = {
+  budget: { min: 10000, max: 15000 },
+  adultPicks: 2,
+  newAuthorsOnly: true,
+  ai: { provider: 'ollama', model: 'llama3.2-vision', ollamaUrl: 'http://ollama:11434', leaves: [], jobs: { read: true, link: true, suggest: true, explain: true, wildcards: true } },
+  person: { mix: 'deepen_connect', unreadLimit: 6, counterpoints: true, takeaways: true, takeawaysToClaude: false, fiction: false, weights: {} },
+  kidsThemes: [{ theme: 'Friendship', enabled: true }],
+  cycle: { day: 1, time: '20:17', timezone: 'Europe/Zurich' },
+  mail: { host: '', port: 993, user: '', folder: 'INBOX', configured: false },
+};

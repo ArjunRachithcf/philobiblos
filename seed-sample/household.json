@@ -1,0 +1,6 @@
+[
+  { "handle": "alex", "name": "Alex", "role": "admin" },
+  { "handle": "partner", "name": "Sam", "role": "adult" },
+  { "handle": "kid1", "name": "Kid 1", "role": "kid", "birthYear": 2021 },
+  { "handle": "kid2", "name": "Kid 2", "role": "kid", "birthYear": 2024 }
+]
