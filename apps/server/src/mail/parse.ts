@@ -13,9 +13,17 @@ import { safeField } from './read';
 export const PARSERS = { quote: 'quote-1', confirm: 'confirm-1', online: 'online-1', collect: 'collect-1', invoice: 'invoice-1', classify: 'classify-1' } as const;
 export const LIMITS = { lines: 5000, lineChars: 1000, books: 100 } as const;
 
-export interface QuoteLine { title: string | null; author: string | null; ean: string | null; priceC: number | null; delivery: string | null; available: boolean }
-export interface ShopLine { title: string | null; author: string | null; ean: string | null; qty: number; priceC: number }
-export interface InvoiceLine { title: string | null; ean: string | null; qty: number; priceC: number; discountPct: number | null; totalC: number; vatPct: number }
+/**
+ * `notBook`: the line carries a 13-digit EAN that is not an ISBN (978/979): a toy, a game, a Tonie. It never matches a
+ * book, not even by its title, and goes to the Inbox. Decided from the raw digits, before safeField (which drops such
+ * a run, so the kept `ean` would be null and could not tell).
+ */
+interface NotBook { notBook?: true }
+export interface QuoteLine extends NotBook { title: string | null; author: string | null; ean: string | null; priceC: number | null; delivery: string | null; available: boolean }
+export interface ShopLine extends NotBook { title: string | null; author: string | null; ean: string | null; qty: number; priceC: number }
+export interface InvoiceLine extends NotBook { title: string | null; ean: string | null; qty: number; priceC: number; discountPct: number | null; totalC: number; vatPct: number }
+const ISBN = /^97[89]\d{10}$/;
+const notBook = (ean: string | null | undefined): NotBook => (ean && !ISBN.test(ean) ? { notBook: true } : {});
 
 export type Parsed =
   | { kind: 'bookshop_quote'; parser: string; lines: QuoteLine[] }
@@ -27,8 +35,8 @@ export type Parsed =
 
 /**
  * What the mail is, from its signed sender and subject; an invoice waits for its PDF rows (`parseInvoice`). A shop
- * subject whose number is not 4 to 11 digits is `number_unreadable` (a longer one could not be kept: safeField drops a
- * run of 12 digits), so the mail fails closed as an unknown layout instead of passing as `other`.
+ * subject whose number is not 4 to 11 digits in one run (longer, or spaced: safeField drops a run of 12 digits) is
+ * `number_unreadable`, so the mail fails closed as an unknown layout instead of passing as `other`.
  */
 export type Kind = { kind: 'quote_or_confirm' } | { kind: 'online_order' | 'click_collect'; number: string } | { kind: 'invoice'; number: string }
   | { kind: 'number_unreadable'; expected: 'online_order' | 'click_collect' | 'invoice' } | { kind: 'other' };
@@ -37,9 +45,9 @@ const QUOTE_SENDER = 'english-orders@orellfuessli.ch';
 // Füssli, Fuessli or Fussli (a kept subject has its diacritics folded).
 const SHOP = 'Orell ?F(?:ü|ue|u)ssli';
 const SUBJECTS: ['online_order' | 'click_collect' | 'invoice', RegExp][] = [
-  ['online_order', new RegExp(`^Ihre ${SHOP} Bestellung \\((\\d{1,40})\\)$`, 'i')],
-  ['click_collect', /^Wir bearbeiten Ihre Bestellung \((\d{1,40})\)$/i],
-  ['invoice', new RegExp(`^Ihre ${SHOP.replace(' ?', '-? ?')}-Rechnung Nr\\.? ?(\\d{1,40})$`, 'i')],
+  ['online_order', new RegExp(`^Ihre ${SHOP} Bestellung \\((\\d[\\d ]*)\\)$`, 'i')],
+  ['click_collect', /^Wir bearbeiten Ihre Bestellung \((\d[\d ]*)\)$/i],
+  ['invoice', new RegExp(`^Ihre ${SHOP.replace(' ?', '-? ?')}-Rechnung Nr\\.? ?(\\d[\\d ]*)$`, 'i')],
 ];
 
 export function classify(from: string, subject: string | null): Kind {
@@ -117,7 +125,7 @@ export function parseQuote(text: string, address: string[]): Parsed {
     if (p == null && !unavailable) { problem = 'a book with neither a price nor a status'; return; }
     const ean = b.isbn ? digits(b.isbn) : null;
     if (ean != null && !EAN.test(ean)) { problem = 'an ISBN Shelf cannot read'; return; }
-    out.push({ title: field(b.title, address), author: field(b.author, address, 120), ean: field(ean, address), priceC: unavailable ? null : p, delivery: field(b.delivery, address, 80), available: !unavailable });
+    out.push({ title: field(b.title, address), author: field(b.author, address, 120), ean: field(ean, address), priceC: unavailable ? null : p, delivery: field(b.delivery, address, 80), available: !unavailable, ...notBook(ean) });
   };
   // The next non-empty line after each, found in one backward pass (not a search per line: linear).
   const next: (string | undefined)[] = new Array(ls.length);
@@ -199,7 +207,7 @@ export function parseShop(kind: 'online_order' | 'click_collect', number: string
     const von = left.indexOf(' von ');
     out.push({
       title: field(von >= 0 ? left.slice(0, von) : left, address), author: von >= 0 ? field(left.slice(von + 5), address, 120) : null,
-      ean: field(ean?.[1], address), qty: Number(right[1] ?? 1), priceC: Number(right[2]) * 100 + Number(right[3]),
+      ean: field(ean?.[1], address), qty: Number(right[1] ?? 1), priceC: Number(right[2]) * 100 + Number(right[3]), ...notBook(ean?.[1]),
     });
     if (out.length > LIMITS.books) return refuse(kind, P, 'too many books');
   }
@@ -239,7 +247,8 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
     const st = tok[i--]?.toUpperCase() === 'ST';
     const qty = /^\d{1,2}$/.test(tok[i] ?? '') ? Number(tok[i--]) : null;
     if (vat == null || !chf || total == null || price == null || !st || !qty || i < 1) return refuse('invoice', P, 'a book row Shelf cannot read');
-    out.push({ ean: field(tok[0], address), title: field(tok.slice(1, i + 1).join(' '), address), qty, priceC: price, discountPct: discount, totalC: total, vatPct: vat });
+    // A row whose EAN is no ISBN is read whole (it counts in the total) but is not a book (notBook).
+    out.push({ ean: field(tok[0], address), title: field(tok.slice(1, i + 1).join(' '), address), qty, priceC: price, discountPct: discount, totalC: total, vatPct: vat, ...notBook(tok[0]) });
     if (out.length > LIMITS.books) return refuse('invoice', P, 'too many books');
   }
   if (!out.length) return refuse('invoice', P, 'no book rows');

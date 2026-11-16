@@ -9,8 +9,8 @@
 //
 // A quote or a confirmation belongs to a composed order (drafted or quoted): the one whose thread holds the mail's
 // signed In-Reply-To (a bookshop mail already tied to it), or the one of the month its signed Subject names as Compose
-// wrote it ("Book order, November 2026"). Shelf's own request, in the mailbox through Bcc, is not the bookshop's mail
-// and ties nothing (it is not verified). With no order, every line is unmatched.
+// wrote it ("Book order, November 2026"); only the bookshop's signed mail ties anything (Compose copies the request to
+// no one). With no order, every line is unmatched.
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
@@ -44,7 +44,8 @@ function authorIs(stored: string, given: string): boolean {
 }
 
 /** The one book a line names: by EAN, then by normalised title and author; null for none or several. */
-export function matchBook(books: BookKey[], l: { ean: string | null; title: string | null; author?: string | null }): string | null {
+export function matchBook(books: BookKey[], l: { ean: string | null; title: string | null; author?: string | null; notBook?: true }): string | null {
+  if (l.notBook) return null; // an EAN that is no ISBN: never a book, not even by its title
   if (l.ean) {
     const hit = books.filter((b) => b.isbn13 === l.ean);
     if (hit.length === 1) return hit[0]!.id;

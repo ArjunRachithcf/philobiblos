@@ -68,6 +68,18 @@ describe('quotes: the three layouts, and only the bookshop\'s own lines', () => 
     expect(p).toMatchObject({ kind: 'bookshop_quote', lines: [{ title: 'The Long Tide of Markets', priceC: 1990, delivery: '3 – 4 days' }] });
   });
 
+  it('"Surname, Title" with a blank line before its ISBN line is the same layout (PR #14 review, round 2)', () => {
+    expect(parseQuote('Paulsen, The Quiet Hedgehog\n\nISBN: 9780000000019\nPrice. CHF 16.90', [])).toMatchObject({ kind: 'bookshop_quote', lines: [{ title: 'The Quiet Hedgehog', author: 'Paulsen', priceC: 1690 }] });
+  });
+
+  it('a quoted EAN that is no ISBN never matches by its title (PR #14 review, round 2)', async () => {
+    const db = world();
+    const body = 'Author: Mira Okafor\nTitle: The Long Tide of Markets\nISBN: 4001234567890\nPrice: CHF 19.90';
+    await run(db, fakeBox([{ uid: 1, raw: await signed(message({ id: 'q30', subject: 'Re: Book order, November 2026', body })) }]));
+    expect(lines(db).b_tide!.state).toBe('planned');
+    expect(unmatchedLines(db).map((l) => l.title)).toEqual(['The Long Tide of Markets']);
+  });
+
   it('a status line under a block marks the book unavailable', () => {
     const p = parseQuote('Title: Value Beyond Price\nAuthor: Mira Okafor\nCurrently not in stock', []);
     expect(p).toMatchObject({ kind: 'bookshop_quote', lines: [{ title: 'Value Beyond Price', available: false, priceC: null }] });
@@ -116,6 +128,9 @@ describe('the shop\'s order mails and invoices', () => {
     expect(classify('x@orellfuessli.ch', 'Ihre OrellFüssli-Rechnung Nr. 99001122')).toEqual({ kind: 'invoice', number: '99001122' });
     expect(classify('english-orders@orellfuessli.ch', 'Re: Book order, November 2026')).toEqual({ kind: 'quote_or_confirm' });
     expect(classify('newsletter@orellfuessli.ch', 'Re: Book order, November 2026')).toEqual({ kind: 'other' });
+    // A number that is not one run of 4 to 11 digits (spaced, or very long) fails closed, never "other" (round 2).
+    expect(classify('x@orellfuessli.ch', 'Ihre OrellFüssli-Rechnung Nr. 1234 5678')).toEqual({ kind: 'number_unreadable', expected: 'invoice' });
+    expect(classify('x@orellfuessli.ch', `Wir bearbeiten Ihre Bestellung (${'9'.repeat(41)})`)).toEqual({ kind: 'number_unreadable', expected: 'click_collect' });
   });
 
   it('click & collect and online orders: one line per article; non-books skipped', () => {
@@ -416,6 +431,28 @@ describe('invoices: copies, through the media worker only', () => {
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
     expect(lines(db).b_tide!.state).toBe('planned');
     expect(unmatchedLines(db).map((l) => l.ean)).toEqual(['9781111111111']);
+  });
+
+  it('an invoice row whose EAN is no ISBN (a toy, a game) is never a book, even with a book\'s title (PR #14 review, round 2)', async () => {
+    const db = world();
+    db.update(t.order).set({ status: 'quoted' }).where(eq(t.order.id, 'o_nov')).run();
+    const rows = (): MediaOutcome => ({ id: 'j', ok: true, kind: 'pdf.text', pages: 1, truncated: false, rows: [
+      ['4001234567890', 'The Long Tide of Markets', '1 ST', '19.90', '19.90 CHF', '2.6 %'], ['Total', '19.90 CHF'],
+    ] });
+    await run(db, fakeBox([{ uid: 1, raw: await invoice('i23') }]), { pdfText: async () => rows() });
+    expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
+    expect(lines(db).b_tide!.state).toBe('planned');
+    expect(unmatchedLines(db)).toEqual([{ mail: '<i23@orellfuessli.ch>', kind: 'invoice', index: 0, title: 'The Long Tide of Markets', author: null, ean: null }]);
+  });
+
+  it('a waiting mail given up by the re-read (its folder renumbered) is read in full when the window meets it later (PR #14 review, round 2)', async () => {
+    const db = world();
+    await run(db, fakeBox([{ uid: 4, raw: await invoice('i24') }]), { pdfText: async () => { throw new MediaUnavailable(); } });
+    await run(db, fakeBox([], 8), { pdfText: async () => invoiceRows() });
+    expect(kept(db, '<i24@orellfuessli.ch>').kind).toBe('reread_refused');
+    await run(db, fakeBox([{ uid: 5, raw: await invoice('i24') }], 8), { pdfText: async () => invoiceRows() });
+    expect(kept(db, '<i24@orellfuessli.ch>').kind).toBe('invoice');
+    expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(3);
   });
 
   it('an invoice number too long to keep (12 digits) fails closed as an unknown layout, never "other" (PR #14 review)', async () => {

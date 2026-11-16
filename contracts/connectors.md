@@ -78,8 +78,11 @@ the mail's signed In-Reply-To (the bookshop's own earlier mail in that thread), 
 Subject names as Compose writes it ("Re: Book order, November 2026"). The person's request never reaches Shelf
 (Compose adds no Bcc), so only the bookshop's own signed mail ties a reply to an order. Each tied mail's Message-ID
 joins the order's thread (at most 20). Lines match books by EAN first, then by normalised title and author (the full
-name, "Surname, First" or the surname alone; the title alone on an invoice); a line that matches no book, or more
-than one, is kept with its structured fields and shown in the Inbox (M3 e) for a person to resolve.
+name, "Surname, First" or the surname alone; the title alone on an invoice), never by its title to a book with another
+ISBN, and never at all when its EAN is no ISBN (not 978/979: a toy, a game, a Tonie, decided from the digits before the
+field filter); a line that matches no book, or more than one, is kept with its structured fields and shown in the
+Inbox (M3 e) for a person to resolve. A shop subject whose number is not one run of 4 to 11 digits (spaced, or longer
+than a kept field allows) is an unknown layout.
 
 Layouts (quotes, all must parse; the shop's mails as the fixtures write them):
 - `Author: X / Title: Y / ISBN: n / Price: CHF 19.90 / Delivery due: 3 – 4 days` blocks, a field a line (or on one line
