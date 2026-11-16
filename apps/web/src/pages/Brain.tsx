@@ -36,7 +36,7 @@ export function Brain({ me, go }: { me: Me; go: (to: string) => void }) {
     return api<BrainData>(`/people/${encodeURIComponent(who)}/brain`).then((b) => { setBrain(b); setSel((s) => (b.ideas.some((i) => i.id === s) ? s : b.ideas[0]?.id ?? null)); }, (e) => setError(message(e)));
   }, [who]);
   useEffect(() => { setBrain(null); void load(); }, [load]);
-  useEffect(() => { api<{ links: unknown[]; ideas: unknown[] }>('/proposals').then((p) => setWaiting(p.links.length + p.ideas.length), () => undefined); }, []);
+  useEffect(() => { api<{ links: unknown[]; ideas: unknown[]; newIdeas?: unknown[] }>('/proposals').then((p) => setWaiting(p.links.length + p.ideas.length + (p.newIdeas?.length ?? 0)), () => undefined); }, []);
 
   const own = who === me.person?.id;
   const name = adults.find((p) => p.id === who)?.name ?? '';

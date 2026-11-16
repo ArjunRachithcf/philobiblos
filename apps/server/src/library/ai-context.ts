@@ -17,7 +17,8 @@ export function readBooksForAi(db: Db, personId: string): ReadBookForAi[] {
   const share = personSettings(p).takeawaysToAi === true;
   const rows = db.select({ book: t.book, takeaway: t.reading.takeaway }).from(t.reading).innerJoin(t.book, eq(t.book.id, t.reading.bookId))
     .where(and(eq(t.reading.personId, p.id), eq(t.reading.status, 'read'))).all();
-  const ideas = ideasOf(db, rows.map((r) => r.book.id));
+  // Their own run: a book idea private to anyone else is not theirs to send.
+  const ideas = ideasOf(db, rows.map((r) => r.book.id), { as: p.id });
   return rows.map(({ book, takeaway }) => {
     const ref = bookRef(book);
     return { id: ref.id, title: ref.title, authors: ref.authors ?? [], ideas: ideas.get(book.id) ?? [], ...(share && takeaway ? { takeaway } : {}) };
@@ -38,10 +39,13 @@ export function purgeTakeawayRuns(db: Db, personId: string): number {
     // Undecided: gone. Decided: kept (a person decided), still private to them, the reason replaced by a neutral one.
     tx.delete(t.bookLink).where(and(fromThem(t.bookLink.aiRunId, t.bookLink.privateTo), eq(t.bookLink.state, 'proposed'))).run();
     tx.delete(t.bookIdea).where(and(fromThem(t.bookIdea.aiRunId, t.bookIdea.privateTo), eq(t.bookIdea.state, 'proposed'))).run();
+    const ideaProposals = runs.length ? or(inArray(t.ideaProposal.aiRunId, runs), eq(t.ideaProposal.privateTo, personId)) : eq(t.ideaProposal.privateTo, personId);
+    tx.delete(t.ideaProposal).where(and(ideaProposals, eq(t.ideaProposal.state, 'proposed'))).run();
     tx.update(t.bookLink).set({ reason: PRIVATE_REASON }).where(fromThem(t.bookLink.aiRunId, t.bookLink.privateTo)).run();
     if (runs.length) {
       tx.update(t.bookLink).set({ aiRunId: null }).where(inArray(t.bookLink.aiRunId, runs)).run();
       tx.update(t.bookIdea).set({ aiRunId: null }).where(inArray(t.bookIdea.aiRunId, runs)).run();
+      tx.update(t.ideaProposal).set({ aiRunId: null }).where(inArray(t.ideaProposal.aiRunId, runs)).run();
       tx.delete(t.aiRun).where(inArray(t.aiRun.id, runs)).run();
     }
   });

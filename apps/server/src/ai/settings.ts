@@ -14,6 +14,7 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { isSealed, keyProblem, seal, sealingKey } from '../household/sealed';
 import { SettingsError } from '../library/settings';
+import { DAILY_TOKENS, spentToday } from './spend';
 
 export const CLAUDE_KEY = 'claude_api_key';
 export const DEFAULT_OLLAMA_MODEL = 'llama3.2';
@@ -27,7 +28,7 @@ export const OLLAMA_MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-
 /** Anthropic's keys: `sk-ant-` then letters, digits, `-` and `_`. Checked before it is sealed; never echoed. */
 export const CLAUDE_KEY_SHAPE = /^sk-ant-[A-Za-z0-9_-]{20,300}$/;
 
-export interface AiSettings { provider: Provider; jobs: AiJobs; models: AiModels; hasClaudeKey: boolean; leavesAccepted: string[] }
+export interface AiSettings { provider: Provider; jobs: AiJobs; models: AiModels; hasClaudeKey: boolean; leavesAccepted: string[]; dailyTokens: number }
 
 /** The AI jobs (packages/ai) each of Settings' switches runs; `wildcards` only changes what suggestNext may answer. */
 export const JOBS_OF: Record<Exclude<keyof AiJobs, 'wildcards'>, JobName[]> = {
@@ -56,6 +57,7 @@ export function getAi(db: Db): AiSettings {
       claude: { model: name(c.model, CLAUDE_MODEL) ?? CLAUDE_DEFAULT_MODEL },
     },
     hasClaudeKey: isSealed(db, CLAUDE_KEY),
+    dailyTokens: r.aiDailyTokens,
     leavesAccepted: (() => { try { const a = JSON.parse(r.aiLeavesAccepted ?? '[]') as unknown; return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []; } catch { return []; } })(),
   };
 }
@@ -93,10 +95,11 @@ export function aiView(db: Db, cfg: Pick<Config, 'ollamaUrl'>) {
     provider: s.provider, model: s.models.ollama.model, visionModel: s.models.ollama.visionModel, claudeModel: s.models.claude.model,
     ollamaUrl: cfg.ollamaUrl ?? '', ollamaConfigured: cfg.ollamaUrl != null, hasClaudeKey: s.hasClaudeKey,
     leaves: leaves(s.provider, s.jobs), leavesWithClaude: leaves('claude', s.jobs), leavesAccepted: s.provider === 'claude' && leavesAccepted(s), jobs: s.jobs,
+    dailyLimit: s.dailyTokens, usedToday: spentToday(db),
   };
 }
 
-const ALLOWED = ['provider', 'model', 'visionModel', 'claudeModel', 'claudeApiKey', 'acceptLeaves', 'jobs'];
+const ALLOWED = ['provider', 'model', 'visionModel', 'claudeModel', 'claudeApiKey', 'acceptLeaves', 'jobs', 'dailyLimit'];
 
 /** The `ai` part of PATCH /settings, checked whole before anything is written (admins only: routes/library.ts). */
 export function checkAi(db: Db, cfg: Pick<Config, 'sealingKey'>, v: unknown): (tx: Db) => void {
@@ -116,6 +119,9 @@ export function checkAi(db: Db, cfg: Pick<Config, 'sealingKey'>, v: unknown): (t
   // The key's own value is never part of a message, valid or not.
   if (p.claudeApiKey !== undefined && p.claudeApiKey !== null && (typeof p.claudeApiKey !== 'string' || !CLAUDE_KEY_SHAPE.test(p.claudeApiKey.trim()))) {
     throw new SettingsError('ai.claudeApiKey: that is not an Anthropic API key (sk-ant-…)');
+  }
+  if (p.dailyLimit !== undefined && (!Number.isInteger(p.dailyLimit) || (p.dailyLimit as number) < DAILY_TOKENS.min || (p.dailyLimit as number) > DAILY_TOKENS.max)) {
+    throw new SettingsError(`ai.dailyLimit: a whole number of tokens from ${DAILY_TOKENS.min} to ${DAILY_TOKENS.max}`);
   }
   if (p.acceptLeaves !== undefined && typeof p.acceptLeaves !== 'boolean') throw new SettingsError('ai.acceptLeaves: true or false');
   let jobs = now.jobs;
@@ -156,7 +162,7 @@ export function checkAi(db: Db, cfg: Pick<Config, 'sealingKey'>, v: unknown): (t
       claude: { model: (p.claudeModel as string | undefined) ?? now.models.claude.model },
     };
     if (p.claudeApiKey !== undefined) seal(tx, key!, CLAUDE_KEY, typeof p.claudeApiKey === 'string' ? p.claudeApiKey.trim() : null);
-    tx.update(t.householdSettings).set({ aiProvider: provider, aiJobsJson: JSON.stringify(jobs), aiModelsJson: JSON.stringify({ ...m, ...models }), ...(accepted !== undefined ? { aiLeavesAccepted: accepted } : {}) }).where(eq(t.householdSettings.id, 1)).run();
+    tx.update(t.householdSettings).set({ aiProvider: provider, aiJobsJson: JSON.stringify(jobs), aiModelsJson: JSON.stringify({ ...m, ...models }), ...(accepted !== undefined ? { aiLeavesAccepted: accepted } : {}), ...(p.dailyLimit !== undefined ? { aiDailyTokens: p.dailyLimit as number } : {}) }).where(eq(t.householdSettings.id, 1)).run();
   };
 }
 

@@ -14,7 +14,8 @@ import * as t from '../db/schema';
 import { getPerson } from '../household/people';
 import { allCandidates } from '../backlog/backlog';
 import { bookRef } from '../library/library';
-import { countedTags } from './tags';
+import { countedTags, type Reader } from './tags';
+import { confirmIdeaProposal } from './from-run';
 
 type S = components['schemas'];
 type Layer = 'intro' | 'core' | 'deep' | 'counterpoint';
@@ -78,14 +79,37 @@ export function listProposals(db: Db, viewer: string) {
   const ideas = db.select({ row: t.bookIdea, name: t.idea.name, intoId: into.id, intoName: into.name }).from(t.bookIdea)
     .innerJoin(t.idea, eq(t.idea.id, t.bookIdea.ideaId)).leftJoin(into, eq(into.id, t.idea.mergedInto))
     .where(eq(t.bookIdea.state, 'proposed')).all().filter((r) => !hidden(r.row, viewer));
-  const ids = [...new Set([...links.flatMap((l) => [l.fromBook, l.toBook]), ...ideas.map((r) => r.row.bookId)])];
+  // New ideas the AI proposed: a name on a proposal, no idea yet (knowledge/from-run.ts).
+  const fresh = db.select().from(t.ideaProposal).where(eq(t.ideaProposal.state, 'proposed')).all().filter((r) => !hidden(r, viewer));
+  const ids = [...new Set([...links.flatMap((l) => [l.fromBook, l.toBook]), ...ideas.map((r) => r.row.bookId), ...fresh.map((r) => r.bookId)])];
   const books = new Map(ids.length ? db.select().from(t.book).where(inArray(t.book.id, ids)).all().map((b) => [b.id, bookRef(b)]) : []);
   return {
     links: links.map((l) => ({ from: books.get(l.fromBook)!, to: books.get(l.toBook)!, reason: l.reason, confidence: l.confidence, fromAi: l.aiRunId !== null || l.privateTo !== null, onlyYou: l.privateTo === viewer }))
       .sort((a, b) => b.confidence - a.confidence),
     ideas: ideas.map(({ row, name, intoName }) => ({ book: books.get(row.bookId)!, idea: { id: row.ideaId, name: intoName ?? name }, layer: row.layer, confidence: row.confidence, fromAi: row.aiRunId !== null || row.privateTo !== null, onlyYou: row.privateTo === viewer }))
       .sort((a, b) => b.confidence - a.confidence),
+    newIdeas: fresh.map((r) => ({ id: r.id, book: books.get(r.bookId)!, name: r.name, layer: r.layer, confidence: r.confidence, fromAi: true, onlyYou: r.privateTo === viewer }))
+      .sort((a, b) => b.confidence - a.confidence),
   };
+}
+
+/**
+ * PUT /idea-proposals/{id}: a person confirms a new idea the AI proposed for a book (it becomes an idea, or the one of
+ * that name, and the book's tag in it, confirmed: from-run.ts), or rejects it (no idea is ever made of it). Moving it
+ * to another layer confirms it there. Same privacy as links.
+ */
+export function reviewIdeaProposal(db: Db, viewer: string, proposalId: string, body: unknown, now = new Date()) {
+  const u = parseReview(body, true);
+  const row = db.select().from(t.ideaProposal).where(eq(t.ideaProposal.id, proposalId)).get();
+  if (!row || hidden(row, viewer)) throw new KnowledgeError(404, 'no such proposal');
+  if (row.state !== 'proposed') throw new KnowledgeError(409, 'already decided');
+  const layer = u.layer ?? row.layer;
+  if (u.state === 'rejected') {
+    db.update(t.ideaProposal).set({ state: 'rejected', reviewedBy: viewer, reviewedAt: now.toISOString() }).where(eq(t.ideaProposal.id, row.id)).run();
+    return { state: 'rejected' as const, layer };
+  }
+  const ideaId = confirmIdeaProposal(db, row, layer, viewer, now);
+  return { state: 'confirmed' as const, layer, idea: { id: ideaId, name: db.select({ n: t.idea.name }).from(t.idea).where(eq(t.idea.id, ideaId)).get()!.n } };
 }
 
 const NAME_MAX = 60;
@@ -148,8 +172,11 @@ export function undoMerge(db: Db, mergeId: string, by: string, now = new Date())
   return { id: m.ideaId, name: idea.name };
 }
 
-/** GET /people/{id}/brain: an adult's ideas with their layers, and the edges between ideas (ADR 0005). */
-export function getBrain(db: Db, personId: string): S['Brain'] {
+/**
+ * GET /people/{id}/brain: an adult's ideas with their layers, and the edges between ideas (ADR 0005). `reader`: an AI
+ * run's (ai/jobs.ts suggest), which leaves out book ideas private to anyone but that run's person.
+ */
+export function getBrain(db: Db, personId: string, reader?: Reader): S['Brain'] {
   const p = getPerson(db, personId);
   if (!p) throw new KnowledgeError(404, 'no such person');
   if (p.role === 'kid') throw new KnowledgeError(404, 'kids have an emotional map, not a brain (see their library)');
@@ -162,7 +189,7 @@ export function getBrain(db: Db, personId: string): S['Brain'] {
   const candScore = new Map(allCandidates(db).filter((c) => c.personId === p.id && c.state === 'open').map((c) => [c.book.id, c.score ?? -Infinity]));
 
   // What counts (spec §6, knowledge/tags.ts): merged ideas read under the idea they went into; rejected never counts.
-  const tags = countedTags(db);
+  const tags = countedTags(db, undefined, reader);
   const mineTags = tags.filter((r) => read.has(r.bookId) || (owned.has(r.bookId) && !notUnread.has(r.bookId)) || candScore.has(r.bookId));
   const bookIds = [...new Set(mineTags.map((r) => r.bookId))];
   const books = new Map(bookIds.length ? db.select().from(t.book).where(inArray(t.book.id, bookIds)).all().map((b) => [b.id, bookRef(b)]) : []);

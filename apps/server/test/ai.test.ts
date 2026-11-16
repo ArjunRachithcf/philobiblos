@@ -98,7 +98,8 @@ describe('runAi', () => {
   it('bounds: the prompt, the answer, the images', async () => {
     const db = household();
     const m = fakeModel(() => tag);
-    await expect(runAi(db, m, 'tagBook', { ...tagIn, ideaVocabulary: Array.from({ length: 200 }, (_, i) => `${'x'.repeat(700)}${i}`) }, { budget: new AiBudget() })).rejects.toMatchObject({ reason: 'too_large' });
+    const titles = (n: number) => Array.from({ length: n }, (_, i) => `${'x'.repeat(290)}${i}`);
+    await expect(runAi(db, m, 'suggestNext', { brain: { ideas: [] }, backlogTitles: titles(300), owned: titles(200), wildcards: false, max: 3 }, { budget: new AiBudget() })).rejects.toMatchObject({ reason: 'too_large' });
     expect(m.requests).toHaveLength(0);
     const long = fakeModel(() => ({ ...tag, padding: 'x'.repeat(AI_LIMITS.answer) }));
     await expect(runAi(db, long, 'tagBook', tagIn, { budget: new AiBudget() })).rejects.toMatchObject({ reason: 'failed' });

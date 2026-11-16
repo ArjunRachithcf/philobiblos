@@ -17,11 +17,12 @@ export function AiSettings({ admin }: { admin: boolean }) {
   const [vision, setVision] = useState('');
   const [key, setKey] = useState('');
   const [accept, setAccept] = useState(false);
+  const [limit, setLimit] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState('');
   const load = () => api<S>('/settings').then((s) => {
     const a = s.ai ?? {};
-    setAi(a); setProvider(a.provider ?? 'ollama'); setModel(a.model ?? ''); setVision(a.visionModel ?? ''); setAccept(false);
+    setAi(a); setProvider(a.provider ?? 'ollama'); setModel(a.model ?? ''); setVision(a.visionModel ?? ''); setAccept(false); setLimit(a.dailyLimit != null ? String(a.dailyLimit) : '');
   }, (e) => setError(message(e)));
   useEffect(() => { void load(); }, []);
   // A new choice of provider asks again: the tick is for the list shown with it.
@@ -35,6 +36,7 @@ export function AiSettings({ admin }: { admin: boolean }) {
     if (optingIn && !accept) return setError('Tick that you read what goes to Anthropic first.');
     const body: Record<string, unknown> = { provider, model: model.trim() || undefined, visionModel: vision.trim() || null };
     if (key.trim()) body.claudeApiKey = key.trim();
+    if (provider === 'claude' && limit.trim() && Number(limit) !== ai?.dailyLimit) body.dailyLimit = Number(limit);
     if (optingIn) body.acceptLeaves = true;
     try {
       await api('/settings', { method: 'PATCH', body: { ai: body } });
@@ -95,6 +97,11 @@ export function AiSettings({ admin }: { admin: boolean }) {
                       <label className="row"><input type="checkbox" checked={accept} onChange={(e) => setAccept(e.target.checked)} /> I read this, and I turn Claude on for the household.</label>
                     </Notice>
                   )}
+                  <div className="field">
+                    <label className="field-label" htmlFor={`${id}-l`}>Daily allowance (tokens)</label>
+                    <input className="input" id={`${id}-l`} inputMode="numeric" autoComplete="off" value={limit} onChange={(e) => setLimit(e.target.value)} aria-describedby={`${id}-lh`} />
+                    <span className="hint" id={`${id}-lh`}>Every job together, in any 24 hours; Claude stops once it is used.{ai.usedToday != null ? ` Used in the last 24 hours: ${ai.usedToday.toLocaleString()}.` : ''}</span>
+                  </div>
                   <div className="field">
                     <label className="field-label" htmlFor={`${id}-k`}>Anthropic API key{ai.hasClaudeKey ? ' (saved; type a new one to replace it)' : ''}</label>
                     <input className="input" id={`${id}-k`} type="password" autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} aria-describedby={`${id}-kh`} />

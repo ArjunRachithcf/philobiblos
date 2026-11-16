@@ -189,6 +189,7 @@ async function receive(req: FastifyRequest, db: Db, o: Receive, touch: () => voi
       id, personId: o.personId, url, note, title, caption, mediaJson: '[]', mediaTotal: files, mediaRefused: 0,
       // A share is done once its images are re-encoded and its videos' frames taken; the AI reads it then (ai/jobs.ts).
       status: files ? 'received' : 'done', foundJson: null, error: null, createdAt: (o.now ?? new Date()).toISOString(),
+      tokenId: o.tokenId ?? null, aiReadAt: null,
     };
     db.insert(t.share).values(row).run();
     return row;

@@ -2,7 +2,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Db } from '../db/open';
 import { requireAdmin } from '../auth/hook';
-import { KnowledgeError, editIdea, getBrain, listMerges, listProposals, reviewBookIdea, reviewLink, undoMerge } from '../knowledge/knowledge';
+import { KnowledgeError, editIdea, getBrain, listMerges, listProposals, reviewBookIdea, reviewIdeaProposal, reviewLink, undoMerge } from '../knowledge/knowledge';
 
 export async function knowledgeRoutes(app: FastifyInstance, db: Db) {
   const fail = (reply: FastifyReply, e: unknown) => {
@@ -18,6 +18,9 @@ export async function knowledgeRoutes(app: FastifyInstance, db: Db) {
   });
   app.put<{ Params: { bookId: string; ideaId: string } }>('/books/:bookId/ideas/:ideaId', async (req, reply) => {
     try { return reviewBookIdea(db, req.caller!.personId, req.params.bookId, req.params.ideaId, req.body); } catch (e) { return fail(reply, e); }
+  });
+  app.put<{ Params: { proposalId: string } }>('/idea-proposals/:proposalId', async (req, reply) => {
+    try { return reviewIdeaProposal(db, req.caller!.personId, req.params.proposalId, req.body); } catch (e) { return fail(reply, e); }
   });
   app.patch<{ Params: { ideaId: string } }>('/ideas/:ideaId', async (req, reply) => {
     try { return editIdea(db, req.params.ideaId, req.body, req.caller!.personId); } catch (e) { return fail(reply, e); }

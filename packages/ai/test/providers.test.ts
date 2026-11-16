@@ -40,11 +40,19 @@ describe('prompts', () => {
     expect(b.user).toContain('2 images attached');
     expect(b.promptVersion).toBe('extract_titles.v1');
   });
-  it('book titles and blurbs are untrusted too; Shelf\'s own vocabulary is the input', () => {
+  it('book titles, blurbs and idea names are untrusted too; only Shelf\'s own fixed lists and numbers are the input', () => {
     const b = buildPrompt('tagBook', { book: { id: 'b1', title: '<b>Title</b>', authors: ['A'] }, blurb: 'From a page', ideaVocabulary: ['Value'], kidsThemes: ['Friendship'] });
     expect(b.user).toMatch(/<untrusted source="book">\n\{"authors":\["A"\],"id":"b1","title":"\\u003cb\\u003eTitle\\u003c\/b\\u003e"\}/);
     expect(b.user).toContain('<untrusted source="blurb">');
-    expect(/<input>\n(.*)\n<\/input>/.exec(b.user)![1]).toBe('{"ideaVocabulary":["Value"],"kidsThemes":["Friendship"]}');
+    // An idea name may be one a model proposed and a person confirmed: never in <input>.
+    expect(/<input>\n(.*)\n<\/input>/.exec(b.user)![1]).toBe('{"kidsThemes":["Friendship"]}');
+    expect(b.user).toContain('<untrusted source="ideaVocabulary">\n["Value"]\n</untrusted>');
+    const s = buildPrompt('suggestNext', { brain: { ideas: [{ name: 'Value', readCount: 1, layersFilled: ['intro'], gaps: ['core'] }] }, backlogTitles: [], owned: [], wildcards: true, max: 3 });
+    expect(/<input>\n(.*)\n<\/input>/.exec(s.user)![1]).toBe('{"max":3,"wildcards":true}');
+    expect(s.user).toContain('<untrusted source="brain">');
+    const e = buildPrompt('explainPick', { pick: { id: 'b1', title: 'T' }, move: 'deepen', buildsOn: [], idea: 'Value' });
+    expect(/<input>\n(.*)\n<\/input>/.exec(e.user)![1]).toBe('{"move":"deepen"}');
+    expect(e.user).toContain('<untrusted source="idea">\n"Value"\n</untrusted>');
   });
   it('the same input gives the same bytes', () => {
     const a = buildPrompt('suggestNext', { brain: { ideas: [{ name: 'X', readCount: 1, layersFilled: ['intro'], gaps: ['core'] }] }, backlogTitles: ['b'], owned: ['a'], wildcards: false, max: 3 });

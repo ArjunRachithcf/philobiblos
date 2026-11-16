@@ -77,3 +77,13 @@ kids' themes and a book's audience or fiction flag are not written yet); `propos
 person's own Inbox (`ai_suggestion`); `explainPick` → `order_line.why` of the kept plan. Admins run them as
 `ai_suggest`, `ai_tag` and `ai_explain` (`POST /jobs/{job}/run`); shares are read after the media worker.
 
+`tagBook`'s ideas: a name the household has is a proposed tag in that idea; any other name is kept on an
+`idea_proposal` (a name, no idea row) and becomes an idea only when a person confirms it (`PUT /idea-proposals/{id}`).
+No AI proposal counts in a brain or a score until a person confirms it, whatever its confidence (spec §6). Each run
+reads only what its person may: book ideas private to someone else are left out, and a why built on a link or an idea
+private to the pick's person is shown only to them (`order_line.why_audience`).
+
+Spend: with Claude, every run together stays within the household's daily allowance (`Settings.ai.dailyLimit`, tokens in
+any 24 hours, 200,000 by default; `usedToday` shows the use); a call that could go past it is not made. Shares are read
+at most 20 a day per share token and 40 per person.
+

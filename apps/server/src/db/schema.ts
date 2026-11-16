@@ -63,6 +63,8 @@ export const householdSettings = sqliteTable('household_settings', {
   aiModelsJson: text('ai_models_json').notNull().default('{}'),
   // The lines of Settings' "what leaves" an admin accepted with Claude (JSON array; ai/settings.ts leavesAccepted).
   aiLeavesAccepted: text('ai_leaves_accepted'),
+  // The household's AI allowance with Claude: tokens (input and output) in any 24 hours, across every run (ai/run.ts).
+  aiDailyTokens: integer('ai_daily_tokens').notNull().default(200000),
 }, (t) => [
   check('household_settings_one', sql`${t.id} = 1`),
   check('household_settings_ai_provider', sql`${t.aiProvider} IN ('claude','ollama','none')`),
@@ -164,6 +166,28 @@ export const bookIdea = sqliteTable('book_idea', {
   check('book_idea_state', sql`${t.state} IN ('proposed','confirmed','rejected')`),
 ]);
 
+// A new idea the AI proposed for a book (M3 g): only a name on a proposal. No idea row exists for it until a person
+// confirms it (knowledge/knowledge.ts reviewIdeaProposal), so a name a model made up never joins the household's
+// vocabulary, and never reaches another prompt, on the model's word alone.
+export const ideaProposal = sqliteTable('idea_proposal', {
+  id: text('id').primaryKey(),
+  bookId: text('book_id').notNull().references(() => book.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  layer: text('layer', { enum: ['intro', 'core', 'deep', 'counterpoint'] }).notNull(),
+  confidence: real('confidence').notNull(),
+  state: text('state', { enum: ['proposed', 'confirmed', 'rejected'] }).notNull().default('proposed'),
+  aiRunId: text('ai_run_id').references(() => aiRun.id),
+  // The idea it became once confirmed (an existing one of that name, or a new one).
+  ideaId: text('idea_id').references(() => idea.id),
+  reviewedBy: text('reviewed_by').references(() => person.id, { onDelete: 'set null' }),
+  reviewedAt: text('reviewed_at'),
+  privateTo: text('private_to').references(() => person.id, { onDelete: 'cascade' }),
+}, (t) => [
+  uniqueIndex('idea_proposal_book_name').on(t.bookId, t.name),
+  check('idea_proposal_layer', sql`${t.layer} IN ('intro','core','deep','counterpoint')`),
+  check('idea_proposal_state', sql`${t.state} IN ('proposed','confirmed','rejected')`),
+]);
+
 // A merge leaves the rows as they were: an idea points at the one it went into (one step; merging again re-points), and
 // readers resolve it. The log says who merged and when, and what was re-pointed, so an admin can undo it.
 export const ideaMerge = sqliteTable('idea_merge', {
@@ -255,6 +279,9 @@ export const orderLine = sqliteTable('order_line', {
   quotedC: integer('quoted_c'),
   delivery: text('delivery'),
   state: text('state', { enum: ['planned', 'quoted', 'unavailable', 'delivered', 'rolled_over'] }).notNull().default('planned'),
+  // Who may read the AI's why (null: everyone who sees the plan): its pick's person when it was built on something
+  // private to them (a link or a book idea from their takeaways), so only they see it.
+  whyAudience: text('why_audience'),
 }, (t) => [
   primaryKey({ columns: [t.orderId, t.bookId] }),
   check('order_line_state', sql`${t.state} IN ('planned','quoted','unavailable','delivered','rolled_over')`),
@@ -275,6 +302,10 @@ export const share = sqliteTable('share', {
   mediaTotal: integer('media_total').notNull().default(0),
   mediaRefused: integer('media_refused').notNull().default(0),
   error: text('error'),
+  // The share token it came with (null: the PWA, a session), and when the AI read it: the daily AI reads are counted
+  // per person and per token (ai/jobs.ts SHARE_AI).
+  tokenId: text('token_id').references(() => shareToken.id, { onDelete: 'set null' }),
+  aiReadAt: text('ai_read_at'),
 }, (t) => [check('share_status', sql`${t.status} IN ('received','reading','done','failed')`)]);
 
 // What a person decided in the Inbox (M3 e): one row per book of an item, idx -1 for the whole item dismissed.
@@ -343,7 +374,9 @@ export const aiRun = sqliteTable('ai_run', {
   takeawaysOf: text('takeaways_of').references(() => person.id, { onDelete: 'cascade' }),
   // Whose request it served (a share's sharer, the person a suggestion is for); null for the household's (a book's tags).
   personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
-}, (t) => [index('ai_run_cache').on(t.job, t.promptVersion, t.inputHash)]);
+  // Tokens the provider counted (input and output, every attempt): the household's daily allowance sums them.
+  tokens: integer('tokens').notNull().default(0),
+}, (t) => [index('ai_run_cache').on(t.job, t.promptVersion, t.inputHash), index('ai_run_spend').on(t.provider, t.startedAt)]);
 
 export const jobRun = sqliteTable('job_run', {
   id: text('id').primaryKey(),
