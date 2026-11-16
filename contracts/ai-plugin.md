@@ -63,9 +63,29 @@ hold (`FIELDS` and each job's `sends` in `packages/ai/src/jobs.ts`), and `buildP
 its job does not list, so the two cannot drift. It says what that means: each request is one person's (one adult's
 read books, up to 60, with their takeaways if they turned them on; one adult's reading map with their backlog's titles;
 one adult's pick with the read books it builds on), without their name, plus the books themselves, the household's idea
-names, owned titles and shared posts. Turning Claude on is an admin's request with `acceptLeaves: true`; the accepted
+names, owned titles and shared posts. Turning Claude on is an admin's request with `acceptLeaves`, the `leavesVersion` of the list their page showed
+(refused when the list is another by then); the accepted
 lines are stored, and while the list holds a line they do not (a job turned on, a newer Shelf that sends more), Claude
 is not called until an admin accepts again. The API key is sealed like the delivery address and never answered back. A
 person's takeaways reach no AI, Ollama included, unless that person turns on `takeawaysToAi` (off by default;
 `apps/server/src/library/ai-context.ts` is the one place that hands them out). Names of people and kids and the delivery
 address never leave.
+
+**Where the output goes** (`apps/server/src/ai/jobs.ts`): `extractTitles` → the share's found books (the Inbox offers
+them; without a vision model, the caption only, and the Inbox says so); `tagBook` → proposed book ideas (adults' books;
+kids' themes and a book's audience or fiction flag are not written yet); `proposeLinks` → proposed links through
+`knowledge/from-run.ts`; `checkRedundant` → a proposed `redundancy`, counted only once confirmed; `suggestNext` → the
+person's own Inbox (`ai_suggestion`); `explainPick` → `order_line.why` of the kept plan. Admins run them as
+`ai_suggest`, `ai_tag` and `ai_explain` (`POST /jobs/{job}/run`); shares are read after the media worker.
+
+`tagBook`'s ideas: a name the household has is a proposed tag in that idea; any other name is kept on an
+`idea_proposal` (a name, no idea row) and becomes an idea only when a person confirms it (`PUT /idea-proposals/{id}`).
+No AI proposal counts in a brain or a score until a person confirms it, whatever its confidence (spec §6). Each run
+reads only what its person may: book ideas private to someone else are left out, and a why built on a link or an idea
+private to the pick's person is shown only to them (`order_line.why_audience`).
+
+Spend: with Claude, every run together stays within the household's daily allowance (`Settings.ai.dailyLimit`, tokens in
+any 24 hours, 200,000 by default; `usedToday` shows the use); a call that could go past it is not made. A share's runs
+spend at most half of it per sharer and 40% per share token. Shares are read at most 20 a day per share token and 40 per
+person, chosen round-robin by each person's oldest, so one person's pile never hides another's.
+

@@ -192,6 +192,14 @@ paths:
       summary: 'A person confirms or rejects a book''s idea, or moves it to another layer (which confirms it). Same privacy as links.'
       requestBody: { required: true, content: { application/json: { schema: { type: object, minProperties: 1, additionalProperties: false, properties: { state: { enum: [confirmed, rejected] }, layer: { $ref: '#/components/schemas/Layer' } } } } } }
       responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such idea on that book, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [state, layer], properties: { state: { enum: [confirmed, rejected] }, layer: { $ref: '#/components/schemas/Layer' } } } } } } }
+  /idea-proposals/{proposalId}:
+    parameters: [{ name: proposalId, in: path, required: true, schema: {type: string} }]
+    put:
+      tags: [brain]
+      operationId: reviewIdeaProposal
+      summary: 'A person confirms a new idea the AI proposed for a book (it becomes an idea, or the existing one of that name, with the book confirmed in it), moves it to another layer (which confirms it), or rejects it (no idea is made). Same privacy as links; 409 once decided.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, minProperties: 1, additionalProperties: false, properties: { state: { enum: [confirmed, rejected] }, layer: { $ref: '#/components/schemas/Layer' } } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such proposal, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: Already decided, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [state, layer], properties: { state: { enum: [confirmed, rejected] }, layer: { $ref: '#/components/schemas/Layer' }, idea: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } } } } } } } }
   /ideas/{ideaId}:
     parameters: [{ name: ideaId, in: path, required: true, schema: {type: string} }]
     patch:
@@ -230,7 +238,7 @@ paths:
     get:
       tags: [inbox]
       operationId: getInbox
-      summary: 'What waits for a person: their own shares (and AI suggestions, M3 g), and the household''s mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (one item for all of it: a count and the commonest reasons, nothing of any content). Decided and dismissed items drop out. Paged.'
+      summary: 'What waits for a person: their own shares and AI suggestions (each person''s own), and the household''s mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (one item for all of it: a count and the commonest reasons, nothing of any content). Decided and dismissed items drop out. Paged.'
       parameters: [{ name: filter, in: query, schema: { enum: [all, ai, shared, mail] } }, { name: cursor, in: query, schema: { type: string, maxLength: 600 }, description: 'nextCursor of the page before' }, { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }]
       responses: { '400': { description: 'Unknown filter, a cursor that is not one, or a limit out of range', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'A page, newest first; unverified mail is one item (m_unverified) on the first page', content: { application/json: { schema: { type: object, required: [items, nextCursor], properties: { items: { type: array, items: { $ref: '#/components/schemas/InboxItem' } }, nextCursor: { type: [string, 'null'] } } } } } } }
   /inbox/{itemId}/books/{index}:
@@ -285,7 +293,7 @@ paths:
     get: { tags: [settings], operationId: getSettings, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } } } }
     patch: { tags: [settings], operationId: patchSettings, summary: '`person` (your own settings) is stored, and the household''s `budget`, `order` and `ai` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it).', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: No sealing key (for the addresses or a Claude key), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
   /jobs/{job}/run:
-    post: { tags: [system], operationId: runJob, description: 'Admins only. prices, metadata, covers, mail and shares (the media worker''s queue of shared images and videos) run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet.', parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, metadata, covers, ai_suggest] } }, { name: again, in: query, required: false, schema: { enum: ['true', 'false'] }, description: 'metadata: look up every book again, not only those never looked up' }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started, content: { application/json: { schema: { type: object, properties: { id: { type: string, description: 'the job_run row' } } } } } }, '409': { description: 'That job is running already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } } }
+    post: { tags: [system], operationId: runJob, description: 'Admins only. prices, metadata, covers, mail and shares (the media worker''s queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult''s Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month''s kept picks) run through the AI provider in Settings; monthly arrives with its slice and changes nothing yet.', parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, metadata, covers, ai_suggest, ai_tag, ai_explain] } }, { name: again, in: query, required: false, schema: { enum: ['true', 'false'] }, description: 'metadata: look up every book again, not only those never looked up' }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started, content: { application/json: { schema: { type: object, properties: { id: { type: string, description: 'the job_run row' } } } } } }, '409': { description: 'That job is running already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } } }
 
 components:
   securitySchemes:
@@ -348,10 +356,11 @@ components:
     IdeaRef: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } }
     Proposals:
       type: object
-      required: [links, ideas]
+      required: [links, ideas, newIdeas]
       properties:
         links: { type: array, items: { type: object, required: [from, to, reason, confidence, fromAi, onlyYou], properties: { from: { $ref: '#/components/schemas/BookRef' }, to: { $ref: '#/components/schemas/BookRef' }, reason: {type: string}, confidence: {type: number}, fromAi: {type: boolean}, onlyYou: { type: boolean, description: 'written from your own takeaways: nobody else sees it' } } } }
         ideas: { type: array, items: { type: object, required: [book, idea, layer, confidence, fromAi, onlyYou], properties: { book: { $ref: '#/components/schemas/BookRef' }, idea: { type: object, required: [id, name], properties: { id: {type: string}, name: {type: string} } }, layer: { $ref: '#/components/schemas/Layer' }, confidence: {type: number}, fromAi: {type: boolean}, onlyYou: { type: boolean, description: 'written from your own takeaways: nobody else sees it' } } } }
+        newIdeas: { type: array, description: 'new ideas the AI proposed for a book: a name only, no idea exists until a person confirms one (PUT /idea-proposals/{id})', items: { type: object, required: [id, book, name, layer, confidence, fromAi, onlyYou], properties: { id: {type: string}, book: { $ref: '#/components/schemas/BookRef' }, name: {type: string}, layer: { $ref: '#/components/schemas/Layer' }, confidence: {type: number}, fromAi: {type: boolean}, onlyYou: { type: boolean, description: 'written from your own takeaways: nobody else sees it' } } } }
     Brain:
       type: object
       required: [ideas, edges]
@@ -379,7 +388,7 @@ components:
         title: { type: string, description: 'Shelf''s own words, or a share''s title, or a verified mail''s subject (safeField); plain text, never HTML' }
         createdAt: {type: string}
         mediaCount: {type: integer}
-        share: { type: object, description: 'kind share', properties: { status: { enum: [received, reading, done, failed] }, progress: { type: object, properties: { done: {type: integer}, total: {type: integer} } }, refused: {type: integer}, url: { type: [string, 'null'] }, note: { type: [string, 'null'] } } }
+        share: { type: object, description: 'kind share', properties: { status: { enum: [received, reading, done, failed] }, progress: { type: object, properties: { done: {type: integer}, total: {type: integer} } }, refused: {type: integer}, url: { type: [string, 'null'] }, note: { type: [string, 'null'] }, aiNote: { type: [string, 'null'], description: 'what the AI could not read of it (images without a vision model, or nothing), Shelf''s words' } } }
         unverified: { type: object, description: 'kind mail_unverified: every unverified mail since the item was last dismissed', properties: { count: {type: integer}, reasons: { type: array, maxItems: 5, items: { type: object, properties: { reason: {type: string}, count: {type: integer} } } } } }
         mail: { type: object, description: 'mail kinds: what Shelf knows of it. An unverified mail has its reason only.', properties: { reason: { type: [string, 'null'] }, expected: { type: [string, 'null'], description: 'the kind the mail looked like (failed closed)' }, date: { type: [string, 'null'] }, number: { type: [string, 'null'], description: 'order or invoice number' } } }
         found:
@@ -401,6 +410,8 @@ components:
               layer: {type: string}
               theme: {type: string}
               buildsOn: { type: array, items: {type: string} }
+              why: { type: string, description: 'kind ai_suggestion: the AI''s one line, plain text' }
+              move: { $ref: '#/components/schemas/Move' }
               decided: { enum: [added, skipped, null] }
     Share: { type: object, required: [id, status, progress], properties: { id: {type: string}, status: { enum: [received, reading, done, failed] }, progress: { type: object, required: [done, total], properties: { done: {type: integer}, total: {type: integer} } }, refused: { type: integer, description: 'images the media worker refused' }, found: { type: array, items: { type: object, required: [title], properties: { title: {type: string}, author: { type: [string, 'null'] } } } }, error: { type: [string, 'null'] } } }
     Order:
@@ -426,7 +437,7 @@ components:
         newAuthorsOnly: {type: boolean}
         ai:
           type: object
-          description: 'The AI plugin (contracts/ai-plugin.md); admins change it. Ollama is the default and nothing leaves the home network with it; Claude is an opt-in that needs its API key and acceptLeaves: true in the same request.'
+          description: 'The AI plugin (contracts/ai-plugin.md); admins change it. Ollama is the default and nothing leaves the home network with it; Claude is an opt-in that needs its API key and acceptLeaves (the leavesVersion of the list read) in the same request.'
           properties:
             provider: { enum: [claude, ollama, none], description: 'ollama for a new household; claude only by explicit opt-in' }
             model: { type: string, description: 'Ollama''s text model' }
@@ -436,9 +447,12 @@ components:
             ollamaConfigured: { type: boolean, readOnly: true }
             claudeApiKey: { type: [string, 'null'], writeOnly: true, description: 'sealed like the delivery address (a key outside the database); never sent back. null removes it (and turns Claude off)' }
             hasClaudeKey: { type: boolean, readOnly: true }
-            acceptLeaves: { type: boolean, writeOnly: true, description: 'true: the admin read leavesWithClaude and accepts it as it is; needed to turn Claude on, to turn on a job that sends more while it is on, and again whenever the list holds a line not accepted (leavesAccepted false)' }
+            acceptLeaves: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: 'the leavesVersion of the list the admin read and accepts (400 when what leaves after this request is another list); needed to turn Claude on, to turn on a job that sends more while it is on, and again whenever the list holds a line not accepted (leavesAccepted false)' }
+            leavesVersion: { type: string, readOnly: true, description: 'the version of leavesWithClaude, which acceptLeaves carries' }
             leaves: { type: array, readOnly: true, items: {type: string}, description: 'what leaves the server with this provider (empty for Ollama and none)' }
             leavesWithClaude: { type: array, readOnly: true, items: {type: string}, description: 'what would leave with Claude and these jobs, shown before opting in: built from the fields each job''s requests may hold' }
+            dailyLimit: { type: integer, minimum: 10000, maximum: 20000000, description: 'the household''s allowance with Claude: tokens (input and output) in any 24 hours, every run together (default 200000); a call that could go past it is not made and its job stops as blocked' }
+            usedToday: { type: integer, readOnly: true, description: 'tokens Claude counted in the last 24 hours' }
             leavesAccepted: { type: boolean, readOnly: true, description: 'Claude is on and an admin accepted every line of leaves; while false Claude is not called' }
             jobs: { type: object, properties: { read: {type: boolean}, link: {type: boolean}, suggest: {type: boolean}, explain: {type: boolean}, wildcards: {type: boolean} } }
         person: { type: object, description: settings of the current person, properties: { mix: { enum: [deepen_connect, deepen_broaden, ai] }, unreadLimit: {type: integer}, counterpoints: {type: boolean}, takeaways: {type: boolean}, takeawaysToAi: { type: boolean, description: 'whether any AI (local or not) may read your takeaways; off unless you turn it on' }, fiction: {type: boolean}, weights: { type: object, additionalProperties: {type: number} } } }

@@ -145,7 +145,11 @@ export function getMonth(db: Db, month: string, viewer: string): S['MonthPlan'] 
   const picks = (p: Person) => lines.filter((l) => l.forPerson === p.id).flatMap((l) => {
     const r = rows.get(`${l.forPerson}.${l.bookId}`);
     if (!r) return [];
-    return [{ candidate: publicView(r), ...(l.move ? { move: l.move as S['Move'] } : {}), why: why(r), idea: p.role === 'kid' ? r.theme ?? undefined : r.ideas?.[0]?.name }];
+    // A kept line's why is the AI's one line when it wrote one (explainPick, ai/jobs.ts), else Shelf's own words. One
+    // built on something private to the pick's person (why_audience) is theirs to read; everyone else gets Shelf's.
+    const mayRead = !('whyAudience' in l) || !l.whyAudience || l.whyAudience === viewer;
+    const said = 'why' in l && typeof l.why === 'string' && l.why && mayRead ? l.why : null;
+    return [{ candidate: publicView(r), ...(l.move ? { move: l.move as S['Move'] } : {}), why: said ?? why(r), idea: p.role === 'kid' ? r.theme ?? undefined : r.ideas?.[0]?.name }];
   });
   const { budget, isOverride } = monthBudget(db, month);
   const mine = lines.filter((l) => l.forPerson === viewer).map((l) => rows.get(`${l.forPerson}.${l.bookId}`)).filter((r): r is Row => Boolean(r));

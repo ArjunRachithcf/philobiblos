@@ -481,6 +481,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/idea-proposals/{proposalId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposalId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** A person confirms a new idea the AI proposed for a book (it becomes an idea, or the existing one of that name, with the book confirmed in it), moves it to another layer (which confirms it), or rejects it (no idea is made). Same privacy as links; 409 once decided. */
+        put: operations["reviewIdeaProposal"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ideas/{ideaId}": {
         parameters: {
             query?: never;
@@ -582,7 +601,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What waits for a person: their own shares (and AI suggestions, M3 g), and the household's mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (one item for all of it: a count and the commonest reasons, nothing of any content). Decided and dismissed items drop out. Paged. */
+        /** What waits for a person: their own shares and AI suggestions (each person's own), and the household's mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (one item for all of it: a count and the commonest reasons, nothing of any content). Decided and dismissed items drop out. Paged. */
         get: operations["getInbox"];
         put?: never;
         post?: never;
@@ -758,7 +777,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos) run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
+        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult's Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month's kept picks) run through the AI provider in Settings; monthly arrives with its slice and changes nothing yet. */
         post: operations["runJob"];
         delete?: never;
         options?: never;
@@ -961,6 +980,17 @@ export interface components {
                 /** @description written from your own takeaways: nobody else sees it */
                 onlyYou: boolean;
             }[];
+            /** @description new ideas the AI proposed for a book: a name only, no idea exists until a person confirms one (PUT /idea-proposals/{id}) */
+            newIdeas: {
+                id: string;
+                book: components["schemas"]["BookRef"];
+                name: string;
+                layer: components["schemas"]["Layer"];
+                confidence: number;
+                fromAi: boolean;
+                /** @description written from your own takeaways: nobody else sees it */
+                onlyYou: boolean;
+            }[];
         };
         Brain: {
             ideas: {
@@ -1044,6 +1074,8 @@ export interface components {
                 refused?: number;
                 url?: string | null;
                 note?: string | null;
+                /** @description what the AI could not read of it (images without a vision model, or nothing), Shelf's words */
+                aiNote?: string | null;
             };
             /** @description kind mail_unverified: every unverified mail since the item was last dismissed */
             unverified?: {
@@ -1080,6 +1112,9 @@ export interface components {
                 layer?: string;
                 theme?: string;
                 buildsOn?: string[];
+                /** @description kind ai_suggestion: the AI's one line, plain text */
+                why?: string;
+                move?: components["schemas"]["Move"];
                 /** @enum {unknown} */
                 decided: "added" | "skipped" | null;
             }[];
@@ -1132,7 +1167,7 @@ export interface components {
             budget?: components["schemas"]["Budget"];
             adultPicks?: number;
             newAuthorsOnly?: boolean;
-            /** @description The AI plugin (contracts/ai-plugin.md); admins change it. Ollama is the default and nothing leaves the home network with it; Claude is an opt-in that needs its API key and acceptLeaves: true in the same request. */
+            /** @description The AI plugin (contracts/ai-plugin.md); admins change it. Ollama is the default and nothing leaves the home network with it; Claude is an opt-in that needs its API key and acceptLeaves (the leavesVersion of the list read) in the same request. */
             ai?: {
                 /**
                  * @description ollama for a new household; claude only by explicit opt-in
@@ -1151,12 +1186,18 @@ export interface components {
                 /** @description sealed like the delivery address (a key outside the database); never sent back. null removes it (and turns Claude off) */
                 claudeApiKey?: string | null;
                 readonly hasClaudeKey?: boolean;
-                /** @description true: the admin read leavesWithClaude and accepts it as it is; needed to turn Claude on, to turn on a job that sends more while it is on, and again whenever the list holds a line not accepted (leavesAccepted false) */
-                acceptLeaves?: boolean;
+                /** @description the leavesVersion of the list the admin read and accepts (400 when what leaves after this request is another list); needed to turn Claude on, to turn on a job that sends more while it is on, and again whenever the list holds a line not accepted (leavesAccepted false) */
+                acceptLeaves?: string;
+                /** @description the version of leavesWithClaude, which acceptLeaves carries */
+                readonly leavesVersion?: string;
                 /** @description what leaves the server with this provider (empty for Ollama and none) */
                 readonly leaves?: string[];
                 /** @description what would leave with Claude and these jobs, shown before opting in: built from the fields each job's requests may hold */
                 readonly leavesWithClaude?: string[];
+                /** @description the household's allowance with Claude: tokens (input and output) in any 24 hours, every run together (default 200000); a call that could go past it is not made and its job stops as blocked */
+                dailyLimit?: number;
+                /** @description tokens Claude counted in the last 24 hours */
+                readonly usedToday?: number;
                 /** @description Claude is on and an admin accepted every line of leaves; while false Claude is not called */
                 readonly leavesAccepted?: boolean;
                 jobs?: {
@@ -2549,6 +2590,73 @@ export interface operations {
             };
         };
     };
+    reviewIdeaProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {unknown} */
+                    state?: "confirmed" | "rejected";
+                    layer?: components["schemas"]["Layer"];
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {unknown} */
+                        state: "confirmed" | "rejected";
+                        layer: components["schemas"]["Layer"];
+                        idea?: {
+                            id: string;
+                            name: string;
+                        };
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such proposal */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already decided */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     editIdea: {
         parameters: {
             query?: never;
@@ -3249,7 +3357,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                job: "monthly" | "mail" | "shares" | "prices" | "metadata" | "covers" | "ai_suggest";
+                job: "monthly" | "mail" | "shares" | "prices" | "metadata" | "covers" | "ai_suggest" | "ai_tag" | "ai_explain";
             };
             cookie?: never;
         };

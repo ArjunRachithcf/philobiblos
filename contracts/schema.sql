@@ -62,7 +62,8 @@ CREATE TABLE household_settings (
   cycle_time        TEXT NOT NULL DEFAULT '20:17',
   timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',
   ai_models_json    TEXT NOT NULL DEFAULT '{}',  -- the AI's models (Ollama's text and vision model, Claude's); the Claude key is sealed, never here
-  ai_leaves_accepted TEXT                       -- JSON: the lines of what leaves with Claude an admin accepted; Claude runs only while they cover it
+  ai_leaves_accepted TEXT,                      -- JSON: the lines of what leaves with Claude an admin accepted; Claude runs only while they cover it
+  ai_daily_tokens   INTEGER NOT NULL DEFAULT 200000 -- the household's Claude allowance: tokens in any 24 hours, every run together
 );
 
 CREATE TABLE month_override (             -- "just this month" budget changes
@@ -148,6 +149,21 @@ CREATE TABLE book_idea (
   PRIMARY KEY (book_id, idea_id)
 );
 
+CREATE TABLE idea_proposal (              -- a new idea the AI proposed for a book: a name only, no idea row until a person confirms it
+  id          TEXT PRIMARY KEY NOT NULL,
+  book_id     TEXT NOT NULL REFERENCES book(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  layer       TEXT NOT NULL CHECK (layer IN ('intro','core','deep','counterpoint')),
+  confidence  REAL NOT NULL,
+  state       TEXT NOT NULL DEFAULT 'proposed' CHECK (state IN ('proposed','confirmed','rejected')),
+  ai_run_id   TEXT REFERENCES ai_run(id),
+  idea_id     TEXT REFERENCES idea(id),     -- the idea it became once confirmed
+  reviewed_by TEXT REFERENCES person(id) ON DELETE SET NULL,
+  reviewed_at TEXT,
+  private_to  TEXT REFERENCES person(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX idea_proposal_book_name ON idea_proposal (book_id, name);
+
 CREATE TABLE idea_merge (                  -- who merged which idea into which, and when; an admin can undo it
   id             TEXT PRIMARY KEY NOT NULL,
   idea_id        TEXT NOT NULL REFERENCES idea(id),
@@ -224,6 +240,7 @@ CREATE TABLE order_line (
   why       TEXT,
   estimate_c INTEGER, quoted_c INTEGER, delivery TEXT,
   state     TEXT NOT NULL DEFAULT 'planned' CHECK (state IN ('planned','quoted','unavailable','delivered','rolled_over')),
+  why_audience TEXT,                       -- who may read the AI's why (NULL: everyone); its person when built on something private to them
   PRIMARY KEY (order_id, book_id)
 );
 
@@ -239,7 +256,9 @@ CREATE TABLE share (
   title      TEXT, caption TEXT,            -- what the phone sent with it (untrusted: marked so in prompts, shown as text)
   media_total INTEGER NOT NULL DEFAULT 0,  -- files received; progress = kept + refused of this
   media_refused INTEGER NOT NULL DEFAULT 0,-- files the media worker refused (not an image, too many pixels, unreadable)
-  error      TEXT                          -- Shelf's own words when it failed
+  error      TEXT,                         -- Shelf's own words when it failed
+  token_id   TEXT REFERENCES share_token(id) ON DELETE SET NULL, -- the share token it came with (NULL: a session)
+  ai_read_at TEXT                          -- when the AI read it: daily AI reads counted per person and per token
 );
 
 CREATE TABLE inbox_decision (              -- what a person decided in the Inbox (M3 e); idx -1: the whole item dismissed
@@ -288,9 +307,12 @@ CREATE TABLE ai_run (
   prompt_version TEXT NOT NULL, input_hash TEXT NOT NULL, output_json TEXT, cost_c INTEGER,
   started_at TEXT NOT NULL, finished_at TEXT, error TEXT,
   takeaways_of TEXT REFERENCES person(id) ON DELETE CASCADE, -- whose takeaways the input held; purged when they opt out
-  person_id    TEXT REFERENCES person(id) ON DELETE CASCADE  -- whose request it served (a share's sharer, a suggestion's person); NULL: the household's
+  person_id    TEXT REFERENCES person(id) ON DELETE CASCADE, -- whose request it served (a share's sharer, a suggestion's person); NULL: the household's
+  tokens       INTEGER NOT NULL DEFAULT 0, -- tokens the provider counted (input and output, every attempt): the daily allowance sums them
+  share_token_id TEXT REFERENCES share_token(id) ON DELETE SET NULL -- a share's run: the token it came with (its part of the allowance)
 );
 CREATE INDEX ai_run_cache ON ai_run (job, prompt_version, input_hash); -- identical input + prompt version reuses the output
+CREATE INDEX ai_run_spend ON ai_run (provider, started_at);
 
 CREATE TABLE job_run (
   id TEXT PRIMARY KEY NOT NULL, job TEXT NOT NULL, status TEXT NOT NULL, detail TEXT, started_at TEXT NOT NULL, finished_at TEXT
@@ -335,3 +357,10 @@ BEGIN SELECT RAISE(ABORT, 'book_link: a private row is never replaced (INSERT OR
 CREATE TRIGGER book_idea_private_not_replaced BEFORE INSERT ON book_idea
 WHEN EXISTS (SELECT 1 FROM book_idea WHERE book_id = NEW.book_id AND idea_id = NEW.idea_id AND private_to IS NOT NULL AND private_to IS NOT NEW.private_to)
 BEGIN SELECT RAISE(ABORT, 'book_idea: a private row is never replaced (INSERT OR REPLACE) without its private_to'); END;
+-- A new idea's proposal (M3 g): private_to is its run's takeaways_of, and never changes.
+CREATE TRIGGER idea_proposal_private_to_check_insert BEFORE INSERT ON idea_proposal
+WHEN NEW.ai_run_id IS NOT NULL AND NEW.private_to IS NOT (SELECT takeaways_of FROM ai_run WHERE id = NEW.ai_run_id)
+BEGIN SELECT RAISE(ABORT, 'idea_proposal.private_to must be its run''s takeaways_of'); END;
+CREATE TRIGGER idea_proposal_private_to_kept BEFORE UPDATE OF private_to ON idea_proposal
+WHEN NEW.private_to IS NOT OLD.private_to
+BEGIN SELECT RAISE(ABORT, 'idea_proposal.private_to never changes (delete the row instead)'); END;

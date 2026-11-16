@@ -108,7 +108,7 @@ const kept = (dataDir: string, id: string) => join(dataDir, 'shares', id);
  * and records the share. Every part is read to its end, so a refusal never leaves a request half read; on any refusal
  * nothing is kept.
  */
-export async function receiveShare(req: FastifyRequest, db: Db, o: Receive & { tokenId?: string | null }): Promise<ShareRow> {
+export async function receiveShare(req: FastifyRequest, db: Db, o: Receive): Promise<ShareRow> {
   if (!req.isMultipart()) throw new ShareError(400, 'a share is multipart/form-data');
   let mine = 0;
   for (const u of open) if (u.personId === o.personId) mine++;
@@ -130,7 +130,7 @@ export async function receiveShare(req: FastifyRequest, db: Db, o: Receive & { t
   }
 }
 
-interface Receive { dataDir: string; workDir: string | null; personId: string; now?: Date }
+interface Receive { dataDir: string; workDir: string | null; personId: string; tokenId?: string | null; now?: Date }
 
 /** A part's chunks, each one telling the upload's idle timer that bytes came. */
 async function* chunks(file: AsyncIterable<unknown>, touch: () => void): AsyncGenerator<Buffer> {
@@ -187,8 +187,9 @@ async function receive(req: FastifyRequest, db: Db, o: Receive, touch: () => voi
     if (!url && !caption && !title && !note && !files) throw new ShareError(400, 'nothing to share: a link, a caption or images');
     const row: ShareRow = {
       id, personId: o.personId, url, note, title, caption, mediaJson: '[]', mediaTotal: files, mediaRefused: 0,
-      // Until the AI reads shares (M3 g), a share is done once its images are re-encoded and its videos' frames taken.
+      // A share is done once its images are re-encoded and its videos' frames taken; the AI reads it then (ai/jobs.ts).
       status: files ? 'received' : 'done', foundJson: null, error: null, createdAt: (o.now ?? new Date()).toISOString(),
+      tokenId: o.tokenId ?? null, aiReadAt: null,
     };
     db.insert(t.share).values(row).run();
     return row;
@@ -214,7 +215,7 @@ export class ShareProcessor {
   private running: Promise<Outcome> | null = null;
   private again = false;
   private timer: NodeJS.Timeout | null = null;
-  constructor(private readonly db: Db, private readonly o: { dataDir: string; workDir: string | null; media?: typeof runMediaJob; now?: () => Date; retryMs?: number }) {}
+  constructor(private readonly db: Db, private readonly o: { dataDir: string; workDir: string | null; media?: typeof runMediaJob; now?: () => Date; retryMs?: number; after?: () => void }) {}
 
   /** Starts a run unless one is going (which then looks again); resolves when the run ends. */
   kick(): Promise<Outcome> {
@@ -222,6 +223,8 @@ export class ShareProcessor {
     this.running = (async () => {
       let out: Outcome;
       do { this.again = false; out = await this.runOnce(); } while (this.again);
+      // Then the AI reads what the worker is done with (ai/jobs.ts), shares without files too.
+      this.o.after?.();
       return out;
     })().finally(() => { this.running = null; });
     return this.running;
@@ -323,6 +326,17 @@ export function shareView(r: ShareRow): S['Share'] {
 /** The sharer's own share, or undefined (another adult's is not there for them). */
 export function ownShare(db: Db, personId: string, id: string): ShareRow | undefined {
   return db.select().from(t.share).where(and(eq(t.share.id, id), eq(t.share.personId, personId))).get();
+}
+
+/** What the AI could read of a share, in Shelf's words for the Inbox; null when it read it all, or has not yet. */
+export function shareAiNote(r: Pick<ShareRow, 'foundJson' | 'mediaJson'>): string | null {
+  let o: unknown;
+  try { o = JSON.parse(r.foundJson ?? 'null'); } catch { return null; }
+  if (!o || typeof o !== 'object') return null;
+  const x = o as Record<string, unknown>;
+  if (typeof x.unread === 'string') return 'The AI could not read this share; add its books by hand.';
+  if (x.readFrom === 'caption' && keptFiles(r.mediaJson) > 0) return 'Read from its caption only: no vision model is set up for images.';
+  return null;
 }
 
 /** The books the AI found in a share (contracts/ai/extract_titles.schema.json), as untrusted data: checked, bounded. */

@@ -1,7 +1,9 @@
 // What each job sends and what it may answer (contracts/ai-plugin.md, ADR 0009).
 //
 // - `split` is the job's data minimisation: it picks the fields the job needs, bounded, and says which are Shelf's own
-//   (`data`) and which came from outside (`untrusted`, by source). Nothing else of the input reaches a provider.
+//   (`data`: numbers, enums, its fixed lists and settings) and which came from outside or from a model (`untrusted`, by
+//   source: titles, blurbs, captions, takeaways, and idea names, which a model may first have proposed). Nothing else of
+//   the input reaches a provider.
 // - `clean` runs after the answer validated against the contract schema: the answer is data from a model that may have
 //   read hostile text, so every id must be one the input named, every text is one line of plain characters within its
 //   bound, and what Shelf decides (a new idea, a wildcard, the count) is Shelf's, never the model's word.
@@ -81,8 +83,10 @@ const tagBook: Spec<TagBookIn, TagBookOut> = {
   prompt: 'tag_book', version: 1, maxTokens: 2048,
   sends: { ideaVocabulary: 'ideaNames', kidsThemes: 'kidsThemes', book: 'backlogBook', 'book.id': 'ids', 'book.title': 'backlogBook', 'book.authors': 'backlogBook', blurb: 'backlogBook' },
   split: (i) => ({
-    data: { ideaVocabulary: i.ideaVocabulary.slice(0, SEND.vocabulary), kidsThemes: i.kidsThemes },
-    untrusted: [['book', books(i.book)], ['blurb', line(i.blurb, SEND.blurb)]],
+    // Idea names are the household's, but a person may have confirmed one a model first proposed: untrusted, like
+    // anything a model wrote. Only Shelf's own list of kids' themes is the input.
+    data: { kidsThemes: i.kidsThemes },
+    untrusted: [['ideaVocabulary', i.ideaVocabulary.slice(0, SEND.vocabulary).map((n) => line(n, 60))], ['book', books(i.book)], ['blurb', line(i.blurb, SEND.blurb)]],
   }),
   clean(o, i) {
     const known = new Map(i.ideaVocabulary.map((n) => [norm(n), n]));
@@ -135,8 +139,8 @@ const suggestNext: Spec<SuggestNextIn, SuggestNextOut> = {
     backlogTitles: 'backlogTitles', owned: 'ownedTitles',
   },
   split: (i) => ({
-    data: { wildcards: i.wildcards, max: Math.min(i.max, 3), brain: { ideas: i.brain.ideas.slice(0, SEND.ideas).map((x) => ({ name: line(x.name, 60), readCount: x.readCount, layersFilled: x.layersFilled, gaps: x.gaps })) } },
-    untrusted: [['owned', i.owned.slice(0, SEND.owned).map((t) => line(t, 300))], ['backlogTitles', i.backlogTitles.slice(0, SEND.backlog).map((t) => line(t, 300))]],
+    data: { wildcards: i.wildcards, max: Math.min(i.max, 3) },
+    untrusted: [['brain', { ideas: i.brain.ideas.slice(0, SEND.ideas).map((x) => ({ name: line(x.name, 60), readCount: x.readCount, layersFilled: x.layersFilled, gaps: x.gaps })) }], ['owned', i.owned.slice(0, SEND.owned).map((t) => line(t, 300))], ['backlogTitles', i.backlogTitles.slice(0, SEND.backlog).map((t) => line(t, 300))]],
   }),
   clean(o, i) {
     const taken = new Set([...i.owned, ...i.backlogTitles].map(norm));
@@ -156,7 +160,7 @@ const suggestNext: Spec<SuggestNextIn, SuggestNextOut> = {
 const explainPick: Spec<ExplainPickIn, ExplainPickOut> = {
   prompt: 'explain_pick', version: 1, maxTokens: 2048,
   sends: { move: 'pick', idea: 'pick', book: 'pick', 'book.id': 'ids', 'book.title': 'pick', 'book.authors': 'pick', buildsOn: 'buildsOn' },
-  split: (i) => ({ data: { move: i.move, idea: line(i.idea, 60) }, untrusted: [['book', books(i.pick)], ['buildsOn', i.buildsOn.slice(0, 10).map((t) => line(t, 300))]] }),
+  split: (i) => ({ data: { move: i.move }, untrusted: [['idea', line(i.idea, 60)], ['book', books(i.pick)], ['buildsOn', i.buildsOn.slice(0, 10).map((t) => line(t, 300))]] }),
   clean(o) {
     const why = line(o.why, EXPLAIN_MAX);
     return why ? { ok: true, out: { why } } : { ok: false, error: 'an empty why' };
@@ -176,12 +180,13 @@ const checkRedundant: Spec<CheckRedundantIn, CheckRedundantOut> = {
   },
 };
 
-/** Every key path of a value (`a.b`: key b of a's objects, or of its array's items), the root's own name first. */
+/** Every key path of a value (`a.b`: key b of a's objects, or of its array's items), the root's own name first; null values included. */
 export function keyPaths(root: string, v: unknown, out = new Set<string>()): Set<string> {
   if (root) out.add(root);
   if (Array.isArray(v)) { for (const x of v) keyPaths(root, x, out); return out; }
   if (v && typeof v === 'object') {
-    for (const [k, x] of Object.entries(v)) if (x !== undefined && x !== null) keyPaths(root ? `${root}.${k}` : k, x, out);
+    // A key sent as null is still sent: it is checked like any other (only undefined, which JSON drops, is not).
+    for (const [k, x] of Object.entries(v)) if (x !== undefined) keyPaths(root ? `${root}.${k}` : k, x, out);
   }
   return out;
 }

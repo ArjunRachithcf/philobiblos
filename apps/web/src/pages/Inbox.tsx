@@ -1,4 +1,4 @@
-// The Inbox (spec §4): your shares, and the household's bookshop mail that needs a person. For each book: add or skip;
+// The Inbox (spec §4): your shares, the AI's suggestions for you, and the household's bookshop mail that needs a person. For each book: add or skip;
 // each item can be dismissed. Everything here is data from the server, rendered as text (never as markup): titles,
 // captions and links come from phones and mail Shelf did not write, and a link is shown, never made clickable.
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -69,7 +69,7 @@ export function Inbox({ me }: { me: Me }) {
 
   return (
     <>
-      <PageHead title="Inbox" sub="What you shared, and the bookshop’s mail that needs a person. Add or skip each book." />
+      <PageHead title="Inbox" sub="What you shared, what the AI suggests for you, and the bookshop’s mail that needs a person. Add or skip each book." />
       <div className="stack" ref={list}>
         <Choice label="Show" value={filter} options={FILTERS} onChange={setFilter} />
         {error && <Notice kind="error">{error}</Notice>}
@@ -77,7 +77,7 @@ export function Inbox({ me }: { me: Me }) {
         {!items ? <p className="sr-only" role="status">Loading</p> : !items.length && !next ? (
           <section className="group-block" aria-labelledby="in-empty-h">
             <div className="group-head"><h2 id="in-empty-h" tabIndex={-1}>Nothing waiting</h2></div>
-            <p className="group-foot">{filter === 'ai' ? 'AI suggestions arrive here once the AI reads your shares.' : 'Share a post from your phone, or wait for the bookshop’s next mail.'}</p>
+            <p className="group-foot">{filter === 'ai' ? 'The AI’s suggestions for you arrive here, after the monthly refresh or when an admin runs them.' : 'Share a post from your phone, or wait for the bookshop’s next mail.'}</p>
           </section>
         ) : items.map((it) => <Item key={it.id} it={it} kids={kids} busy={busy} onDecide={decide} onDismiss={dismiss} />)}
         {next && <div className="btn-row"><button type="button" className="btn" onClick={() => void more()}>Show more</button></div>}
@@ -109,7 +109,9 @@ function Item({ it, kids, busy, onDecide, onDismiss }: {
         )}
         {it.kind === 'mail_failed' && <Notice kind="warn" title="Shelf could not read this mail, so it changed nothing.">{it.mail?.reason}{it.mail?.expected ? ` (it looked like: ${it.mail.expected.replace(/_/g, ' ')})` : ''}</Notice>}
         {it.kind === 'mail_waiting' && <Notice kind="info">{it.mail?.reason}</Notice>}
-        {it.kind === 'share' && it.share?.status === 'done' && !it.found.length && <p className="footnote">The AI reads shares for books once it is set up; until then, add the books by hand in the Backlog.</p>}
+        {it.share?.aiNote && <Notice kind="info">{it.share.aiNote}</Notice>}
+        {it.kind === 'ai_suggestion' && <p className="footnote">The AI suggests these from your reading map. Nothing is added until you add it.</p>}
+        {it.kind === 'share' && it.share?.status === 'done' && !it.found.length && !it.share.aiNote && <p className="footnote">The AI reads shares for books once it is set up; until then, add the books by hand in the Backlog.</p>}
         {it.found.length > 0 && (
           <ul className="group" role="list">
             {it.found.map((f) => <Book key={f.index} it={it} f={f} kids={kids} busy={busy} onDecide={onDecide} />)}
@@ -146,10 +148,12 @@ function Book({ it, f, kids, busy, onDecide }: {
       <span className="row-main">
         <span className="row-title wrap">{name}</span>
         {facts && <span className="row-sub wrap">{facts}</span>}
+        {f.why && <span className="row-sub wrap">{f.why}</span>}
         <span className="pr-pills">
           {f.notBook && <span className="pill pill-orange">Not a book (no ISBN)</span>}
           {f.eanUnreadable && <span className="pill pill-orange">EAN unreadable</span>}
           {f.verdict === 'skip_off_theme' && <span className="pill">Off theme</span>}
+          {f.move && <span className="pill">{f.move}</span>}
           {f.idea && <span className="pill">{f.idea}{f.layer ? `, ${f.layer}` : ''}</span>}
         </span>
       </span>
@@ -158,7 +162,7 @@ function Book({ it, f, kids, busy, onDecide }: {
           <button type="button" className="btn btn-sm btn-primary" data-first disabled={busy} aria-label={`${invoice ? 'Add to the library' : 'Add to my backlog'}: ${name}`}
             onClick={() => onDecide(it, f, 'add')}>{invoice ? 'Add to the library' : 'Add'}</button>
         )}
-        {addable && !invoice && kids.length > 0 && (
+        {addable && !invoice && it.kind !== 'ai_suggestion' && kids.length > 0 && (
           <MenuButton label="For a kid" name={`Add ${name} for a kid`} items={kids.map((k) => ({ value: k.handle!, text: `Add for ${k.name}` }))}
             onPick={(h) => { const k = kids.find((x) => x.handle === h); if (k && !busy) onDecide(it, f, 'add', { handle: h, name: k.name }); }} />
         )}

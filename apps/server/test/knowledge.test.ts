@@ -120,11 +120,17 @@ describe('proposals and reviews', () => {
     expect((await get('alex', '/api/proposals')).body).not.toContain('what Sam wrote');
     const backlog = (await get('alex', '/api/backlog?q=%22before%20the%20first%20cities%22')).json();
     expect(JSON.stringify(backlog)).not.toContain('what Sam wrote');
-    expect(backlog.items[0].buildsOn).toContainEqual(expect.objectContaining({ reason: PRIVATE_REASON }));
+    // An AI proposal counts for nobody until a person confirms it, whatever confidence the model gave (spec §6).
+    expect(backlog.items[0].buildsOn ?? []).not.toContainEqual(expect.objectContaining({ book: expect.objectContaining({ id: to }) }));
     // for Alex it does not exist: the same answer as a link that is not there
     const r = await send('alex', 'PUT', `/api/links/${from}/${to}`, { state: 'confirmed' });
     expect(r.statusCode).toBe(404);
     expect(r.json()).toEqual((await send('alex', 'PUT', '/api/links/x/y', { state: 'confirmed' })).json());
+    // Confirmed by Sam, it counts for Alex's scores too, with a neutral reason in place of Sam's.
+    expect((await send('partner', 'PUT', `/api/links/${from}/${to}`, { state: 'confirmed' })).statusCode).toBe(200);
+    const after = (await get('alex', '/api/backlog?q=%22before%20the%20first%20cities%22')).json();
+    expect(JSON.stringify(after)).not.toContain('what Sam wrote');
+    expect(after.items[0].buildsOn).toContainEqual(expect.objectContaining({ reason: PRIVATE_REASON }));
   });
 
   it('the repro: Sam confirms, then turns the AI gate off; the reason never reaches Alex', async () => {
@@ -350,5 +356,9 @@ describe('writing from an AI run (shelf#3)', () => {
     const hits = files(root).map((f) => relative(root, f)).filter((f) => re.test(readFileSync(join(root, f), 'utf8')));
     expect(hits.sort()).toEqual(['knowledge/from-run.ts', 'seed/import.ts']);
     expect(readFileSync(join(root, 'seed/import.ts'), 'utf8')).not.toMatch(/aiRunId|privateTo/);
+    // An idea, or a new idea's proposal: the same two places. A name a model made up becomes an idea only through
+    // from-run.ts confirmIdeaProposal, a person's decision (stored injection, M3 g).
+    const ideas = /insert\(\s*(t\.)?(idea|ideaProposal)\s*\)|insert\s+into\s+idea(_proposal)?\b/i;
+    expect(files(root).map((f) => relative(root, f)).filter((f) => ideas.test(readFileSync(join(root, f), 'utf8'))).sort()).toEqual(['knowledge/from-run.ts', 'seed/import.ts']);
   });
 });

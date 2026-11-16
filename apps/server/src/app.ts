@@ -21,6 +21,7 @@ import { createEgress, egressRules } from './net/egress';
 import { inboxRoutes } from './routes/inbox';
 import { SHARE_BYTES, SHARE_UPLOADS, ShareProcessor } from './shares/shares';
 import type { runMediaJob } from './media/client';
+import { AiJobs, type AiJobOptions } from './ai/jobs';
 
 /** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md); a
  * file up to the largest by type (SHARE_BYTES: a video), each type and the whole share checked in shares.ts. */
@@ -28,7 +29,7 @@ export const SHARE_LIMITS = { files: 30, fileSize: SHARE_BYTES.video, fields: 10
 
 export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; url: string }[] }
 
-export interface AppOptions { logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
+export interface AppOptions { ai?: AiJobOptions; logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   const app = Fastify({
@@ -59,7 +60,9 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   const webauthn = opts.webauthn ?? simpleWebAuthn(cfg);
   const challenges = new Challenges();
   // Shares' files through the media worker; anything left from before a restart is picked up at once.
-  const shares = new ShareProcessor(db, { dataDir: cfg.dataDir, workDir: cfg.workDir, media: opts.media, retryMs: opts.shareRetryMs });
+  // The AI reads a share once the media worker is done with it (ai/jobs.ts), each provider through its own client.
+  const ai = new AiJobs(db, cfg, opts.ai);
+  const shares = new ShareProcessor(db, { dataDir: cfg.dataDir, workDir: cfg.workDir, media: opts.media, retryMs: opts.shareRetryMs, after: () => { void ai.kickShares(); } });
   app.addHook('onClose', async () => shares.close());
   app.addHook('onReady', async () => { void shares.kick(); });
   await app.register(async (api) => {
@@ -72,8 +75,9 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     await knowledgeRoutes(api, db);
     await stubRoutes(api, cfg);
     await inboxRoutes(api, cfg, db, shares);
-    // The one HTTP client (ADR 0009): the manifest's hosts and OLLAMA_URL; Claude joins only with the opt-in (M3 g).
-    await jobRoutes(api, cfg, db, { egress: createEgress({ rules: egressRules({ ollamaUrl: cfg.ollamaUrl }), enabled: cfg.egress }), shares, ...opts.jobs });
+    // The one HTTP client (ADR 0009) for the book jobs: the manifest's hosts. The AI's calls have their own clients, one
+    // host each (ai/model.ts): Ollama's, or Claude's after the opt-in.
+    await jobRoutes(api, cfg, db, { egress: createEgress({ rules: egressRules({ ollamaUrl: cfg.ollamaUrl }), enabled: cfg.egress }), shares, ai, ...opts.jobs });
   }, { prefix: '/api' });
   if (cfg.webDir && existsSync(cfg.webDir)) {
     await app.register(fastifyStatic, { root: cfg.webDir });
