@@ -1,7 +1,7 @@
 // The media worker (ADR 0009) against hostile input: every file here is made by the test (nothing real, no binary
 // fixtures). Jobs run as they do in production, each in a child process with its limits; the child is the TypeScript
 // source through tsx.
-import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -175,10 +175,11 @@ describe('limits', () => {
     const out = join(root, `${id}.out`);
     writeFileSync(join(root, `${id}.in`), 'x');
     await runChild(o, 'test.linger', join(root, `${id}.in`), out, id);
-    const pids = readFileSync(out, 'utf8').split(' ').map(Number);
-    expect(pids).toHaveLength(2);
+    const [childPid, sub] = readFileSync(out, 'utf8').split(' ').map(Number) as [number, number];
+    // Reaped before runChild answers: not even a zombie is left of the child (the check after a job must not see it).
+    expect(existsSync(`/proc/${childPid}`)).toBe(false);
     await new Promise((r) => setTimeout(r, 300));
-    for (const pid of pids) expect(running(pid), `pid ${pid}`).toBe(false);
+    expect(running(sub), `pid ${sub}`).toBe(false);
   });
 });
 
@@ -198,6 +199,30 @@ describe('nothing of a job outlives it', () => {
       expect(running(grandchild)).toBe(true);
       expect(othersOfMyUser()).toContain(grandchild);
     } finally { kill(grandchild); }
+  });
+
+  it('a double fork (a detached child that starts another and exits) is seen too', async () => {
+    const id = ID();
+    const out = join(root, `${id}.out`);
+    writeFileSync(join(root, `${id}.in`), 'x');
+    await runChild(o, 'test.doublefork', join(root, `${id}.in`), out, id);
+    const [, orphan] = pidsOf(out) as [number, number];
+    try {
+      expect(running(orphan)).toBe(true);
+      expect(othersOfMyUser()).toContain(orphan);
+    } finally { kill(orphan); }
+  });
+
+  it('a clean job leaves nothing: its child is reaped before the answer, so the check never sees it', async () => {
+    for (let i = 0; i < 20; i++) {
+      const id = ID();
+      const out = join(root, `${id}.out`);
+      writeFileSync(join(root, `${id}.in`), 'x');
+      const before = new Set(othersOfMyUser());
+      await runChild(o, 'test.linger', join(root, `${id}.in`), out, id);
+      const [childPid] = pidsOf(out) as [number, number];
+      expect(othersOfMyUser().filter((p) => !before.has(p) && p === childPid)).toEqual([]);
+    }
   });
 
   it('when one is found, the job fails and the worker exits (Docker restarts it, and its PID namespace with it)', async () => {

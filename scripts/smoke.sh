@@ -53,6 +53,8 @@ dc exec -T shelf-worker sh -c 'touch /work/in/x' 2>/dev/null && { echo "the work
 dc exec -T shelf-worker sh -c 'mv /work/out /work/out2 || ln -s /tmp /work/x' 2>/dev/null && { echo "the worker can replace out/" >&2; exit 1; }
 ok=""
 for _ in $(seq 1 20); do if out="$(dc exec -T shelf shelf media-check 2>&1)"; then ok=1; break; fi; sleep 1; done
+# 50 clean jobs in the worker's own PID namespace: none may be taken for a leftover (the worker would restart)
+out="$(dc exec -T shelf shelf media-check 50 2>&1)" || { echo "media-check 50: $out" >&2; dc logs --tail 20 shelf-worker >&2; exit 1; }
 [ -n "$ok" ] || { echo "media-check: $out" >&2; dc logs --tail 20 shelf-worker >&2; ls -laR "$work/work" >&2; exit 1; }
 echo "$out"
 # a clean job leaves nothing behind, so the worker did not have to restart

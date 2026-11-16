@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import type { MediaKind, MediaResult } from '@shelf/contracts/media';
 import { JobError, pdfText, reencodeImage } from './jobs';
 
-const [kind, inputPath, outputPath, id] = process.argv.slice(2) as [MediaKind | 'test.spin' | 'test.alloc' | 'test.linger' | 'test.setsid', string, string, string];
+const [kind, inputPath, outputPath, id] = process.argv.slice(2) as [MediaKind | 'test.spin' | 'test.alloc' | 'test.linger' | 'test.setsid' | 'test.doublefork', string, string, string];
 
 async function run(): Promise<MediaResult> {
   const input = readFileSync(inputPath);
@@ -30,6 +30,14 @@ async function run(): Promise<MediaResult> {
     const sub = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: true });
     sub.unref();
     writeFileSync(outputPath, `${process.pid} ${sub.pid}`);
+    process.send!({ id, ok: false, error: 'failed' } satisfies MediaResult);
+    for (;;) await new Promise((r) => setTimeout(r, 1000));
+  }
+  // …and a double fork: a detached child starts another in a session of its own and exits, so it is nobody's child.
+  if (process.env.SHELF_WORKER_TEST === '1' && kind === 'test.doublefork') {
+    const { spawnSync } = await import('node:child_process');
+    const inner = `const s = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: true }); s.unref(); require('node:fs').writeFileSync(${JSON.stringify(outputPath)}, process.pid + ' ' + s.pid);`;
+    spawnSync(process.execPath, ['-e', inner], { stdio: 'ignore' });
     process.send!({ id, ok: false, error: 'failed' } satisfies MediaResult);
     for (;;) await new Promise((r) => setTimeout(r, 1000));
   }

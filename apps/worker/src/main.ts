@@ -45,12 +45,19 @@ export function runChild(o: WorkerOptions, kind: string, input: string, output: 
       serialization: 'json',
       detached: true,
     });
+    // The answer counts only once the child is gone: its group killed, and the child itself reaped (its exit status
+    // collected), so the check for leftovers after the job never sees the job's own child still on its way out.
+    const exited = new Promise<void>((ok) => {
+      if (child.exitCode !== null || child.signalCode !== null) ok();
+      else child.once('exit', () => ok());
+    });
     const finish = (r: MediaResult) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       killGroup(child.pid);
-      resolve(r);
+      if (!child.pid) { resolve(r); return; } // never started: nothing to wait for
+      void exited.then(() => resolve(r));
     };
     let stderr = '';
     child.stderr?.on('data', (d: Buffer) => { stderr = (stderr + d.toString()).slice(-2000); });
