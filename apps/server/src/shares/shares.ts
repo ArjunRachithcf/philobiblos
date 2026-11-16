@@ -3,7 +3,8 @@
 //
 // The server never decodes a shared file. It reads the bytes only to know their type (by magic number, never by name
 // or the MIME type the phone claims), stages them in its own folder (data/incoming/<share>, 0700), and hands each to
-// the media worker, which re-encodes it to a fresh JPEG without metadata. Only that JPEG is kept (data/shares/<share>);
+// the media worker, which re-encodes an image to a fresh JPEG without metadata and turns a video into at most 30 such
+// JPEGs, a frame every ~2 s. Only those JPEGs are kept (data/shares/<share>: NN.jpg, or NN-MM.jpg for a video's frames);
 // the staged original is deleted as soon as the worker has answered, whatever it answered. A file the worker refuses
 // counts as refused; a share whose files were all refused failed. Without a worker here (SHELF_WORK_DIR unset, as under
 // HomersLab until it runs one) a share with files is refused (503) and nothing is staged; with one that is down for a
@@ -16,7 +17,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { FastifyRequest } from 'fastify';
 import type { components } from '@shelf/contracts/openapi';
-import { writeAtomic } from '@shelf/contracts/media';
+import { videoContainer, writeAtomic } from '@shelf/contracts/media';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { MediaUnavailable, runMediaJob } from '../media/client';
@@ -31,6 +32,8 @@ export const SHARE_FIELDS = { url: 2000, text: 5000, title: 300, note: 2000 } as
 export const SHARE_RATE = { max: 30, windowMs: 10 * 60_000 };
 /** A share waits this long for a media worker that is down, then fails. */
 export const SHARE_PATIENCE_MS = 24 * 3600_000;
+/** A file's size by its type, and a whole share's, bytes (the multipart limit is the largest, SHARE_LIMITS in app.ts). */
+export const SHARE_BYTES = { image: 20 * 1024 * 1024, video: 64 * 1024 * 1024, total: 100 * 1024 * 1024 } as const;
 /** Staged files that belong to no waiting share are deleted after this. */
 export const STAGED_MAX_AGE_MS = 3600_000;
 
@@ -46,6 +49,11 @@ export function imageType(b: Uint8Array): 'jpeg' | 'png' | 'webp' | 'gif' | null
   if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'webp';
   if (at(0, 0x47, 0x49, 0x46, 0x38) && (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61) return 'gif';
   return null;
+}
+
+/** What a shared file is, from its first bytes: an image or a video Shelf takes (videoContainer), or null. */
+export function shareFileType(b: Uint8Array): 'image' | 'video' | null {
+  return imageType(b) ? 'image' : videoContainer(b) ? 'video' : null;
 }
 
 /** Text as it may be kept: NFC, control characters gone (line breaks kept), trimmed, at most `max`; else 400. */
@@ -78,7 +86,7 @@ export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: st
   const id = ulid();
   const dir = staging(o.dataDir, id);
   const fields: Partial<Record<keyof typeof SHARE_FIELDS, string>> = {};
-  let files = 0, problem: ShareError | null = null;
+  let files = 0, total = 0, problem: ShareError | null = null;
   try {
     for await (const part of req.parts()) {
       if (part.type === 'field') {
@@ -90,11 +98,18 @@ export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: st
       const n = files++;
       // Without a worker nothing is staged: the files are read to their end and the share refused.
       if (!o.workDir) { for await (const _ of part.file) { /* drain */ } problem ??= new ShareError(503, 'media processing is unavailable here: share the link and the caption without files'); continue; }
+      // A share's files together within its limit: past it, the rest is read and dropped, never kept in memory.
       const chunks: Buffer[] = [];
-      for await (const c of part.file) chunks.push(c as Buffer);
-      const bytes = Buffer.concat(chunks);
-      if (!imageType(bytes)) { problem ??= new ShareError(415, 'only images are taken (JPEG, PNG, WebP or GIF); convert a photo to JPEG first'); continue; }
+      for await (const c of part.file) {
+        total += (c as Buffer).length;
+        if (total <= SHARE_BYTES.total && !problem) chunks.push(c as Buffer);
+      }
+      if (total > SHARE_BYTES.total) { problem ??= new ShareError(413, `a share's files: up to ${SHARE_BYTES.total / 1024 / 1024} MB together`); continue; }
       if (problem) continue;
+      const bytes = Buffer.concat(chunks);
+      const type = shareFileType(bytes);
+      if (!type) { problem ??= new ShareError(415, 'only images (JPEG, PNG, WebP or GIF) and videos (MP4, MOV or WebM) are taken; convert a photo to JPEG first'); continue; }
+      if (bytes.length > SHARE_BYTES[type]) { problem ??= new ShareError(413, `${type === 'image' ? 'an image' : 'a video'}: up to ${SHARE_BYTES[type] / 1024 / 1024} MB`); continue; }
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       writeAtomic(join(dir, `${String(n).padStart(2, '0')}.bin`), bytes, 0o600);
     }
@@ -106,7 +121,7 @@ export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: st
     if (!url && !caption && !title && !note && !files) throw new ShareError(400, 'nothing to share: a link, a caption or images');
     const row: ShareRow = {
       id, personId: o.personId, url, note, title, caption, mediaJson: '[]', mediaTotal: files, mediaRefused: 0,
-      // Until the AI reads shares (M3 g), a share is done once its images are re-encoded.
+      // Until the AI reads shares (M3 g), a share is done once its images are re-encoded and its videos' frames taken.
       status: files ? 'received' : 'done', foundJson: null, error: null, createdAt: (o.now ?? new Date()).toISOString(),
     };
     db.insert(t.share).values(row).run();
@@ -117,7 +132,13 @@ export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: st
   }
 }
 
-interface Kept { path: string; width: number; height: number }
+/** A kept JPEG: an image, or one of a video's frames (`at`: its offset in the video, seconds). */
+interface Kept { path: string; width: number; height: number; at?: number }
+
+/** How many of a share's files have something kept (a video's frames count as its one file). */
+export function keptFiles(mediaJson: string): number {
+  return new Set((JSON.parse(mediaJson) as Kept[]).map((k) => k.path.split('/').pop()!.slice(0, 2))).size;
+}
 
 /**
  * Hands staged files to the media worker, one share and one file at a time, until nothing waits. One runs at a time;
@@ -185,7 +206,8 @@ export class ShareProcessor {
     const finish = (error: string | null) => {
       rmSync(dir, { recursive: true, force: true });
       const failed = s.mediaTotal > 0 && keep.length === 0;
-      this.update(s.id, { status: failed ? 'failed' : 'done', mediaJson: JSON.stringify(keep), mediaRefused: s.mediaTotal - keep.length, error: failed ? (error ?? 'none of the images could be read') : null });
+      const files = keptFiles(JSON.stringify(keep));
+      this.update(s.id, { status: failed ? 'failed' : 'done', mediaJson: JSON.stringify(keep), mediaRefused: s.mediaTotal - files, error: failed ? (error ?? 'none of the images could be read') : null });
       return 'done' as const;
     };
     if (now.getTime() - Date.parse(s.createdAt) > SHARE_PATIENCE_MS) return finish('the media worker did not read it within a day');
@@ -196,30 +218,39 @@ export class ShareProcessor {
       const path = join(dir, f);
       if (!lstatSync(path).isFile()) { rmSync(path, { force: true }); refused++; continue; }
       let r;
-      try { r = await media(this.o.workDir, 'image.reencode', readFileSync(path)); } catch (e) {
+      const bytes = readFileSync(path);
+      try { r = await media(this.o.workDir, videoContainer(bytes) ? 'video.frames' : 'image.reencode', bytes); } catch (e) {
         if (e instanceof MediaUnavailable) return 'unavailable';
         throw e;
       }
       // Busy (the queue is full): left staged for the next run.
       if (!r.ok && r.error === 'busy') return 'unavailable';
+      const out = kept(this.o.dataDir, s.id);
       if (r.ok && r.kind === 'image.reencode' && r.image) {
-        const out = kept(this.o.dataDir, s.id);
         mkdirSync(out, { recursive: true, mode: 0o750 });
         const name = f.replace('.bin', '.jpg');
         writeAtomic(join(out, name), r.image);
         keep.push({ path: `shares/${s.id}/${name}`, width: r.width, height: r.height });
+      } else if (r.ok && r.kind === 'video.frames' && r.images?.length === r.frames.length) {
+        // A video: only its frames, each a JPEG the worker re-encoded; nothing of the video itself.
+        mkdirSync(out, { recursive: true, mode: 0o750 });
+        r.frames.forEach((fr, k) => {
+          const name = f.replace('.bin', `-${String(k).padStart(2, '0')}.jpg`);
+          writeAtomic(join(out, name), r.images![k]!);
+          keep.push({ path: `shares/${s.id}/${name}`, width: fr.width, height: fr.height, at: fr.at });
+        });
       } else refused++;
       // The original goes as soon as the worker has answered.
       rmSync(path, { force: true });
       this.update(s.id, { mediaJson: JSON.stringify(keep), mediaRefused: refused });
     }
-    return finish(keep.length + refused < s.mediaTotal ? 'the files were lost before the media worker read them' : null);
+    return finish(keptFiles(JSON.stringify(keep)) + refused < s.mediaTotal ? 'the files were lost before the media worker read them' : null);
   }
 }
 
 /** What GET /shares/{id} says of a share. */
 export function shareView(r: ShareRow): S['Share'] {
-  const keptN = (JSON.parse(r.mediaJson) as unknown[]).length;
+  const keptN = keptFiles(r.mediaJson);
   return { id: r.id, status: r.status, progress: { done: Math.min(r.mediaTotal, keptN + r.mediaRefused), total: r.mediaTotal }, refused: r.mediaRefused, found: foundBooks(r).map(({ title, author }) => ({ title, author })), error: r.error };
 }
 

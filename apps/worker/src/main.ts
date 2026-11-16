@@ -1,12 +1,12 @@
 // The media worker (ADR 0009): its own container, as its own user, with no network, a read-only root, no capabilities
 // and memory and process limits (docker-compose.yml). It sees only the job folder, reads in/ (mounted read-only) and
 // writes only out/. It takes jobs one at a time; each runs in a child process, the leader of its own process group,
-// with a heap limit and a wall-clock limit, and the whole group is killed once the result is in (or the time is up).
-// Anything that goes wrong becomes a fixed error code.
+// with a heap limit and a wall-clock limit (a video's is longer), and the whole group, ffmpeg included, is killed once
+// the result is in (or the time is up). Anything that goes wrong becomes a fixed error code.
 import { fork } from 'node:child_process';
 import { closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readdirSync, rmSync, utimesSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { JOB_ID, MEDIA_KINDS, SERVER_WAIT_MS, clampLimits, dirs, paths, writeAtomic, type MediaKind, type MediaResult } from '@shelf/contracts/media';
+import { JOB_ID, MEDIA_KINDS, clampLimits, dirs, paths, serverWaitMs, writeAtomic, type MediaKind, type MediaResult } from '@shelf/contracts/media';
 
 export interface WorkerOptions {
   root: string;
@@ -34,7 +34,7 @@ function killGroup(pid: number | undefined) {
 
 /** Runs one job in a child process and returns its result; never throws. The child never outlives this. */
 export function runChild(o: WorkerOptions, kind: string, input: string, output: string, id: string): Promise<MediaResult> {
-  const { timeoutMs, heapMb } = clampLimits(o);
+  const { timeoutMs, heapMb } = clampLimits(o, kind);
   return new Promise((resolve) => {
     let done = false;
     const child = fork(o.child?.path ?? here('./child.js'), [kind, input, output, id], {
@@ -92,7 +92,7 @@ export async function runPending(o: WorkerOptions): Promise<number> {
     const created = typeof job.createdAt === 'string' ? Date.parse(job.createdAt) : NaN;
     let r: MediaResult;
     // A job nobody waits for any more (the server gave up) is not run: its input stays unread.
-    if (!(now() - created <= SERVER_WAIT_MS)) r = { id, ok: false, error: 'timeout' };
+    if (!(now() - created <= serverWaitMs(kind ?? undefined))) r = { id, ok: false, error: 'timeout' };
     else if (!kind) r = { id, ok: false, error: 'not_this_type' };
     else r = await runChild(o, kind, p.input, p.output, id);
     const clean = o.clean?.() ?? true;

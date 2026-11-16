@@ -12,7 +12,7 @@ import type { Db } from '../src/db/open';
 import { MAX_COPIES, PAGE, UNVERIFIED_ID, mailItemId, shareItemId } from '../src/inbox/inbox';
 import { MediaUnavailable, type MediaOutcome, type runMediaJob } from '../src/media/client';
 import { refreshMail } from '../src/mail/job';
-import { SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, ShareProcessor, imageType } from '../src/shares/shares';
+import { SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, ShareProcessor, imageType, shareFileType } from '../src/shares/shares';
 import { MAX_LIVE_TOKENS, findShareToken } from '../src/shares/tokens';
 import { TOKEN_FAILURES } from '../src/auth/hook';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
@@ -22,6 +22,9 @@ const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]);
 const HEIC = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypheic'), Buffer.alloc(8)]);
 const OUT = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+/** Video containers by their first bytes (the server never decodes them: the worker does). */
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypqt  '), Buffer.alloc(16)]);
+const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x82, 0x84]), Buffer.from('webm'), Buffer.alloc(16)]);
 
 const dirs: string[] = [];
 const apps: BuiltApp[] = [];
@@ -33,13 +36,15 @@ afterEach(async () => {
 /** A worker that re-encodes everything it is given, or answers as told. */
 const worker = (answer: (b: Uint8Array) => MediaOutcome | 'unavailable' = () => ({ id: 'j', ok: true, kind: 'image.reencode', width: 10, height: 10, format: 'jpeg', bytes: OUT.length, image: OUT })) => {
   const seen: Buffer[] = [];
-  const media = (async (_root: string | null, _kind: string, input: Uint8Array) => {
+  const kinds: string[] = [];
+  const media = (async (_root: string | null, kind: string, input: Uint8Array) => {
     seen.push(Buffer.from(input));
+    kinds.push(kind);
     const a = answer(input);
     if (a === 'unavailable') throw new MediaUnavailable();
     return a;
   }) as typeof runMediaJob;
-  return { media, seen };
+  return { media, seen, kinds };
 };
 
 async function app(o: { workDir?: boolean; media?: typeof runMediaJob; db?: Db } = {}) {
@@ -147,12 +152,13 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
     expect(a.db.select().from(t.share).all()).toEqual([]);
   });
 
-  it('the type comes from the bytes: a PNG named .txt passes; a HEIC, a video or a script called JPEG does not, and nothing is staged', async () => {
+  it('the type comes from the bytes: a PNG named .txt passes; a HEIC, a playlist or a script called JPEG does not, and nothing is staged', async () => {
     expect([JPEG, PNG, Buffer.from('GIF89a......'), Buffer.from('RIFF\0\0\0\0WEBPVP8 ')].map(imageType)).toEqual(['jpeg', 'png', 'gif', 'webp']);
     expect([HEIC, Buffer.from('<svg onload=alert(1)>'), Buffer.from('%PDF-1.7'), Buffer.from([0xff, 0xd8])].map(imageType)).toEqual([null, null, null, null]);
     const w = worker();
     const a = await app({ media: w.media });
-    for (const file of [HEIC, Buffer.from('<script>alert(1)</script>')]) {
+    expect([MP4, WEBM, HEIC].map(shareFileType)).toEqual(['video', 'video', null]);
+    for (const file of [HEIC, Buffer.from('<script>alert(1)</script>'), Buffer.from('#EXTM3U\n#EXTINF:10,\nfile:///etc/passwd\n')]) {
       const r = await share(a, [{ name: 'media', file: JPEG }, { name: 'media', file, type: 'image/jpeg' }]);
       expect(r.statusCode).toBe(415);
     }
@@ -160,6 +166,54 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
     expect(a.db.select().from(t.share).all()).toEqual([]);
     expect((await share(a, [{ name: 'media', file: PNG, filename: 'notes.txt', type: 'text/plain' }])).statusCode).toBe(202);
   });
+
+  it('a video goes to the worker as a video; only its frames are kept (NN-MM.jpg, with their offsets), and it counts as one file', async () => {
+    const w = worker((b) => (b[4] === 0x66 ? { id: 'j', ok: true, kind: 'video.frames', frames: [{ width: 4, height: 3, bytes: OUT.length, at: 0 }, { width: 4, height: 3, bytes: OUT.length, at: 2 }], images: [OUT, OUT] } : { id: 'j', ok: true, kind: 'image.reencode', width: 1, height: 1, format: 'jpeg', bytes: OUT.length, image: OUT }));
+    const a = await app({ media: w.media });
+    const r = await share(a, [{ name: 'media', file: JPEG }, { name: 'media', file: MP4, filename: 'reel.mov', type: 'video/quicktime' }]);
+    expect(r.statusCode).toBe(202);
+    const { id } = r.json();
+    await until(() => a.db.select().from(t.share).where(eq(t.share.id, id)).get()!.status === 'done');
+    expect(w.kinds).toEqual(['image.reencode', 'video.frames']);
+    expect(readdirSync(join(a.data, 'shares', id)).sort()).toEqual(['00.jpg', '01-00.jpg', '01-01.jpg']);
+    expect(existsSync(join(a.data, 'incoming', id))).toBe(false);
+    const row = a.db.select().from(t.share).where(eq(t.share.id, id)).get()!;
+    expect(JSON.parse(row.mediaJson)).toEqual([{ path: `shares/${id}/00.jpg`, width: 1, height: 1 }, { path: `shares/${id}/01-00.jpg`, width: 4, height: 3, at: 0 }, { path: `shares/${id}/01-01.jpg`, width: 4, height: 3, at: 2 }]);
+    expect((await a.app.inject({ url: `/api/shares/${id}`, headers: { cookie: a.alex } })).json()).toMatchObject({ status: 'done', progress: { done: 2, total: 2 }, refused: 0 });
+    const item = (await a.app.inject({ url: '/api/inbox', headers: { cookie: a.alex } })).json().items[0];
+    expect(item).toMatchObject({ title: '2 files', mediaCount: 3, share: { progress: { done: 2, total: 2 } } });
+  });
+
+  it('while a video\'s frames are kept and the next file waits, progress counts the video once', async () => {
+    let n = 0;
+    const w = worker(() => (n++ === 0 ? { id: 'j', ok: true, kind: 'video.frames', frames: [0, 2, 4].map((at) => ({ width: 1, height: 1, bytes: OUT.length, at })), images: [OUT, OUT, OUT] } : 'unavailable'));
+    const a = await app({ media: w.media });
+    const { id } = (await share(a, [{ name: 'media', file: MP4 }, { name: 'media', file: JPEG }])).json();
+    await until(() => n >= 2);
+    await until(() => !existsSync(join(a.data, 'incoming', id, '00.bin')));
+    expect((await a.app.inject({ url: `/api/shares/${id}`, headers: { cookie: a.alex } })).json()).toMatchObject({ status: 'reading', progress: { done: 1, total: 2 } });
+    expect((await a.app.inject({ url: '/api/inbox', headers: { cookie: a.alex } })).json().items[0]).toMatchObject({ share: { progress: { done: 1, total: 2 } } });
+  });
+
+  it('a video the worker refuses (too long, say) counts as one refused file; nothing of it is kept', async () => {
+    const w = worker(() => ({ id: 'j', ok: false, error: 'too_long' }));
+    const a = await app({ media: w.media });
+    const { id } = (await share(a, [{ name: 'media', file: WEBM, type: 'video/webm' }])).json();
+    await until(() => a.db.select().from(t.share).where(eq(t.share.id, id)).get()!.status === 'failed');
+    expect(w.kinds).toEqual(['video.frames']);
+    expect((await a.app.inject({ url: `/api/shares/${id}`, headers: { cookie: a.alex } })).json()).toMatchObject({ progress: { done: 1, total: 1 }, refused: 1 });
+    expect(existsSync(join(a.data, 'shares', id))).toBe(false);
+    expect(existsSync(join(a.data, 'incoming', id))).toBe(false);
+  });
+
+  it('sizes by type, and for the share: an image up to 20 MB, a video up to 64 MB, 100 MB together; nothing kept of a refused one', async () => {
+    const a = await app();
+    const big = (head: Buffer, mb: number) => Buffer.concat([head, Buffer.alloc(mb * 1024 * 1024 - head.length)]);
+    expect((await share(a, [{ name: 'media', file: big(JPEG, 21) }])).statusCode).toBe(413);
+    expect((await share(a, [{ name: 'media', file: big(MP4, 21) }])).statusCode).toBe(202);
+    expect((await share(a, [{ name: 'media', file: big(MP4, 51) }, { name: 'media', file: big(MP4, 50) }])).statusCode).toBe(413);
+    expect(a.db.select().from(t.share).all()).toHaveLength(1);
+  }, 30_000);
 
   it('every file goes through the worker; only its JPEG is kept, the original deleted; progress counts kept and refused', async () => {
     const w = worker((b) => (b[0] === 0x89 ? { id: 'j', ok: false, error: 'too_many_pixels' } : { id: 'j', ok: true, kind: 'image.reencode', width: 10, height: 12, format: 'jpeg', bytes: OUT.length, image: OUT }));

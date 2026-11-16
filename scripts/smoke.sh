@@ -57,6 +57,16 @@ for _ in $(seq 1 20); do if out="$(dc exec -T shelf shelf media-check 2>&1)"; th
 out="$(dc exec -T shelf shelf media-check 50 2>&1)" || { echo "media-check 50: $out" >&2; dc logs --tail 20 shelf-worker >&2; exit 1; }
 [ -n "$ok" ] || { echo "media-check: $out" >&2; dc logs --tail 20 shelf-worker >&2; ls -laR "$work/work" >&2; exit 1; }
 echo "$out"
+# its ffmpeg (video frames): our build, reading nothing but a descriptor, run under prlimit; and a real video through
+# it in the worker's own container (made with Debian's ffmpeg in a throwaway container, from its test sources)
+dc exec -T shelf-worker /app/worker/bin/ffmpeg -hide_banner -protocols | tr -s ' \n' ' ' | grep -q 'Input: fd Output: fd $' \
+  || { echo "the worker's ffmpeg has other protocols" >&2; exit 1; }
+node_image="$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile)"
+docker run --rm -e DEBIAN_FRONTEND=noninteractive "$node_image" sh -euc 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null 2>&1
+  ffmpeg -v error -f lavfi -i testsrc2=s=1080x1920:r=30:d=7 -f lavfi -i sine=d=7 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest /tmp/reel.mp4 && cat /tmp/reel.mp4' > "$work/reel.mp4"
+out="$(dc exec -T shelf shelf media-check video < "$work/reel.mp4" 2>&1)" || { echo "media-check video: $out" >&2; dc logs --tail 20 shelf-worker >&2; exit 1; }
+echo "$out"
+grep -q '(video.frames, 4 frames)' <<<"$out" || { echo "expected 4 frames: $out" >&2; exit 1; }
 # a clean job leaves nothing behind, so the worker did not have to restart
 [ "$(docker inspect -f '{{.RestartCount}}' "$(dc ps -q shelf-worker)")" = 0 ] || { echo "the worker restarted" >&2; exit 1; }
 

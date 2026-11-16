@@ -19,11 +19,12 @@ import { stubRoutes } from './routes/stubs';
 import { jobRoutes, type JobDeps } from './routes/jobs';
 import { createEgress, egressRules } from './net/egress';
 import { inboxRoutes } from './routes/inbox';
-import { ShareProcessor } from './shares/shares';
+import { SHARE_BYTES, ShareProcessor } from './shares/shares';
 import type { runMediaJob } from './media/client';
 
-/** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md). */
-export const SHARE_LIMITS = { files: 30, fileSize: 20 * 1024 * 1024, fields: 10, fieldSize: 64 * 1024, parts: 40 };
+/** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md); a
+ * file up to the largest by type (SHARE_BYTES: a video), each type and the whole share checked in shares.ts. */
+export const SHARE_LIMITS = { files: 30, fileSize: SHARE_BYTES.video, fields: 10, fieldSize: 64 * 1024, parts: 40 };
 
 export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; url: string }[] }
 

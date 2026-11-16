@@ -8,7 +8,7 @@
 const CACHE = 'shelf-share';
 const FIELDS = { title: 300, text: 5000, url: 2000 };
 const MAX_FILES = 30;
-const MAX_FILE_BYTES = 20 * 1024 * 1024; // the server's limit: a larger file is left out here, not cached
+const MAX_FILE_BYTES = 64 * 1024 * 1024; // the server's largest (a video; an image is 20 MB): a larger file is left out here, not cached
 
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });

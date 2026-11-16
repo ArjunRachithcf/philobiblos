@@ -2,7 +2,8 @@
 // container writes a one-time link (24 hours) for that admin to enrol a new one. The link goes into
 // SHELF_DATA_DIR/setup-link.txt (0600), never to the terminal or a log.
 // `shelf media-check [jobs]`: hands the media worker a tiny made-up image (that many times) and says whether it came
-// back re-encoded (ADR 0009).
+// back re-encoded (ADR 0009). `shelf media-check video < file.mp4`: hands it a video from stdin and says how many frames
+// came back (the smoke test's check of ffmpeg in the worker's own container).
 import { createRecoveryLink } from './auth/invites';
 import { loadConfig } from './config';
 import { openDb } from './db/open';
@@ -12,7 +13,16 @@ import { MediaUnavailable, runMediaJob } from './media/client';
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC', 'base64');
 
 const [cmd, handle, ...rest] = process.argv.slice(2);
-if (cmd === 'media-check' && (!handle || /^\d{1,3}$/.test(handle)) && !rest.length) {
+if (cmd === 'media-check' && handle === 'video' && !rest.length) {
+  (async () => {
+    const chunks: Buffer[] = [];
+    for await (const c of process.stdin) chunks.push(c as Buffer);
+    const r = await runMediaJob(loadConfig().workDir, 'video.frames', Buffer.concat(chunks));
+    if (!r.ok || r.kind !== 'video.frames') { console.log(`media worker: ${r.ok ? 'failed' : r.error} (video.frames)`); process.exit(1); }
+    console.log(`media worker: ok (video.frames, ${r.frames.length} frames)`);
+    process.exit(0);
+  })().catch((e) => { console.error(e instanceof MediaUnavailable ? e.message : 'media worker: failed'); process.exit(1); });
+} else if (cmd === 'media-check' && (!handle || /^\d{1,3}$/.test(handle)) && !rest.length) {
   // `shelf media-check 50`: that many jobs in a row, each must come back (the smoke test's check that clean jobs
   // never make the worker restart).
   const times = Number(handle ?? 1);
@@ -25,7 +35,7 @@ if (cmd === 'media-check' && (!handle || /^\d{1,3}$/.test(handle)) && !rest.leng
     process.exit(0);
   })().catch((e) => { console.error(e instanceof MediaUnavailable ? e.message : 'media worker: failed'); process.exit(1); });
 } else if (cmd !== 'recover' || !handle || rest.length) {
-  console.error('usage: shelf recover <admin handle> | shelf media-check [jobs]');
+  console.error('usage: shelf recover <admin handle> | shelf media-check [jobs] | shelf media-check video < file');
   process.exit(2);
 } else try {
   const cfg = loadConfig();

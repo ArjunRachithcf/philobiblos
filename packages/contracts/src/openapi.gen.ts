@@ -640,7 +640,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Phone share target (the PWA's share_target through its service worker, or an iOS Shortcut with a per-person share token). Images only for now (JPEG, PNG, WebP, GIF, by their bytes; video arrives with M3 f), each re-encoded by the media worker before it is kept; the originals are deleted once read. 30 shares per person per 10 minutes. */
+        /** Phone share target (the PWA's share_target through its service worker, or an iOS Shortcut with a per-person share token). Images (JPEG, PNG, WebP, GIF) and videos (MP4, MOV, WebM: H.264, HEVC, VP8 or VP9, up to 180 s), by their bytes. The media worker re-encodes each image, and takes a frame every ~2 s (at most 30) from each video, before anything is kept; only those JPEGs are kept, never a video or its sound, and the originals are deleted once read. 30 shares per person per 10 minutes. */
         post: operations["createShare"];
         delete?: never;
         options?: never;
@@ -758,7 +758,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images) run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
+        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos) run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
         post: operations["runJob"];
         delete?: never;
         options?: never;
@@ -2917,7 +2917,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description Too many files (more than 30) or a file over 20 MB */
+            /** @description Too many files (more than 30), an image over 20 MB, a video over 64 MB, or over 100 MB together */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -2926,7 +2926,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description A file that is not a JPEG, PNG, WebP or GIF image by its bytes */
+            /** @description A file that is not a JPEG, PNG, WebP or GIF image or an MP4, MOV or WebM video by its bytes */
             415: {
                 headers: {
                     [name: string]: unknown;

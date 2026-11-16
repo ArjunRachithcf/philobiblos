@@ -1,6 +1,15 @@
 # Shelf: one image for HomersLab and standalone (ADR 0001).
 ARG NODE_IMAGE=node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 
+# The media worker's ffmpeg (apps/worker/ffmpeg/build.sh): FFmpeg's own release, pinned by its SHA-256, built with only
+# the containers, decoders and the one protocol a phone's video needs. The compilers stay in this stage.
+FROM ${NODE_IMAGE} AS ffmpeg
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends gcc libc6-dev make nasm xz-utils >/dev/null && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz /tmp/ffmpeg.tar.xz
+COPY apps/worker/ffmpeg/build.sh /tmp/build.sh
+RUN mkdir /tmp/src && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/src --strip-components=1 \
+ && sh /tmp/build.sh /tmp/src /opt/ffmpeg && strip /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe
+
 FROM ${NODE_IMAGE} AS build
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true
 RUN corepack enable
@@ -28,6 +37,7 @@ COPY --from=build /out/web ./web
 # The media worker (ADR 0009) has its own tree: sharp and pdfjs-dist live only there, run as `node /app/worker/dist/main.js`
 # in its own container without a network (docker-compose.yml).
 COPY --from=build /out-worker ./worker
+COPY --from=ffmpeg /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe /app/worker/bin/
 COPY LICENSE NOTICE ./
 # `docker exec <container> shelf recover <admin handle>` (ADR 0010)
 RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/shelf && chmod 755 /usr/local/bin/shelf

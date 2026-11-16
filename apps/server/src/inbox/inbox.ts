@@ -20,7 +20,7 @@ import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
 import { matchBook } from '../mail/effects';
 import { norm } from '../seed/import';
-import { foundBooks, ownShare, type ShareRow } from '../shares/shares';
+import { foundBooks, keptFiles, ownShare, type ShareRow } from '../shares/shares';
 
 type S = components['schemas'];
 export type InboxItem = S['InboxItem'];
@@ -63,11 +63,12 @@ function shareItem(db: Db, s: ShareRow, decided: Map<number, string> | undefined
     decided: (decided?.get(index) as Found['decided']) ?? null,
   }));
   const kept = (JSON.parse(s.mediaJson) as unknown[]).length;
+  const files = keptFiles(s.mediaJson);
   return {
     id: shareItemId(s.id), kind: 'share', ...(by ? { by: view(db, by) } : {}),
-    title: s.title ?? (s.url ? new URL(s.url).hostname : s.mediaTotal ? `${s.mediaTotal} image${s.mediaTotal === 1 ? '' : 's'}` : 'A note'),
+    title: s.title ?? (s.url ? new URL(s.url).hostname : s.mediaTotal ? `${s.mediaTotal} file${s.mediaTotal === 1 ? '' : 's'}` : 'A note'),
     createdAt: s.createdAt, mediaCount: kept,
-    share: { status: s.status, progress: { done: Math.min(s.mediaTotal, kept + s.mediaRefused), total: s.mediaTotal }, refused: s.mediaRefused, url: s.url, note: s.note ?? s.caption },
+    share: { status: s.status, progress: { done: Math.min(s.mediaTotal, files + s.mediaRefused), total: s.mediaTotal }, refused: s.mediaRefused, url: s.url, note: s.note ?? s.caption },
     found,
   };
 }
