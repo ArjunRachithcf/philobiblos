@@ -14,6 +14,12 @@ import { inSlot } from '../jobs/run';
 
 export const MONTHLY_STEPS = ['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain', 'push'] as const;
 export type MonthlyStep = (typeof MONTHLY_STEPS)[number];
+/**
+ * The steps done once a period whatever clocks do (jobs/schedule.ts ScheduledJob.once): the adults are told once, and
+ * the AI is asked once (its tokens, Claude's if Claude is the provider). A retry skips them once done, and so does a run
+ * again after a wrong clock.
+ */
+export const ONCE_A_PERIOD: readonly MonthlyStep[] = ['ai_suggest', 'ai_explain', 'push'];
 
 /** The steps this server can do; one it lacks (no AI, no media worker) is nothing to do. */
 export type MonthlyWork = Partial<Record<MonthlyStep, () => Promise<Outcome>>>;

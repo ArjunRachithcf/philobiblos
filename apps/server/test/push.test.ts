@@ -157,7 +157,7 @@ describe('subscriptions', () => {
     expect(checkSubscription({ endpoint: 'https://eu.push.example.net/d/1', keys: k }, own.pushHosts).endpoint).toBe('https://eu.push.example.net/d/1');
     expect(() => checkSubscription({ endpoint: ENDPOINT(), keys: k }, own.pushHosts)).toThrow(PushError);
     expect(cfg.pushHosts).toEqual(DEFAULT_PUSH_HOSTS);
-    for (const bad of ['localhost', 'push.example.org/path', '*.*.example.org', 'https://push.example.org', '10.0.0.1', '*', '*.co.uk', '*.com.au', '*.org.uk', '*.co.jp', '*.ne.jp', '*.gov.uk', '*.ac.uk']) {
+    for (const bad of ['localhost', 'push.example.org/path', '*.*.example.org', 'https://push.example.org', '10.0.0.1', '*', '*.co.uk', '*.com.au', '*.org.uk', '*.co.jp', '*.ne.jp', '*.gov.uk', '*.ac.uk', '*.github.io', '*.me.uk', '*.gr.jp', '*.uk.com', '*.cn.com', '*.id.au', '*.police.uk', '*.blogspot.com', '*.herokuapp.com', '*.k12.ca.us', '*.lib.ny.us', '*.ltd.co.im', '*.example.net']) {
       expect(() => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_PUSH_HOSTS: bad })).toThrow(/SHELF_PUSH_HOSTS/);
     }
     // The server's push client and its routes use them.
@@ -167,7 +167,7 @@ describe('subscriptions', () => {
     await expect(c.push('https://push.example.org/d/1', Buffer.from('x'), { headers: {} })).rejects.toMatchObject({ reason: 'private-address' });
     expect(looked).toEqual(['push.example.org']);
     // A wildcard under a real domain (not a public suffix) stays.
-    expect(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_PUSH_HOSTS: '*.push.example.co.uk, *.notify.windows.com' }).pushHosts).toEqual(['*.push.example.co.uk', '*.notify.windows.com']);
+    expect(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_PUSH_HOSTS: '*.push.example.co.uk, *.notify.windows.com, *.example.co.uk' }).pushHosts).toEqual(['*.push.example.co.uk', '*.notify.windows.com', '*.example.co.uk']);
     // SHELF_EGRESS=off: the push client sends nothing and looks nothing up.
     const off: string[] = [];
     const quiet = pushClient({ pushHosts: own.pushHosts, egress: false }, { resolve: async (h) => { off.push(h); return [{ address: '93.184.215.14', family: 4 }]; } });
@@ -270,6 +270,35 @@ describe('through the app', () => {
     expect(list).toContain('fcm.googleapis.com');
     expect(list).not.toContain('device-1');
     expect((await a.app.inject({ url: '/api/push/subscriptions', headers: a.as('p_alex') })).json()).toEqual([]);
+  });
+  it('a new notification key: admins with a fresh sign-in only; the key and every device go together', async () => {
+    const a = await app();
+    const old = vapidKeys(a.db, cfg);
+    subscribe(a.db, 'p_sam', sub(browser(), 1));
+    subscribe(a.db, 'p_alex', sub(browser(), 2));
+    const reset = (h: Record<string, string>) => a.app.inject({ method: 'DELETE', url: '/api/push/key', headers: h });
+    expect((await reset(a.as('p_sam'))).statusCode).toBe(403);
+    // An admin whose sign-in is older than a few minutes signs in again first.
+    const stale = a.as('p_alex');
+    a.db.update(t.session).set({ createdAt: new Date(Date.now() - 3600_000).toISOString() }).run();
+    expect((await reset(stale)).statusCode).toBe(403);
+    expect(listSubscriptions(a.db, 'p_sam')).toHaveLength(1);
+    const r = await reset(a.as('p_alex'));
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ devices: 2 });
+    expect(a.db.select().from(t.pushSubscription).all()).toEqual([]);
+    expect(vapidKeys(a.db, cfg).publicKey.equals(old.publicKey)).toBe(false);
+  });
+  it('after a deliberate sealing-key change, the reset is the way back: a new key under the new sealing key', async () => {
+    const db = household();
+    vapidKeys(db, cfg);
+    subscribe(db, 'p_sam', sub());
+    const other = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') });
+    const { app: built } = await buildApp(other, db, { push: fakeEgress().e });
+    const h = { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN };
+    expect((await built.inject({ url: '/api/push/key', headers: h })).statusCode).toBe(503);
+    expect((await built.inject({ method: 'DELETE', url: '/api/push/key', headers: h })).json()).toEqual({ devices: 1 });
+    expect((await built.inject({ url: '/api/push/key', headers: h })).statusCode).toBe(200);
   });
   it('a test goes to your own devices only, at most 3 times in 10 minutes', async () => {
     const a = await app();

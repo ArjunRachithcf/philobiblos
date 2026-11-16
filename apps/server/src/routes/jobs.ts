@@ -12,7 +12,7 @@ import { SCHEDULE, Scheduler, dueAt, getCycle } from '../jobs/schedule';
 import type { Egress } from '../net/egress';
 import { refreshMail, type MailDeps } from '../mail/job';
 import { keepPlan } from '../month/plan';
-import { monthlyRefresh, type MonthlyWork } from '../month/refresh';
+import { ONCE_A_PERIOD, monthlyRefresh, type MonthlyWork } from '../month/refresh';
 import { notify } from '../push/push';
 import type { ShareProcessor } from '../shares/shares';
 import type { AiJobs } from '../ai/jobs';
@@ -52,6 +52,7 @@ export async function jobRoutes(app: FastifyInstance, cfg: Config, db: Db, deps:
   if (deps.schedule) {
     const scheduler = new Scheduler(db, [{
       job: 'monthly',
+      once: ONCE_A_PERIOD,
       // Only the scheduled run lets the adults know, once a period (its step is kept done); by hand it does not.
       run: (ctl) => monthlyRefresh({
         ...monthlyWork(ctl.claim.period, ctl.deadline),

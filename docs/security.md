@@ -53,15 +53,24 @@ applies; a feature that cannot meet them waits.
   wait for a claim's lease, but at its start it frees the claims the first one holds.
 - One time zone: the household's (Settings). "This month" in the API, add_to_month, the plan's window and the monthly
   refresh all read it. `SHELF_TZ` is only its value when the settings row is made, at the first start; it is never read
-  after.
-- A clock that is wrong for a moment: the scheduler claims only the month it is now. A row for a later month does not
-  stop it (Settings shows "a run was recorded for a future month"), and a row of this month written later than now is
-  void, so that month runs again from its start. The cost: a clock set back into a month that never ran runs that month
-  once; a month that ran by a right clock never runs again.
+  after. On an upgrade, a database whose settings row already exists keeps that row's zone (`Europe/Zurich`, the
+  column's default, if budget or AI settings made the row), whatever `SHELF_TZ` says: an admin sets it in Settings.
+  A zone is checked when it is written (Settings, `SHELF_TZ`); one this server does not know (written by hand, or an
+  ICU update) stops the scheduler's ticks with a log line and a message in Settings, never the server.
+- A clock that is wrong for a moment: the scheduler claims only the month it is now, and a row of this month counts
+  whatever clock wrote it (a run minutes early or late is that month's run). A row for a later month does not stop the
+  month it is now; it is made void (Settings shows "a run was recorded for a future month"), so that month runs again
+  when it comes, except the push and the AI's steps, which happen once a period whatever clocks do. Attempts count
+  per period across voids (5 at most). A period's retries stay in it: one that would fall into the next month gives up.
+  The cost: a clock set back into a month that never ran runs that month once, and a month left behind by a clock set
+  back across its end runs its mail, shares, prices and plan steps again (the plan kept stays as it was).
 - The notification key (VAPID) is made only when none is sealed. A sealing key that does not open it is a wrong key, not
   a rotation: nothing is replaced and no device is removed, pushes stop (503, Settings → Notifications says so) until the
-  right key is back. A deliberate new sealing key therefore keeps notifications off until an admin deletes the sealed
-  `vapid_private_key` row; then a new key is made and each device subscribes again.
+  right key is back. After a deliberate sealing-key change, an admin with a fresh sign-in makes a new notification key
+  (Settings → Notifications, `DELETE /push/key`): the sealed key and every device go in one transaction, and each adult
+  turns notifications on again (the page removes the browser's old subscription first).
+- `SHELF_PUSH_HOSTS` checks wildcards for typos only, not against the Public Suffix List: three labels at least after
+  `*.`, and a few public suffixes of three labels refused. Every send still goes to public addresses over https only.
 - Compose copies the request to no one (no Bcc to Shelf's mailbox, which would then hold the address and whatever card
   number the person typed): a bookshop reply belongs to an order by its signed Subject ("Book order, <month>") or by
   the In-Reply-To of a bookshop mail already tied. A reply whose subject the bookshop rewrites goes to the Inbox

@@ -2,6 +2,7 @@
 // the service worker (public/sw.js) shows its own words and opens This month. Each adult's devices are their own.
 import { useEffect, useId, useState } from 'react';
 import { api, message } from '../api';
+import { freshSubscription } from '../push';
 import { Notice } from '../ui';
 
 type Device = { id: string; service: string; createdAt: string; lastSentAt: string | null };
@@ -11,7 +12,7 @@ const serviceName = (host: string) => SERVICE[host] ?? (host.endsWith('.notify.w
 const bytes = (b64u: string) => Uint8Array.from(atob(b64u.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 const supported = () => typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
-export function Notifications() {
+export function Notifications({ admin }: { admin: boolean }) {
   const id = useId();
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,7 +29,7 @@ export function Notifications() {
       if ((await Notification.requestPermission()) !== 'granted') { setError('Notifications are blocked for Shelf in this browser’s settings.'); return; }
       const { publicKey } = await api<{ publicKey: string }>('/push/key');
       const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes(publicKey) });
+      const sub = await freshSubscription(reg.pushManager, bytes(publicKey));
       await api('/push/subscriptions', { method: 'POST', body: sub.toJSON() });
       setOk('This device will be told when the month’s plan is ready.');
       await load();
@@ -37,6 +38,17 @@ export function Notifications() {
   const remove = async (d: Device) => {
     setError(null); setOk('');
     try { await api(`/push/subscriptions/${encodeURIComponent(d.id)}`, { method: 'DELETE' }); await load(); } catch (e) { setError(message(e)); }
+  };
+  // An admin's way out after a sealing-key change (or a key someone may have seen): a new key, every device removed.
+  const reset = async () => {
+    setError(null); setOk('');
+    if (!window.confirm('Make a new notification key? Every device of the household stops getting notifications until its person turns them on again.')) return;
+    try {
+      const r = await api<{ devices: number }>('/push/key', { method: 'DELETE' });
+      setKeyError(null);
+      setOk(`A new key: ${r.devices} devices removed. Each adult turns notifications on again.`);
+      await load();
+    } catch (e) { setError(message(e)); }
   };
   const test = async () => {
     setError(null); setOk('');
@@ -71,6 +83,7 @@ export function Notifications() {
           <div className="btn-row">
             {supported() && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void turnOn()}>Notify this device</button>}
             {devices.length > 0 && <button type="button" className="btn" onClick={() => void test()}>Send a test</button>}
+            {admin && <button type="button" className="btn" onClick={() => void reset()}>New notification key</button>}
           </div>
         </>
       )}

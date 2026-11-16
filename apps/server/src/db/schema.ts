@@ -406,11 +406,11 @@ export const pushSubscription = sqliteTable('push_subscription', {
 export const jobPeriod = sqliteTable('job_period', {
   job: text('job').notNull(),
   period: text('period').notNull(),
-  status: text('status', { enum: ['running', 'retry', 'done', 'gave_up'] }).notNull(),
+  status: text('status', { enum: ['running', 'retry', 'done', 'gave_up', 'void'] }).notNull(),
   attempts: integer('attempts').notNull().default(0),
   stepsJson: text('steps_json').notNull().default('[]'),
   leaseUntil: text('lease_until'),
   nextTryAt: text('next_try_at'),
   runId: text('run_id').references(() => jobRun.id, { onDelete: 'set null' }),
   updatedAt: text('updated_at').notNull(),
-}, (t) => [primaryKey({ columns: [t.job, t.period] }), check('job_period_status', sql`${t.status} IN ('running','retry','done','gave_up')`)]);
+}, (t) => [primaryKey({ columns: [t.job, t.period] }), check('job_period_status', sql`${t.status} IN ('running','retry','done','gave_up','void')`)]);

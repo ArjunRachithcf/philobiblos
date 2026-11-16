@@ -64,6 +64,18 @@ export function vapidKeys(db: Db, cfg: Pick<Config, 'sealingKey'>): VapidKeys {
   }
 }
 
+/**
+ * DELETE /push/key (an admin, with a fresh sign-in): a new notification key from now on. The sealed key and every
+ * device go together, in one transaction (a device made for the old key could never be told again); each adult turns
+ * notifications on again. The way out of a deliberate sealing-key change, or a key someone may have seen.
+ */
+export function resetPushKey(db: Db): { devices: number } {
+  return db.transaction((tx) => {
+    tx.delete(t.sealedSecret).where(eq(t.sealedSecret.key, VAPID_SEALED)).run();
+    return { devices: tx.delete(t.pushSubscription).run().changes };
+  }, { behavior: 'immediate' });
+}
+
 /** A subscription as the browser gives it (PushSubscription.toJSON()), checked field by field. */
 export function checkSubscription(body: unknown, hosts: readonly string[] = DEFAULT_PUSH_HOSTS): { endpoint: string; p256dh: string; auth: string } {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new PushError(400, 'a subscription: { endpoint, keys: { p256dh, auth } }');

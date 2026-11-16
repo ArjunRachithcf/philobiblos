@@ -338,7 +338,7 @@ CREATE INDEX push_subscription_person ON push_subscription(person_id);
 CREATE TABLE job_period (
   job         TEXT NOT NULL,
   period      TEXT NOT NULL,
-  status      TEXT NOT NULL CHECK (status IN ('running','retry','done','gave_up')),
+  status      TEXT NOT NULL CHECK (status IN ('running','retry','done','gave_up','void')),  -- void: a later month's row from a clock that was wrong
   attempts    INTEGER NOT NULL DEFAULT 0,
   steps_json  TEXT NOT NULL DEFAULT '[]',
   lease_until TEXT,

@@ -74,7 +74,7 @@ export function Settings({ me }: { me: Me }) {
         </section>
         <OrderPlaces admin={admin} />
         <MonthlyRefresh admin={admin} />
-        <Notifications />
+        <Notifications admin={admin} />
         <AiSettings admin={admin} />
         <ShareTokens />
       </div>
@@ -176,6 +176,7 @@ function MonthlyRefresh({ admin }: { admin: boolean }) {
       </div>
       {!cycle ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : (
         <>
+          {cycle.problem && <Notice kind="error">{cycle.problem}</Notice>}
           <p>Next: <b>{when(cycle.next)}</b>{cycle.last ? `. ${cycle.last.period} ${STATUS[cycle.last.status ?? ''] ?? ''}.` : '.'}</p>
           {cycle.futureRun && <Notice kind="warn">A run was recorded for a future month ({cycle.futureRun}; clock moved?). It does not stop this month’s run; that month runs again when it comes.</Notice>}
           {admin ? (

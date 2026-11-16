@@ -1,7 +1,7 @@
 // Settings from the environment (contracts/homerslab-app.yaml, docker-compose.yml). Secrets are read here and
 // nowhere else, and never logged.
 import { join, resolve } from 'node:path';
-import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY, onPublicSuffix } from './push/hosts';
+import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY, wildcardTooBroad } from './push/hosts';
 import { validTimeZone } from './jobs/zone';
 
 export type Mode = 'homerslab' | 'standalone';
@@ -110,7 +110,7 @@ function parseTimeZone(v: string | undefined): string {
 function parsePushHosts(v: string | undefined): string[] {
   if (v === undefined || !v.trim()) return [...DEFAULT_PUSH_HOSTS];
   const hosts = v.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
-  for (const h of hosts) if (!PUSH_HOST_ENTRY.test(h) || onPublicSuffix(h)) throw new Error(`SHELF_PUSH_HOSTS: host names or *.domain (not on a public suffix such as co.uk), comma-separated, not ${h.slice(0, 80)}`);
+  for (const h of hosts) if (!PUSH_HOST_ENTRY.test(h) || wildcardTooBroad(h)) throw new Error(`SHELF_PUSH_HOSTS: host names or *.domain (at least three labels after *.), comma-separated, not ${h.slice(0, 80)}`);
   return hosts;
 }
 

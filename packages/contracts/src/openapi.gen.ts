@@ -701,23 +701,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/push/key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Web Push: the household's application server key (VAPID, P-256), public half only, for PushManager.subscribe; made and sealed the first time */
-        get: operations["pushKey"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/push/subscriptions": {
         parameters: {
             query?: never;
@@ -764,6 +747,24 @@ export interface paths {
         /** A test notification to your own devices (3 in 10 minutes); its text is the service worker's own */
         post: operations["testPush"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Web Push: the household's application server key (VAPID, P-256), public half only, for PushManager.subscribe; made and sealed the first time */
+        get: operations["pushKey"];
+        put?: never;
+        post?: never;
+        /** Admins, with a sign-in of the last 10 minutes (standalone): a new notification key. The sealed key and every device are removed together; each adult turns notifications on again. For a deliberate sealing-key change, or a key someone may have seen. */
+        delete: operations["resetPushKey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1312,6 +1313,8 @@ export interface components {
                     status?: "running" | "retry" | "done" | "gave_up";
                     attempts?: number;
                 };
+                /** @description the stored time zone is not one this server knows: nothing runs until an admin sets it again (next is then absent) */
+                readonly problem?: string;
                 /** @description YYYY-MM: a run was recorded for a month later than now's, so the clock was ahead when it ran (or is behind now). It does not stop the month it is now; the month it names runs again when it comes. */
                 readonly futureRun?: string;
             };
@@ -3255,40 +3258,6 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
-    pushKey: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @description base64url, 65 bytes uncompressed */
-                        publicKey: string;
-                    };
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            /** @description No usable sealing key, or one that does not open the sealed notification key (nothing is replaced or removed): no notifications */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
     listPushSubscriptions: {
         parameters: {
             query?: never;
@@ -3446,6 +3415,65 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    pushKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description base64url, 65 bytes uncompressed */
+                        publicKey: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No usable sealing key, or one that does not open the sealed notification key (nothing is replaced or removed): no notifications */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resetPushKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description devices removed */
+                        devices: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getShare: {

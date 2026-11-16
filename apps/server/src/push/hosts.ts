@@ -10,15 +10,17 @@ export const LABEL = '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?';
 /** A SHELF_PUSH_HOSTS entry: a host name of two labels or more (the last a name, so never an address), or `*.` and one. */
 export const PUSH_HOST_ENTRY = new RegExp(`^(\\*\\.)?(${LABEL}\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`);
 /**
- * The labels registries sell names under at the second level (co.uk, com.au, ne.jp, gov.uk …): a small public-suffix
- * check, enough to catch a typo. A wildcard on such a suffix would allow anyone's domain under it.
+ * A typo check, not the Public Suffix List: a wildcard needs at least three labels after `*.` (`*.notify.windows.com`),
+ * so no wildcard sits on a TLD, a registry's second level (`*.co.uk`) or a hosting suffix of two labels (`*.github.io`,
+ * `*.herokuapp.com`). A few public suffixes of three labels are refused too (`*.k12.ca.us`, `*.ltd.co.im`); others
+ * pass, which is acceptable: every send still goes to public addresses over https only, through the push client.
  */
-const REGISTRY_LABELS = new Set(['ac', 'co', 'com', 'edu', 'go', 'gob', 'gov', 'govt', 'ltd', 'mil', 'ne', 'net', 'nic', 'nom', 'or', 'org', 'plc', 'sch']);
-/** `*.` on a registry's second level (`*.co.uk`); `*.com` never gets here (PUSH_HOST_ENTRY wants two labels after `*.`). */
-export const onPublicSuffix = (entry: string): boolean => {
+const THREE_LABEL_SUFFIXES = [/^(k12|lib|cc|state|tec|gen|mus|dst|cog)\.[a-z]{2}\.us$/, /^(ltd|plc)\.co\.im$/];
+/** `*.` and fewer than three labels, or a known three-label public suffix. */
+export const wildcardTooBroad = (entry: string): boolean => {
   if (!entry.startsWith('*.')) return false;
-  const labels = entry.slice(2).split('.');
-  return labels.length === 2 && REGISTRY_LABELS.has(labels[0]!);
+  const suffix = entry.slice(2);
+  return suffix.split('.').length < 3 || THREE_LABEL_SUFFIXES.some((r) => r.test(suffix));
 };
 const matcher = (entry: string): ((host: string) => boolean) => {
   if (!entry.startsWith('*.')) return (h) => h === entry;

@@ -13,7 +13,7 @@ import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { refreshPrices } from '../src/jobs/books';
 import { startJob } from '../src/jobs/run';
-import { SCHEDULE, Scheduler, backoff, claim, cycleView, dueAt, finish, releaseInterrupted, setCycle, stepDone, zonedInstant, type Cycle } from '../src/jobs/schedule';
+import { SCHEDULE, Scheduler, backoff, claim, cycleView, initHousehold, dueAt, finish, releaseInterrupted, setCycle, stepDone, zonedInstant, type Cycle } from '../src/jobs/schedule';
 import { monthlyRefresh } from '../src/month/refresh';
 import { POST_TIMEOUT_MAX_MS, type Egress } from '../src/net/egress';
 import { subscribe } from '../src/push/push';
@@ -82,17 +82,86 @@ describe('a period runs once', () => {
     expect(row(db, '2026-12')).toMatchObject({ status: 'running', attempts: 2, stepsJson: '[]' });
   });
 
-  it('a clock set back runs only a month that never ran; a month that ran never runs again', () => {
+  it('a clock set back into a month that never ran runs it once; the later month it left is void, and runs again without its once-a-period steps', () => {
     const db = household();
-    const c = claim(db, 'monthly', '2026-12', at('2026-12-01T20:00:00Z'))!;
+    const once = ['push', 'ai_suggest'];
+    const c = claim(db, 'monthly', '2026-12', at('2026-12-01T20:00:00Z'), once)!;
+    for (const s of ['mail', 'push', 'ai_suggest']) stepDone(db, c, s, at('2026-12-01T20:02:00Z'));
     finish(db, c, ok, runRow(db), at('2026-12-01T20:05:00Z'));
-    // The clock goes back to November: December's row is from a month later than now's, so it does not fence November.
-    const nov = claim(db, 'monthly', '2026-11', at('2026-11-20T20:00:00Z'))!;
+    // The clock goes back to November: December's row is from a later month, so it does not fence November.
+    const nov = claim(db, 'monthly', '2026-11', at('2026-11-20T20:00:00Z'), once)!;
     expect(nov).toMatchObject({ period: '2026-11', attempt: 1 });
     finish(db, nov, ok, runRow(db), at('2026-11-20T20:01:00Z'));
-    // Back to the right time: December ran (its row was written before now), so it does not run again.
-    for (const when of ['2026-12-01T20:10:00Z', '2026-12-20T00:00:00Z']) expect(claim(db, 'monthly', '2026-12', at(when))).toBeNull();
-    expect(claim(db, 'monthly', '2027-01', at('2027-01-01T20:00:00Z'))).not.toBeNull();
+    expect(row(db, '2026-12')).toMatchObject({ status: 'void', stepsJson: '["push","ai_suggest"]', attempts: 1 });
+    // Back to the right time: December runs again, but its push and its AI stay done; then never again.
+    expect(claim(db, 'monthly', '2026-12', at('2026-12-01T20:10:00Z'), once)).toMatchObject({ attempt: 2, steps: ['push', 'ai_suggest'] });
+    expect(claim(db, 'monthly', '2027-01', at('2027-01-01T20:00:00Z'), once)).not.toBeNull();
+  });
+
+  it('a row of this month counts whatever clock wrote it: a run a few minutes early or late is the month\'s run', () => {
+    const db = household();
+    // A: the clock was 10 minutes ahead while it ran (the row says 19:22Z); corrected, it ticks from 19:13Z.
+    const a = claim(db, 'monthly', '2026-12', at('2026-12-01T19:17:00Z'))!;
+    finish(db, a, ok, runRow(db), at('2026-12-01T19:22:00Z'));
+    for (let m = 13; m < 40; m++) expect(claim(db, 'monthly', '2026-12', at(`2026-12-01T19:${m}:00Z`))).toBeNull();
+    // B: an hour's step back after a month that needed retries.
+    const db2 = household();
+    let now = at('2026-12-01T19:17:00Z');
+    for (let i = 1; i <= 3; i++) {
+      const c = claim(db2, 'monthly', '2026-12', now)!;
+      finish(db2, c, i < 3 ? { status: 'failed', detail: 'no' } : ok, runRow(db2), now);
+      if (i < 3) now = new Date(row(db2, '2026-12')!.nextTryAt!);
+    }
+    expect(row(db2, '2026-12')).toMatchObject({ status: 'done', attempts: 3 });
+    for (const back of [2 * 60_000, 3600_000]) expect(claim(db2, 'monthly', '2026-12', new Date(now.getTime() - back))).toBeNull();
+    expect(row(db2, '2026-12')).toMatchObject({ status: 'done', attempts: 3 });
+  });
+
+  it('the attempt limit is per period and counts across voids: it never starts over', () => {
+    const db = household();
+    let now = at('2027-11-02T10:00:00Z');
+    for (let i = 1; i <= SCHEDULE.maxAttempts; i++) {
+      const c = claim(db, 'monthly', '2027-11', now)!;
+      finish(db, c, { status: 'failed', detail: 'no' }, runRow(db), now);
+      now = new Date(now.getTime() + backoff(i));
+    }
+    expect(row(db, '2027-11')).toMatchObject({ status: 'gave_up', attempts: SCHEDULE.maxAttempts });
+    // Corrected, then the month really comes: void, but its attempts are spent.
+    claim(db, 'monthly', '2026-12', at('2026-12-01T20:30:00Z'));
+    expect(row(db, '2027-11')).toMatchObject({ status: 'void', attempts: SCHEDULE.maxAttempts });
+    expect(claim(db, 'monthly', '2027-11', at('2027-11-01T20:30:00Z'))).toBeNull();
+    expect(row(db, '2027-11')).toMatchObject({ status: 'gave_up', attempts: SCHEDULE.maxAttempts });
+    // Repeated steps back never push the count past the limit.
+    const db2 = household();
+    for (let i = 0; i < 10; i++) {
+      claim(db2, 'monthly', '2027-01', at('2027-01-01T20:00:00Z'));
+      claim(db2, 'monthly', '2026-12', at('2026-12-01T20:00:00Z'));
+    }
+    expect(row(db2, '2027-01')!.attempts).toBeLessThanOrEqual(SCHEDULE.maxAttempts);
+  });
+
+  it('a period\'s retries stay in it: one that would fall in the next month gives up, and a retry left in a month that is over is given up', () => {
+    const db = household();
+    setCycle(db, { day: 28, time: '22:00', timezone: Z });
+    let now = at('2027-02-28T21:00:00Z');
+    const seen: string[] = [];
+    for (let i = 1; i <= SCHEDULE.maxAttempts; i++) {
+      const c = claim(db, 'monthly', '2027-02', now);
+      if (!c) break;
+      finish(db, c, { status: 'failed', detail: 'no' }, runRow(db), now);
+      const r = row(db, '2027-02')!;
+      seen.push(r.status);
+      if (r.status !== 'retry') break;
+      expect(r.nextTryAt! < '2027-02-28T23:00:00.000Z').toBe(true);
+      now = new Date(r.nextTryAt!);
+    }
+    expect(seen.at(-1)).toBe('gave_up');
+    const db2 = household();
+    const c = claim(db2, 'monthly', '2026-12', at('2026-12-01T20:00:00Z'))!;
+    finish(db2, c, { status: 'failed', detail: 'no' }, runRow(db2), at('2026-12-01T20:00:00Z'));
+    db2.update(t.jobPeriod).set({ nextTryAt: '2027-01-05T00:00:00.000Z' }).run();
+    claim(db2, 'monthly', '2027-01', at('2027-01-02T20:00:00Z'));
+    expect(row(db2, '2026-12')).toMatchObject({ status: 'gave_up' });
   });
 
   it('only the month it is now is claimed: never a later or an earlier one', () => {
@@ -114,6 +183,7 @@ describe('a period runs once', () => {
     const nov = claim(db, 'monthly', '2027-11', at('2027-11-01T20:30:00Z'))!;
     expect(nov).toMatchObject({ period: '2027-11', attempt: 2, steps: [] });
     expect(row(db, '2027-11')).toMatchObject({ status: 'running', stepsJson: '[]', runId: null });
+    // A row of this month written "later" than now (the run was minutes ago by a clock that was ahead) is never void.
     // The old claim changes nothing any more; the new one finishes the month, once.
     finish(db, fwd, { status: 'failed', detail: 'no' }, runRow(db), at('2027-11-01T20:31:00Z'));
     expect(row(db, '2027-11')).toMatchObject({ status: 'running', attempts: 2 });
@@ -244,7 +314,7 @@ describe('the scheduler', () => {
     for (let m = 1; m <= 12; m++) {
       const mm = String(m).padStart(2, '0');
       // The month the wrong clock ran: Settings says it runs again, on its day.
-      if (m === 11) expect(cycleView(db, 'monthly', at('2027-11-01T12:00:00Z'))).toMatchObject({ next: '2027-11-01T19:17:00.000Z', last: { period: '2027-11' } });
+      if (m === 11) expect(cycleView(db, 'monthly', at('2027-11-01T12:00:00Z'))).toMatchObject({ next: '2027-11-01T19:17:00.000Z', last: { period: '2027-10', status: 'done' } });
       for (const when of [`2027-${mm}-01T20:30:00Z`, `2027-${mm}-01T23:00:00Z`, `2027-${mm}-15T12:00:00Z`]) {
         clock.now = at(when);
         await Promise.all(await s.tick());
@@ -254,6 +324,23 @@ describe('the scheduler', () => {
     // The one tick at the wrong time ran "2027-11" once; after it, each month once.
     expect(runs).toEqual(['2027-11', '2026-12', ...Array.from({ length: 12 }, (_, i) => `2027-${String(i + 1).padStart(2, '0')}`)]);
     expect(cycleView(db, 'monthly', clock.now)).not.toHaveProperty('futureRun');
+  });
+
+  it('a stored zone this server does not know: the tick logs it and starts nothing, Settings says so, and nothing throws', async () => {
+    const db = household();
+    setCycle(db, { timezone: Z });
+    db.update(t.householdSettings).set({ timezone: 'Mars/Olympus' }).run();
+    const logged: string[] = [];
+    let runs = 0;
+    const s = new Scheduler(db, [{ job: 'monthly', run: async () => { runs++; return ok; } }], { now: () => at('2026-12-01T20:00:00Z'), log: (m) => logged.push(m) });
+    await expect(s.tick()).resolves.toEqual([]);
+    expect(runs).toBe(0);
+    expect(logged).toEqual([expect.stringMatching(/Mars\/Olympus.*not one this server knows/)]);
+    expect(cycleView(db, 'monthly', at('2026-12-01T20:00:00Z'))).toMatchObject({ problem: expect.stringContaining('not one this server knows') });
+    expect(() => setCycle(db, { day: 2 })).toThrow(/timezone/);
+    expect(setCycle(db, { timezone: Z }).timezone).toBe(Z);
+    await Promise.all(await s.tick());
+    expect(runs).toBe(1);
   });
 
   it('Settings shows when it runs next and how the last month went', () => {
@@ -404,6 +491,33 @@ describe('through the app', () => {
     expect(a.pushed).toHaveLength(1);
   });
 
+  it('clocks a few minutes off, an hour back, a month back: each month runs once and the adults hear at most once a month', async () => {
+    const clock = { now: at('2026-12-01T19:17:00Z') };
+    const a = await app(clock);
+    setCycle(a.db, { day: 1, time: '20:17', timezone: Z });
+    const b = createECDH('prime256v1'); b.generateKeys();
+    subscribe(a.db, 'p_sam', { endpoint: 'https://fcm.googleapis.com/fcm/send/sam', keys: { p256dh: b.getPublicKey().toString('base64url'), auth: Buffer.alloc(16, 3).toString('base64url') } });
+    const tick = async (iso: string) => { clock.now = at(iso); await Promise.all(await a.scheduler.tick()); };
+    // A: ten minutes ahead while it runs (the clock says 19:17Z at 19:07Z), then corrected and ticking from 19:13Z.
+    await tick('2026-12-01T19:17:00Z');
+    clock.now = at('2026-12-01T19:22:00Z');
+    for (let m = 13; m < 40; m++) await tick(`2026-12-01T19:${m}:00Z`);
+    // An hour back, then right again.
+    await tick('2026-12-01T18:45:00Z');
+    await tick('2026-12-01T19:45:00Z');
+    expect(a.db.select({ p: t.jobRun.period }).from(t.jobRun).where(eq(t.jobRun.job, 'monthly')).all()).toEqual([{ p: '2026-12' }]);
+    expect(a.pushed).toHaveLength(1);
+    // A month back for one tick (November never ran: it runs, once), then right: December's other steps run again,
+    // but its push and its AI do not.
+    await tick('2026-11-20T12:00:00Z');
+    await tick('2026-12-01T20:00:00Z');
+    await tick('2026-12-01T21:00:00Z');
+    const runs = a.db.select({ p: t.jobRun.period, d: t.jobRun.detail }).from(t.jobRun).where(eq(t.jobRun.job, 'monthly')).all();
+    expect(runs.map((r) => r.p)).toEqual(['2026-12', '2026-11', '2026-12']);
+    expect(runs[2]!.d).not.toMatch(/push:|ai_suggest:|ai_explain:/);
+    expect(a.pushed).toHaveLength(2);
+  });
+
   it('a step that failed is done again by the retry, and only it', async () => {
     const clock = { now: at('2026-12-01T20:00:00Z') };
     let calls = 0;
@@ -476,6 +590,10 @@ describe('through the app', () => {
     await start('America/New_York');
     expect(cycleView(db, 'monthly').timezone).toBe('Asia/Tokyo');
     expect(() => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_TZ: 'Mars/Olympus' })).toThrow(/SHELF_TZ/);
+    // The row itself is never made with a zone this server does not know, whoever makes it.
+    const fresh = household();
+    expect(() => initHousehold(fresh, 'Mars/Olympus')).toThrow(/SHELF_TZ/);
+    expect(fresh.select().from(t.householdSettings).all()).toEqual([]);
   });
 
   it('Settings: the cycle is the household\'s, admins change it', async () => {
