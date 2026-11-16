@@ -1,0 +1,15 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "shelf/ai/check_redundant.schema.json",
+ "type": "object",
+ "properties": {
+  "repeats": {
+   "type": "string",
+   "description": "the id of the owned book (from the input) the candidate repeats; absent when it repeats none"
+  },
+  "reason": {
+   "type": "string",
+   "maxLength": 120
+  }
+ }
+}

@@ -210,8 +210,9 @@ describe('your settings and the AI gate', () => {
 
 describe('the takeaway boundary (architecture)', () => {
   // Only the Library and the AI gate read takeaways; everything else, AI jobs included, goes through
-  // library/ai-context.ts. db/schema.ts declares the column; packages/ai/src/provider.ts types what a provider gets.
-  const ALLOWED = new Set(['apps/server/src/library/library.ts', 'apps/server/src/library/ai-context.ts', 'apps/server/src/db/schema.ts', 'packages/ai/src/provider.ts']);
+  // library/ai-context.ts. db/schema.ts declares the column; packages/ai/src/provider.ts types what a provider gets, and
+  // packages/ai/src/jobs.ts is where it is put into the prompt (and told apart, so the run records whose it is).
+  const ALLOWED = new Set(['apps/server/src/library/library.ts', 'apps/server/src/library/ai-context.ts', 'apps/server/src/db/schema.ts', 'packages/ai/src/provider.ts', 'packages/ai/src/jobs.ts']);
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);

@@ -20,9 +20,13 @@ Status: **Accepted** · 2026-11-15
 - **Secrets at rest.** Shelf never sees the bookshop card number: the order text has no card line, the person adds it
   in their own mail app, and Compose copies the request to no one (no Cc, no Bcc). The delivery address is sealed (AES-256-GCM) with a key kept outside the database (`SHELF_SEALING_KEY_FILE`, a
   secret or credential file); a copy of the database alone does not reveal it.
-  The IMAP app password and the Claude API key are secrets from the environment or files, never stored in SQLite.
+  The IMAP app password is a secret from the environment or a file, never stored in SQLite.
+  Changed 2026-11-16 (M3 g): the Claude API key is entered by an admin in Settings and sealed like the delivery address
+  (`sealed_secret`, the key outside the database), so the opt-in is one admin action in the app; it is write-only and
+  never in an answer, a log or an `ai_run` row.
 - **Egress allowlist.** One HTTP client for the whole app allows only the hosts in the manifest's egress list (plus the
-  configured IMAP and Ollama hosts, and Claude only after the opt-in). The price lookup and Open Library are parsed with
+  configured IMAP and Ollama hosts, and Claude only after the opt-in). Each AI call has its own client whose whole
+  allowlist is its provider's one host (M3 g). The price lookup and Open Library are parsed with
   size and time limits; covers are re-encoded locally before they are stored or served.
   Decided 2026-11-16 (M3 b): the name is resolved by the client and the connection goes to the address it checked (no
   second lookup for DNS rebinding to change); a public host must resolve to public addresses only. Redirects stay on

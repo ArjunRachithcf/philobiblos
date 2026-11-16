@@ -1,6 +1,21 @@
 // Generated from contracts/ai/*.schema.json by scripts/gen-ai-types.mjs. Do not edit.
 /* eslint-disable */
 
+export interface CheckRedundantOut {
+  /**
+   * the id of the owned book (from the input) the candidate repeats; absent when it repeats none
+   */
+  repeats?: string;
+  reason?: string;
+}
+
+export interface ExplainPickOut {
+  /**
+   * one line in plain words, no hype
+   */
+  why: string;
+}
+
 export interface ExtractTitlesOut {
   books: {
     title: string;

@@ -32,6 +32,7 @@ function fakeEgress(answer: (url: string, want: Want) => unknown): Egress & { as
   const asked: string[] = [];
   return {
     asked,
+    post: () => Promise.reject(new EgressError('not-allowed', 'no AI here')),
     async get(url, want) {
       asked.push(url);
       const a = answer(url, want);
