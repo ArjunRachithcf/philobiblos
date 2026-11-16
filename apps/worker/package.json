@@ -1,0 +1,21 @@
+{
+  "name": "@shelf/worker",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@shelf/contracts": "workspace:*",
+    "pdfjs-dist": "6.4.299",
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "tsx": "4.23.15"
+  }
+}

@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./backlog-query": "./src/backlog-query.ts",
-    "./openapi": "./src/openapi.gen.ts"
+    "./openapi": "./src/openapi.gen.ts",
+    "./media": "./src/media.ts"
   },
   "scripts": {
     "gen": "openapi-typescript ../../contracts/openapi.yaml -o src/openapi.gen.ts && node scripts/gen-ai-types.mjs",

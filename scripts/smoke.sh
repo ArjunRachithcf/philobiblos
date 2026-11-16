@@ -32,7 +32,7 @@ wait_health() { # url mode
 }
 
 # 1. Standalone, as a household would run it.
-mkdir -p "$work/data" "$work/keys"
+mkdir -p "$work/data" "$work/keys" "$work/work"
 port=$((20000 + $$ % 20000))
 SHELF_IMAGE="$tag" SHELF_PORT="$port" SHELF_UID="$(id -u)" SHELF_GID="$(id -g)" \
   docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" up -d --no-build
@@ -42,6 +42,15 @@ grep -q "^http://localhost:$port/setup#" "$work/data/setup-link.txt"
 # the recovery CLI is in the image (ADR 0010); with no admin yet it refuses, and prints no link
 out="$(SHELF_IMAGE="$tag" docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" exec -T shelf shelf recover alex 2>&1 || true)"
 grep -q "no admin with the handle alex" <<<"$out" || { echo "shelf recover: $out" >&2; exit 1; }
+# the media worker (ADR 0009): no network at all, nothing reachable from it, and it re-encodes a job the server hands it
+dc() { SHELF_IMAGE="$tag" docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" "$@"; }
+[ "$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$(dc ps -q shelf-worker)")" = none ] || { echo "the worker has a network" >&2; exit 1; }
+dc exec -T shelf-worker node -e "fetch('http://1.1.1.1/',{signal:AbortSignal.timeout(3000)}).then(()=>process.exit(1),()=>process.exit(0))" \
+  || { echo "the worker reached the network" >&2; exit 1; }
+ok=""
+for _ in $(seq 1 20); do if out="$(dc exec -T shelf shelf media-check 2>&1)"; then ok=1; break; fi; sleep 1; done
+[ -n "$ok" ] || { echo "media-check: $out" >&2; exit 1; }
+echo "$out"
 
 # 2. HomersLab: the manifest's image settings (port, volume, env).
 env_args=()
