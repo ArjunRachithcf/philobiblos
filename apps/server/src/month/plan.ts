@@ -111,6 +111,17 @@ function keep(db: Db, month: string, viewer: string) {
   return orderOf(db, month)!;
 }
 
+/**
+ * The monthly refresh's plan (spec §5 steps 2–4): the month's picks kept as its order, made with no one's view (a reason
+ * private to someone is never read for it; the lines hold books and moves only). A plan kept already stays as it is.
+ */
+export function keepPlan(db: Db, month: string): { kept: boolean; lines: number } {
+  checkMonth(month);
+  const had = orderOf(db, month);
+  const o = keep(db, month, '');
+  return { kept: !had, lines: db.select({ b: t.orderLine.bookId }).from(t.orderLine).where(eq(t.orderLine.orderId, o.id)).all().length };
+}
+
 function editable(o: typeof t.order.$inferSelect) {
   if (o.status !== 'picked' && o.status !== 'drafted') throw new MonthError(409, 'the bookshop has this order already; changes come with its reply');
 }

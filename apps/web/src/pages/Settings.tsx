@@ -1,6 +1,6 @@
 // Settings (spec §4): the household's monthly budget (one shared budget for the month's order; admins set it, everyone
 // sees it; no rollover) and where orders go (the bookshop's address and the delivery address, sealed on the server; the
-// delivery address is never shown back), the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
+// delivery address is never shown back), when the monthly refresh runs, the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
 // arrives with its parts.
 import { useEffect, useId, useState } from 'react';
 import { api, message, type Me, type Settings as S } from '../api';
@@ -72,6 +72,7 @@ export function Settings({ me }: { me: Me }) {
           )}
         </section>
         <OrderPlaces admin={admin} />
+        <MonthlyRefresh admin={admin} />
         <AiSettings admin={admin} />
         <ShareTokens />
       </div>
@@ -130,6 +131,72 @@ function OrderPlaces({ admin }: { admin: boolean }) {
           {order.needsReentry && <Notice kind="warn">The addresses need entering again by an admin.</Notice>}
           <p>{order.bookshopEmail ? <>Orders go to <b>{order.bookshopEmail}</b>.</> : 'No bookshop address yet.'} {order.hasDelivery ? 'A delivery address is saved.' : ''}</p>
           <p className="footnote">An admin of the household changes it.</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+const STATUS: Record<string, string> = { running: 'is running', retry: 'failed and will be tried again', done: 'ran', gave_up: 'failed every try; an admin can run it from the server' };
+
+/** When the monthly refresh runs (spec §5 step 1): the household's day, time and zone; admins change them. */
+function MonthlyRefresh({ admin }: { admin: boolean }) {
+  const id = useId();
+  const [cycle, setCycle] = useState<NonNullable<S['cycle']> | null>(null);
+  const [day, setDay] = useState('');
+  const [time, setTime] = useState('');
+  const [zone, setZone] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState('');
+  const load = () => api<S>('/settings').then((s) => {
+    const c = s.cycle ?? {};
+    setCycle(c); setDay(String(c.day ?? 1)); setTime(c.time ?? ''); setZone(c.timezone ?? '');
+  }, (e) => setError(message(e)));
+  useEffect(() => { void load(); }, []);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null); setOk('');
+    if (!/^\d{1,2}$/.test(day) || Number(day) < 1 || Number(day) > 28) return setError('Choose a day from 1 to 28: every month has it.');
+    try {
+      await api('/settings', { method: 'PATCH', body: { cycle: { day: Number(day), time, timezone: zone.trim() } } });
+      setOk('Saved.');
+      await load();
+    } catch (err) { setError(message(err)); }
+  };
+  const when = (iso?: string) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: cycle?.timezone }) : '');
+
+  return (
+    <section className="card stack" aria-labelledby={`${id}-h`}>
+      <div>
+        <h2 className="card-title" id={`${id}-h`}>Monthly refresh</h2>
+        <p className="footnote">Once a month Shelf reads the bookshop’s mail, refreshes prices, and keeps the month’s picks. A month the server was off for is not made up.</p>
+      </div>
+      {!cycle ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : (
+        <>
+          <p>Next: <b>{when(cycle.next)}</b>{cycle.last ? `. ${cycle.last.period} ${STATUS[cycle.last.status ?? ''] ?? ''}.` : '.'}</p>
+          {admin ? (
+            <form className="stack" onSubmit={save} noValidate>
+              <div className="fields fields-2">
+                <div className="field">
+                  <label className="field-label" htmlFor={`${id}-d`}>Day of the month</label>
+                  <input className="input" id={`${id}-d`} inputMode="numeric" value={day} onChange={(e) => setDay(e.target.value.replace(/\D/g, '').slice(0, 2))} />
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor={`${id}-t`}>Time</label>
+                  <input className="input" id={`${id}-t`} type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+                </div>
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor={`${id}-z`}>Time zone</label>
+                <input className="input" id={`${id}-z`} autoComplete="off" spellCheck={false} value={zone} onChange={(e) => setZone(e.target.value.slice(0, 64))} aria-describedby={`${id}-zh`} />
+                <span className="hint" id={`${id}-zh`}>For example Europe/Zurich.</span>
+              </div>
+              {error && <Notice kind="error">{error}</Notice>}
+              {ok && <Notice kind="ok">{ok}</Notice>}
+              <div className="btn-row"><button type="submit" className="btn btn-primary">Save the refresh time</button></div>
+            </form>
+          ) : <p className="footnote">On day {cycle.day} at {cycle.time} ({cycle.timezone}). An admin of the household changes it.</p>}
         </>
       )}
     </section>

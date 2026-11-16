@@ -387,4 +387,19 @@ export const jobRun = sqliteTable('job_run', {
   detail: text('detail'),
   startedAt: text('started_at').notNull(),
   finishedAt: text('finished_at'),
+  // A scheduled run's period ('YYYY-MM'); null when an admin ran it by hand.
+  period: text('period'),
 });
+
+// The scheduler's claim on a period (jobs/schedule.ts): a period runs once, whatever restarts, overlaps or clocks do.
+export const jobPeriod = sqliteTable('job_period', {
+  job: text('job').notNull(),
+  period: text('period').notNull(),
+  status: text('status', { enum: ['running', 'retry', 'done', 'gave_up'] }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  stepsJson: text('steps_json').notNull().default('[]'),
+  leaseUntil: text('lease_until'),
+  nextTryAt: text('next_try_at'),
+  runId: text('run_id').references(() => jobRun.id, { onDelete: 'set null' }),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [primaryKey({ columns: [t.job, t.period] }), check('job_period_status', sql`${t.status} IN ('running','retry','done','gave_up')`)]);

@@ -764,7 +764,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** `person` (your own settings) is stored, and the household's `budget`, `order` and `ai` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it). */
+        /** `person` (your own settings) is stored, and the household's `budget`, `order`, `ai` and `cycle` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it). */
         patch: operations["patchSettings"];
         trace?: never;
     };
@@ -777,7 +777,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult's Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month's kept picks) run through the AI provider in Settings; monthly arrives with its slice and changes nothing yet. */
+        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult's Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month's kept picks) run through the AI provider in Settings; monthly is the monthly refresh (spec §5 step 1: mail, shares, prices, the month's plan kept, ai_suggest, ai_explain), which also runs by itself on the household's day (Settings.cycle), once a month; by hand it does every step again for this month. */
         post: operations["runJob"];
         delete?: never;
         options?: never;
@@ -1226,10 +1226,24 @@ export interface components {
                 theme?: string;
                 enabled?: boolean;
             }[];
+            /** @description When the monthly refresh runs by itself (admins set it): the household's day, time and time zone. Once a month, whatever restarts or clocks do; a month missed while the server was off is not made up. */
             cycle?: {
                 day?: number;
                 time?: string;
+                /** @description an IANA time zone, e.g. Europe/Zurich */
                 timezone?: string;
+                /**
+                 * Format: date-time
+                 * @description when it next runs (or is tried again)
+                 */
+                readonly next?: string;
+                readonly last?: {
+                    /** @description YYYY-MM */
+                    period?: string;
+                    /** @enum {unknown} */
+                    status?: "running" | "retry" | "done" | "gave_up";
+                    attempts?: number;
+                };
             };
             /** @description Where orders go (admins set it): both sealed at rest with a key outside the database (docs/security.md) */
             order?: {

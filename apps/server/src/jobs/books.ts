@@ -16,7 +16,8 @@ export const PRICE_FRESH_DAYS = 7;
 export const META_PAUSE_MS = 1000;
 export const PER_RUN = { prices: 60, metadata: 100, covers: 50 };
 
-export interface JobEnv { now?: () => Date; sleep?: (ms: number) => Promise<void> }
+/** `deadline`: the monthly refresh's (month/refresh.ts); a run stops there and its retry does the rest. */
+export interface JobEnv { now?: () => Date; sleep?: (ms: number) => Promise<void>; deadline?: Date }
 export interface Outcome { status: 'done' | 'blocked' | 'failed'; detail: string }
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -42,6 +43,7 @@ export async function refreshPrices(db: Db, source: PriceSource, env: JobEnv = {
   let found = 0, missing = 0, errors = 0;
   for (const [i, b] of books.entries()) {
     if (i > 0) await sleep(PRICE_PAUSE_MS);
+    if (env.deadline && now() >= env.deadline) return { status: 'failed', detail: `stopped at the time limit after ${i} of ${books.length}` };
     let offer;
     try {
       offer = await source.find({ title: b.title, authors: JSON.parse(b.authorsJson) as string[] });

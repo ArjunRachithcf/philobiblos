@@ -85,6 +85,13 @@
       "when": 1794822031828,
       "tag": "0011_ai_proposals_audience_and_spend",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794824245619,
+      "tag": "0012_scheduler",
+      "breakpoints": true
     }
   ]
 }

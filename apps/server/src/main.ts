@@ -6,7 +6,8 @@ import { openDb } from './db/open';
 
 const cfg = loadConfig();
 const db = openDb(cfg.dbFile); // creates and migrates the database
-const { app } = await buildApp(cfg, db, { logger: true });
+// The scheduler runs the monthly refresh on the household's day (jobs/schedule.ts).
+const { app } = await buildApp(cfg, db, { logger: true, jobs: { schedule: {} } });
 // The media worker's folder is the server's to make (in/ for the server, out/ for the worker): before the worker starts.
 if (cfg.workDir) prepareDirs(cfg.workDir);
 const setupFile = ensureSetupLink(db, cfg);
