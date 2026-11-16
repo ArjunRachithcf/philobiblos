@@ -17,8 +17,10 @@ export function Notifications() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState('');
+  // The key's state too: a sealing key that does not open it is said here (the server keeps the key and every device).
+  const [keyError, setKeyError] = useState<string | null>(null);
   const load = () => api<Device[]>('/push/subscriptions').then(setDevices, (e) => setError(message(e)));
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); api('/push/key').then(() => setKeyError(null), (e) => setKeyError(message(e))); }, []);
 
   const turnOn = async () => {
     setError(null); setOk(''); setBusy(true);
@@ -62,6 +64,7 @@ export function Notifications() {
               ))}
             </ul>
           ) : <p className="footnote">No device gets notifications yet.</p>}
+          {keyError && <Notice kind="error">{keyError}</Notice>}
           {!supported() && <Notice kind="warn">This browser cannot get notifications. On an iPhone, add Shelf to the home screen first.</Notice>}
           {error && <Notice kind="error">{error}</Notice>}
           {ok && <Notice kind="ok">{ok}</Notice>}

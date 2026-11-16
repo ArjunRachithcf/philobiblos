@@ -19,7 +19,7 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { household } from '../household/people';
-import { SealError, isSealed, keyProblem, seal, sealingKey, unseal } from '../household/sealed';
+import { SealError, isSealed, keyProblem, sealIfAbsent, sealingKey, unseal } from '../household/sealed';
 import type { Outcome } from '../jobs/books';
 import { EgressError, createEgress, type Egress, type EgressOptions, type Rule } from '../net/egress';
 import { DEFAULT_PUSH_HOSTS, LABEL, hostAllowed } from './hosts';
@@ -45,21 +45,23 @@ export class PushError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 503, message: string) { super(message); }
 }
 
-/** The household's VAPID keys; made and sealed the first time they are needed. No usable sealing key: PushError 503. */
+export const WRONG_SEALING_KEY = 'the sealing key does not open the notification key (SHELF_SEALING_KEY is not the key it was sealed with): no notifications until the right key is back; the devices are kept';
+
+/**
+ * The household's VAPID keys; made and sealed the first time they are needed, and only then: when nothing is sealed yet
+ * (of two first calls at once, the first sealed wins and both answer it). No usable sealing key: PushError 503. A
+ * sealed key that does not open (another sealing key, or a changed row): PushError 503 too, and everything is kept (the
+ * sealed key and every device), so the right sealing key brings them all back.
+ */
 export function vapidKeys(db: Db, cfg: Pick<Config, 'sealingKey'>): VapidKeys {
   const problem = keyProblem(cfg);
   if (problem) throw new PushError(503, `notifications need the sealing key, which is ${problem} (SHELF_SEALING_KEY)`);
   const key = sealingKey(cfg)!;
-  if (isSealed(db, VAPID_SEALED)) {
-    try { return vapidFromPrivate(fromB64u(unseal(db, key, VAPID_SEALED)!)); } catch (e) {
-      if (!(e instanceof SealError)) throw e;
-      // Sealed under a key that was replaced: the old subscriptions were made for the old public key and cannot be used.
-      db.delete(t.pushSubscription).run();
-    }
+  if (!isSealed(db, VAPID_SEALED)) sealIfAbsent(db, key, VAPID_SEALED, b64u(newVapidKeys().privateKey));
+  try { return vapidFromPrivate(fromB64u(unseal(db, key, VAPID_SEALED)!)); } catch (e) {
+    if (e instanceof SealError) throw new PushError(503, WRONG_SEALING_KEY);
+    throw e;
   }
-  const k = newVapidKeys();
-  seal(db, key, VAPID_SEALED, b64u(k.privateKey));
-  return k;
 }
 
 /** A subscription as the browser gives it (PushSubscription.toJSON()), checked field by field. */

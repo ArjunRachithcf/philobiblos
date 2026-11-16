@@ -11,6 +11,7 @@ volumes: [{ name: data, mount: /data, backup: true, description: SQLite database
 env:
   SHELF_MODE: homerslab
   SHELF_DATA_DIR: /data
+  # The household's zone at the first start only; Settings holds it after (the one zone for "this month").
   SHELF_TZ: Europe/Zurich
   # Not set here: HomersLab gives SHELF_ORIGIN, SHELF_TRUSTED_PROXY (the edge's address on the app network; HomersLab
   # ADR 0020's per-app firewall makes it mean something) and, once its edge keeps identity.edge's promise,

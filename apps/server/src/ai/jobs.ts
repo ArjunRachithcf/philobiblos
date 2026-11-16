@@ -27,7 +27,7 @@ import { readBooksForAi } from '../library/ai-context';
 import { KIDS_THEMES, bookRef } from '../library/library';
 import { addressParts } from '../mail/read';
 import { SEALED } from '../routes/month';
-import { currentMonth } from '../month/plan';
+import { thisMonth } from '../month/plan';
 import { modelFor, type ModelDeps } from './model';
 import { AiBudget, AiError, runAi } from './run';
 import { getAi } from './settings';
@@ -104,7 +104,7 @@ const stopped = (e: unknown, did: string): Outcome | null => (e instanceof AiErr
 export class AiJobs {
   private reading: Promise<Outcome> | null = null;
   private again = false;
-  constructor(private readonly db: Db, private readonly cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sealingKey' | 'dataDir' | 'timezone'>, private readonly o: AiJobOptions = {}) {}
+  constructor(private readonly db: Db, private readonly cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sealingKey' | 'dataDir'>, private readonly o: AiJobOptions = {}) {}
 
   private start(job: 'read' | 'link' | 'suggest' | 'explain'): { why: string } | { why?: undefined; model: Model; budget: AiBudget; address: string[]; wildcards: boolean } {
     const s = getAi(this.db);
@@ -266,7 +266,7 @@ export class AiJobs {
     const s = this.start('explain');
     if (s.why !== undefined) return done(`no picks explained: ${s.why}`);
     const db = this.db;
-    const month = o.month ?? currentMonth(this.cfg.timezone, this.now());
+    const month = o.month ?? thisMonth(this.db, this.now());
     const order = db.select().from(t.order).where(eq(t.order.month, month)).orderBy(desc(t.order.createdAt)).get();
     if (!order) return done('no plan kept for this month yet');
     const adults = new Set(household(db).filter((p) => p.role !== 'kid').map((p) => p.id));

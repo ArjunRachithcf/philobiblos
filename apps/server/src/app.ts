@@ -24,6 +24,7 @@ import type { runMediaJob } from './media/client';
 import { AiJobs, type AiJobOptions } from './ai/jobs';
 import { pushRoutes } from './routes/push';
 import { pushClient } from './push/push';
+import { initHousehold } from './jobs/schedule';
 import type { Egress } from './net/egress';
 
 /** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md); a
@@ -35,6 +36,8 @@ export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; u
 export interface AppOptions { ai?: AiJobOptions; push?: Egress; logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
+  // The household's settings row, with SHELF_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
+  initHousehold(db, cfg.timezone);
   const app = Fastify({
     logger: opts.logger ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]'] } : false,
     trustProxy: false,

@@ -96,13 +96,35 @@ describe('the application server key', () => {
     expect(row.ciphertext.includes(a.privateKey)).toBe(false);
     expect(row.ciphertext.includes(Buffer.from(b64u(a.privateKey)))).toBe(false);
   });
-  it('a replaced sealing key makes a new key, and the devices made for the old one are removed', () => {
+  it('a sealing key that does not open the key keeps everything: no new key, no device removed, no push, and says so', async () => {
     const db = household();
     const old = vapidKeys(db, cfg);
     subscribe(db, 'p_sam', sub());
-    const other = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') });
-    expect(vapidKeys(db, other).publicKey.equals(old.publicKey)).toBe(false);
-    expect(listSubscriptions(db, 'p_sam')).toEqual([]);
+    const before = db.select().from(t.sealedSecret).where(eq(t.sealedSecret.key, VAPID_SEALED)).get()!;
+    const wrong = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') });
+    expect(() => vapidKeys(db, wrong)).toThrow(expect.objectContaining({ status: 503, message: expect.stringContaining('sealing key does not open') }));
+    expect(db.select().from(t.sealedSecret).where(eq(t.sealedSecret.key, VAPID_SEALED)).get()).toEqual(before);
+    expect(listSubscriptions(db, 'p_sam')).toHaveLength(1);
+    const f = fakeEgress();
+    expect(await notify(db, wrong, f.e, 'plan')).toMatchObject({ status: 'blocked', detail: expect.stringContaining('sealing key does not open') });
+    expect(f.sent).toEqual([]);
+    // Settings → Notifications reads the same words from GET /push/key.
+    const { app } = await buildApp(wrong, db, { push: f.e });
+    const r = await app.inject({ url: '/api/push/key', headers: { cookie: sessionCookie(db, 'p_sam') } });
+    expect(r.statusCode).toBe(503);
+    expect(r.json().error).toContain('sealing key does not open');
+    // The right key back: the same key and the same devices.
+    expect(vapidKeys(db, cfg).publicKey.equals(old.publicKey)).toBe(true);
+    expect(listSubscriptions(db, 'p_sam')).toHaveLength(1);
+  });
+  it('a sealed key that does not open (a changed row) is kept too', () => {
+    const db = household();
+    vapidKeys(db, cfg);
+    const row = db.select().from(t.sealedSecret).where(eq(t.sealedSecret.key, VAPID_SEALED)).get()!;
+    const bent = Buffer.from(row.ciphertext); bent[bent.length - 1]! ^= 1;
+    db.update(t.sealedSecret).set({ ciphertext: bent }).where(eq(t.sealedSecret.key, VAPID_SEALED)).run();
+    expect(() => vapidKeys(db, cfg)).toThrow(expect.objectContaining({ status: 503 }));
+    expect(db.select().from(t.sealedSecret).where(eq(t.sealedSecret.key, VAPID_SEALED)).get()!.ciphertext.equals(bent)).toBe(true);
   });
   it('without a usable sealing key there are no notifications (503), and nothing is sent', async () => {
     const db = household();
@@ -122,7 +144,7 @@ describe('subscriptions', () => {
       const host = h.replace('*', 'wns2-par02p');
       expect(checkSubscription({ endpoint: `https://${host}/x`, keys: k }).endpoint).toBe(`https://${host}/x`);
     }
-    for (const endpoint of ['http://fcm.googleapis.com/x', 'https://fcm.googleapis.com:8443/x', 'https://u:p@fcm.googleapis.com/x', 'https://evil.example/x', 'https://fcm.googleapis.com.evil.example/x',
+    for (const endpoint of ['http://fcm.googleapis.com/x', 'https://fcm.googleapis.com:8443/x', 'https://u:p@fcm.googleapis.com/x', 'https://u@fcm.googleapis.com/x', 'https://:p@fcm.googleapis.com/x', 'https://evil.example/x', 'https://fcm.googleapis.com.evil.example/x',
       'https://10.0.0.1/x', 'https://[::1]/x', 'https://localhost/x', 'https://wns2-par02p.notify.windows.com.evil.example/x', 'https://notify.windows.com/x', 'https://a.b.notify.windows.com/x', 'https://evilnotify.windows.com/x', 'javascript:alert(1)', ENDPOINT('x'.repeat(PUSH.endpointMax)), 42]) {
       expect(() => checkSubscription({ endpoint, keys: k })).toThrow(PushError);
     }
@@ -135,7 +157,7 @@ describe('subscriptions', () => {
     expect(checkSubscription({ endpoint: 'https://eu.push.example.net/d/1', keys: k }, own.pushHosts).endpoint).toBe('https://eu.push.example.net/d/1');
     expect(() => checkSubscription({ endpoint: ENDPOINT(), keys: k }, own.pushHosts)).toThrow(PushError);
     expect(cfg.pushHosts).toEqual(DEFAULT_PUSH_HOSTS);
-    for (const bad of ['localhost', 'push.example.org/path', '*.*.example.org', 'https://push.example.org', '10.0.0.1', '*']) {
+    for (const bad of ['localhost', 'push.example.org/path', '*.*.example.org', 'https://push.example.org', '10.0.0.1', '*', '*.co.uk', '*.com.au', '*.org.uk', '*.co.jp', '*.ne.jp', '*.gov.uk', '*.ac.uk']) {
       expect(() => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_PUSH_HOSTS: bad })).toThrow(/SHELF_PUSH_HOSTS/);
     }
     // The server's push client and its routes use them.
@@ -144,6 +166,14 @@ describe('subscriptions', () => {
     await expect(c.push(ENDPOINT(), Buffer.from('x'), { headers: {} })).rejects.toMatchObject({ reason: 'not-allowed' });
     await expect(c.push('https://push.example.org/d/1', Buffer.from('x'), { headers: {} })).rejects.toMatchObject({ reason: 'private-address' });
     expect(looked).toEqual(['push.example.org']);
+    // A wildcard under a real domain (not a public suffix) stays.
+    expect(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_PUSH_HOSTS: '*.push.example.co.uk, *.notify.windows.com' }).pushHosts).toEqual(['*.push.example.co.uk', '*.notify.windows.com']);
+    // SHELF_EGRESS=off: the push client sends nothing and looks nothing up.
+    const off: string[] = [];
+    const quiet = pushClient({ pushHosts: own.pushHosts, egress: false }, { resolve: async (h) => { off.push(h); return [{ address: '93.184.215.14', family: 4 }]; } });
+    await expect(quiet.push('https://push.example.org/d/1', Buffer.from('x'), { headers: {} })).rejects.toMatchObject({ reason: 'off' });
+    await expect(quiet.push('https://push.example.org/d/1', Buffer.from('x'), { headers: {} })).rejects.toBeInstanceOf(EgressError);
+    expect(off).toEqual([]);
     const db = household();
     const { app } = await buildApp(own, db, { push: fakeEgress().e });
     const post = (endpoint: string) => app.inject({ method: 'POST', url: '/api/push/subscriptions', headers: { cookie: sessionCookie(db, 'p_sam'), origin: ORIGIN, 'content-type': 'application/json' }, payload: JSON.stringify({ endpoint, keys: k }) });

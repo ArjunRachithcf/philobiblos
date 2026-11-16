@@ -9,6 +9,17 @@ export const DEFAULT_PUSH_HOSTS = ['fcm.googleapis.com', 'updates.push.services.
 export const LABEL = '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?';
 /** A SHELF_PUSH_HOSTS entry: a host name of two labels or more (the last a name, so never an address), or `*.` and one. */
 export const PUSH_HOST_ENTRY = new RegExp(`^(\\*\\.)?(${LABEL}\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`);
+/**
+ * The labels registries sell names under at the second level (co.uk, com.au, ne.jp, gov.uk …): a small public-suffix
+ * check, enough to catch a typo. A wildcard on such a suffix would allow anyone's domain under it.
+ */
+const REGISTRY_LABELS = new Set(['ac', 'co', 'com', 'edu', 'go', 'gob', 'gov', 'govt', 'ltd', 'mil', 'ne', 'net', 'nic', 'nom', 'or', 'org', 'plc', 'sch']);
+/** `*.` on a registry's second level (`*.co.uk`); `*.com` never gets here (PUSH_HOST_ENTRY wants two labels after `*.`). */
+export const onPublicSuffix = (entry: string): boolean => {
+  if (!entry.startsWith('*.')) return false;
+  const labels = entry.slice(2).split('.');
+  return labels.length === 2 && REGISTRY_LABELS.has(labels[0]!);
+};
 const matcher = (entry: string): ((host: string) => boolean) => {
   if (!entry.startsWith('*.')) return (h) => h === entry;
   const suffix = entry.slice(1);

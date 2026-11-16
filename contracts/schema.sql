@@ -60,7 +60,7 @@ CREATE TABLE household_settings (
   ai_jobs_json      TEXT NOT NULL DEFAULT '{"read":true,"link":true,"suggest":true,"explain":true,"wildcards":true}',
   cycle_day         INTEGER NOT NULL DEFAULT 1,
   cycle_time        TEXT NOT NULL DEFAULT '20:17',
-  timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',
+  timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',  -- the household's one zone; the row is made at the first start with SHELF_TZ, never read after
   ai_models_json    TEXT NOT NULL DEFAULT '{}',  -- the AI's models (Ollama's text and vision model, Claude's); the Claude key is sealed, never here
   ai_leaves_accepted TEXT,                      -- JSON: the lines of what leaves with Claude an admin accepted; Claude runs only while they cover it
   ai_daily_tokens   INTEGER NOT NULL DEFAULT 200000 -- the household's Claude allowance: tokens in any 24 hours, every run together

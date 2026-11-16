@@ -14,6 +14,7 @@ import { BUDGET_CEILING_C, getBudget, type Budget } from '../household/budget';
 import { actsFor, getPerson, household, view, type Person } from '../household/people';
 import { getLibrary } from '../library/library';
 import { personSettings } from '../library/settings';
+import { householdZone } from '../jobs/schedule';
 import { mailto, orderText } from './order-mail';
 
 type S = components['schemas'];
@@ -28,18 +29,20 @@ export function currentMonth(timezone: string, now = new Date()): string {
   const p = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit' }).formatToParts(now);
   return `${p.find((x) => x.type === 'year')!.value}-${p.find((x) => x.type === 'month')!.value}`;
 }
+/** "This month": the household's (its zone, Settings), the one source for the page, add_to_month, the plan and the AI. */
+export const thisMonth = (db: Db, now = new Date()): string => currentMonth(householdZone(db), now);
 function checkMonth(month: string) { if (!MONTH.test(month)) throw new MonthError(400, 'month: YYYY-MM'); }
 export function nextMonth(month: string): string {
   const n = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)); // the next month's index, 1-based month
   return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
 }
 /**
- * Plans are made for this month and the next (the household's time zone, SHELF_TZ): any other month is 404 for changes,
- * and shows only when it has an order.
+ * Plans are made for this month and the next (the household's time zone): any other month is 404 for changes, and shows
+ * only when it has an order.
  */
-export function checkWindow(db: Db, month: string, timezone: string, change: boolean, now = new Date()): void {
+export function checkWindow(db: Db, month: string, change: boolean, now = new Date()): void {
   checkMonth(month);
-  const cur = currentMonth(timezone, now);
+  const cur = thisMonth(db, now);
   if (month === cur || month === nextMonth(cur)) return;
   if (!change && orderOf(db, month)) return;
   throw new MonthError(404, change ? 'plans are changed for this month and the next only' : 'no plan for that month');

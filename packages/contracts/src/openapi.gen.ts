@@ -266,7 +266,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** This month's plan, in the household's time zone (SHELF_TZ): the one source of "this month" for the page and for add_to_month. */
+        /** This month's plan, in the household's time zone (Settings.cycle.timezone): the one source of "this month" for the page and for add_to_month. */
         get: operations["getCurrentMonth"];
         put?: never;
         post?: never;
@@ -1298,7 +1298,7 @@ export interface components {
             cycle?: {
                 day?: number;
                 time?: string;
-                /** @description an IANA time zone, e.g. Europe/Zurich */
+                /** @description an IANA time zone, e.g. Europe/Zurich: the household's one zone, for the refresh and for "this month" everywhere (the plan, /month, add_to_month). SHELF_TZ is only its value at the first start. */
                 timezone?: string;
                 /**
                  * Format: date-time
@@ -1312,6 +1312,8 @@ export interface components {
                     status?: "running" | "retry" | "done" | "gave_up";
                     attempts?: number;
                 };
+                /** @description YYYY-MM: a run was recorded for a month later than now's, so the clock was ahead when it ran (or is behind now). It does not stop the month it is now; the month it names runs again when it comes. */
+                readonly futureRun?: string;
             };
             /** @description Where orders go (admins set it): both sealed at rest with a key outside the database (docs/security.md) */
             order?: {
@@ -3276,7 +3278,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description No usable sealing key: no notifications */
+            /** @description No usable sealing key, or one that does not open the sealed notification key (nothing is replaced or removed): no notifications */
             503: {
                 headers: {
                     [name: string]: unknown;

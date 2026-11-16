@@ -5,7 +5,7 @@ import { requireAdmin } from '../auth/hook';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import { SealError, isSealed, keyProblem, sealingKey, unseal } from '../household/sealed';
-import { MonthError, changePicks, checkWindow, composeOrder, currentMonth, getMonth, getOrder, setMonthBudget } from '../month/plan';
+import { MonthError, changePicks, checkWindow, composeOrder, getMonth, getOrder, setMonthBudget, thisMonth } from '../month/plan';
 
 export const SEALED = { bookshopEmail: 'bookshop_email', deliveryAddress: 'delivery_address' } as const;
 
@@ -16,27 +16,27 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     throw e;
   };
   type P = { Params: { month: string } };
-  // "This month" is the server's (SHELF_TZ): the page asks for it here, and add_to_month uses the same.
+  // "This month" is the household's (its zone in Settings): the page asks for it here, and add_to_month uses the same.
   app.get('/month', async (req, reply) => {
-    try { return getMonth(db, currentMonth(cfg.timezone), req.caller!.personId); } catch (e) { return fail(reply, e); }
+    try { return getMonth(db, thisMonth(db), req.caller!.personId); } catch (e) { return fail(reply, e); }
   });
   app.get<P>('/month/:month', async (req, reply) => {
-    try { checkWindow(db, req.params.month, cfg.timezone, false); return getMonth(db, req.params.month, req.caller!.personId); } catch (e) { return fail(reply, e); }
+    try { checkWindow(db, req.params.month, false); return getMonth(db, req.params.month, req.caller!.personId); } catch (e) { return fail(reply, e); }
   });
   app.put<P>('/month/:month/budget', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    try { checkWindow(db, req.params.month, cfg.timezone, true); return setMonthBudget(db, req.params.month, req.caller!.personId, req.body ?? null); } catch (e) { return fail(reply, e); }
+    try { checkWindow(db, req.params.month, true); return setMonthBudget(db, req.params.month, req.caller!.personId, req.body ?? null); } catch (e) { return fail(reply, e); }
   });
   app.post<P>('/month/:month/picks', async (req, reply) => {
-    try { checkWindow(db, req.params.month, cfg.timezone, true); return changePicks(db, req.params.month, req.caller!.personId, req.body); } catch (e) { return fail(reply, e); }
+    try { checkWindow(db, req.params.month, true); return changePicks(db, req.params.month, req.caller!.personId, req.body); } catch (e) { return fail(reply, e); }
   });
   app.post<{ Body: { month?: unknown } }>('/orders', async (req, reply) => {
     try {
       const b = req.body;
       if (b !== undefined && b !== null && (typeof b !== 'object' || Array.isArray(b))) throw new MonthError(400, 'a JSON object is needed');
-      const month = b?.month ?? currentMonth(cfg.timezone);
+      const month = b?.month ?? thisMonth(db);
       if (typeof month !== 'string') throw new MonthError(400, 'month: YYYY-MM');
-      checkWindow(db, month, cfg.timezone, true);
+      checkWindow(db, month, true);
       const problem = keyProblem(cfg);
       if (problem && (isSealed(db, SEALED.bookshopEmail) || isSealed(db, SEALED.deliveryAddress))) throw new MonthError(409, `the sealing key is ${problem}: the server's SHELF_SEALING_KEY needs fixing`);
       const open = (name: string) => (isSealed(db, name) ? unseal(db, sealingKey(cfg), name) : null);

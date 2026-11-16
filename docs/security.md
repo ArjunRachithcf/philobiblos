@@ -51,8 +51,17 @@ applies; a feature that cannot meet them waits.
   when it has them (shelf#8).
 - The scheduler assumes one Shelf server per database (as `job_run` does): a second server on the same database would
   wait for a claim's lease, but at its start it frees the claims the first one holds.
-- "This month" in the API is the server's zone (`SHELF_TZ`); the monthly refresh is the household's (Settings). Keep them
-  the same; a household far from the server's zone sees the plan for its own month only once the server's month agrees.
+- One time zone: the household's (Settings). "This month" in the API, add_to_month, the plan's window and the monthly
+  refresh all read it. `SHELF_TZ` is only its value when the settings row is made, at the first start; it is never read
+  after.
+- A clock that is wrong for a moment: the scheduler claims only the month it is now. A row for a later month does not
+  stop it (Settings shows "a run was recorded for a future month"), and a row of this month written later than now is
+  void, so that month runs again from its start. The cost: a clock set back into a month that never ran runs that month
+  once; a month that ran by a right clock never runs again.
+- The notification key (VAPID) is made only when none is sealed. A sealing key that does not open it is a wrong key, not
+  a rotation: nothing is replaced and no device is removed, pushes stop (503, Settings → Notifications says so) until the
+  right key is back. A deliberate new sealing key therefore keeps notifications off until an admin deletes the sealed
+  `vapid_private_key` row; then a new key is made and each device subscribes again.
 - Compose copies the request to no one (no Bcc to Shelf's mailbox, which would then hold the address and whatever card
   number the person typed): a bookshop reply belongs to an order by its signed Subject ("Book order, <month>") or by
   the In-Reply-To of a bookshop mail already tied. A reply whose subject the bookshop rewrites goes to the Inbox

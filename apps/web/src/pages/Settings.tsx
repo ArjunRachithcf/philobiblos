@@ -177,6 +177,7 @@ function MonthlyRefresh({ admin }: { admin: boolean }) {
       {!cycle ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : (
         <>
           <p>Next: <b>{when(cycle.next)}</b>{cycle.last ? `. ${cycle.last.period} ${STATUS[cycle.last.status ?? ''] ?? ''}.` : '.'}</p>
+          {cycle.futureRun && <Notice kind="warn">A run was recorded for a future month ({cycle.futureRun}; clock moved?). It does not stop this month’s run; that month runs again when it comes.</Notice>}
           {admin ? (
             <form className="stack" onSubmit={save} noValidate>
               <div className="fields fields-2">

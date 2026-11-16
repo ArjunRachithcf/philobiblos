@@ -1,7 +1,8 @@
 // Settings from the environment (contracts/homerslab-app.yaml, docker-compose.yml). Secrets are read here and
 // nowhere else, and never logged.
 import { join, resolve } from 'node:path';
-import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY } from './push/hosts';
+import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY, onPublicSuffix } from './push/hosts';
+import { validTimeZone } from './jobs/zone';
 
 export type Mode = 'homerslab' | 'standalone';
 
@@ -11,6 +12,7 @@ export interface Config {
   dbFile: string;
   host: string;
   port: number;
+  /** SHELF_TZ: only the zone the household starts with (its settings row, made at the first start); never read after. */
   timezone: string;
   /** homerslab: the only address whose X-HomersLab-Person header is trusted. */
   trustedProxy: string | null;
@@ -74,7 +76,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // publishes the port on 127.0.0.1 only.
     host: env.SHELF_HOST ?? '127.0.0.1',
     port,
-    timezone: env.SHELF_TZ ?? 'Europe/Zurich',
+    timezone: parseTimeZone(env.SHELF_TZ),
     trustedProxy: env.SHELF_TRUSTED_PROXY || null,
     webDir: env.SHELF_WEB_DIR ?? null,
     origin: origin.origin,
@@ -97,10 +99,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   };
 }
 
+/** SHELF_TZ: the household's zone at the first start only (jobs/schedule.ts initHousehold); Settings has it after. */
+function parseTimeZone(v: string | undefined): string {
+  if (v === undefined || !v.trim()) return 'Europe/Zurich';
+  const tz = v.trim();
+  if (!validTimeZone(tz)) throw new Error(`SHELF_TZ: a time zone such as Europe/Zurich, not ${v.trim().slice(0, 80)}`);
+  return tz;
+}
+
 function parsePushHosts(v: string | undefined): string[] {
   if (v === undefined || !v.trim()) return [...DEFAULT_PUSH_HOSTS];
   const hosts = v.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
-  for (const h of hosts) if (!PUSH_HOST_ENTRY.test(h)) throw new Error(`SHELF_PUSH_HOSTS: host names or *.domain, comma-separated, not ${h.slice(0, 80)}`);
+  for (const h of hosts) if (!PUSH_HOST_ENTRY.test(h) || onPublicSuffix(h)) throw new Error(`SHELF_PUSH_HOSTS: host names or *.domain (not on a public suffix such as co.uk), comma-separated, not ${h.slice(0, 80)}`);
   return hosts;
 }
 
