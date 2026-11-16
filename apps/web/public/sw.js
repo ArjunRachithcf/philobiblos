@@ -1,8 +1,8 @@
 /* global self, caches, Response, FormData, File, Headers, crypto */
-// Shelf's service worker does two things. Notifications: see the end of this file. And the phone's share target (contracts/connectors.md "Phone share"). The
+// Philobiblos's service worker does two things. Notifications: see the end of this file. And the phone's share target (contracts/connectors.md "Phone share"). The
 // operating system POSTs a share to /share-target; that request never reaches the server. The parts are kept in the
 // browser's cache for a moment and the share screen opens, which reads them and posts them to /api/shares itself,
-// as Shelf's own page: with Shelf's Origin and the session, like every other change (ADR 0010). Nothing else is
+// as Philobiblos's own page: with Philobiblos's Origin and the session, like every other change (ADR 0010). Nothing else is
 // intercepted or cached. Any website can make a browser POST here, and the worker cannot tell the share sheet from
 // another site, so nothing is sent until the person taps "Send to the Inbox" on the share screen.
 const CACHE = 'shelf-share';
@@ -56,10 +56,10 @@ self.addEventListener('fetch', (e) => {
 });
 
 // Notifications (Web Push, the server's push/push.ts): a push carries only its kind, no words, so the text is the
-// device's language's (PUSH_TEXT, English when there is none yet; shelf#27 adds the household's locale) and never text
-// from the message; a tap opens This month on Shelf's own origin, whatever the message says.
+// device's language's (PUSH_TEXT, English when there is none yet; philobiblos#27 adds the household's locale) and never text
+// from the message; a tap opens This month on Philobiblos's own origin, whatever the message says.
 const PUSH_TEXT = {
-  en: { plan: 'This month’s plan is ready.', test: 'Notifications from Shelf work on this device.', other: 'Shelf has something new.' },
+  en: { plan: 'This month’s plan is ready.', test: 'Notifications from Philobiblos work on this device.', other: 'Philobiblos has something new.' },
 };
 const own = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
 self.addEventListener('push', (e) => {
@@ -68,7 +68,7 @@ self.addEventListener('push', (e) => {
   const lang = String((self.navigator && self.navigator.language) || 'en').toLowerCase().split('-')[0];
   const text = own(PUSH_TEXT, lang) ? PUSH_TEXT[lang] : PUSH_TEXT.en;
   const body = kind !== 'other' && own(text, kind) ? text[kind] : text.other;
-  e.waitUntil(self.registration.showNotification('Shelf', { body, tag: 'shelf', icon: '/favicon.svg' }));
+  e.waitUntil(self.registration.showNotification('Philobiblos', { body, tag: 'philobiblos', icon: '/favicon.svg' }));
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();

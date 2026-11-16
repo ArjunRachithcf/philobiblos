@@ -1,6 +1,6 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "shelf/ai/tag_book.schema.json",
+ "$id": "philobiblos/ai/tag_book.schema.json",
  "type": "object",
  "required": [
   "audience",

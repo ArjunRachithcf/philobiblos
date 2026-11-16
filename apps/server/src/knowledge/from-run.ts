@@ -1,4 +1,4 @@
-// The one way an AI run's proposals enter the knowledge layer (shelf#3): `private_to` is never the writer's choice,
+// The one way an AI run's proposals enter the knowledge layer (philobiblos#3): `private_to` is never the writer's choice,
 // it is derived from the run (ai_run.takeaways_of), so a proposal written from someone's takeaways is private to them
 // whichever job wrote it. Nothing else in src/ inserts a book_link, a book_idea, an idea_proposal or an idea (the
 // architecture test in test/knowledge.test.ts); the seed writes only decided rows, without a run.

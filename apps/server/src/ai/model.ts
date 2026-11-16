@@ -1,6 +1,6 @@
 // The household's AI model as its settings say (ai/settings.ts), reaching its provider only through an egress client
 // whose whole allowlist is that provider's host (net/egress.ts aiEgressRules).
-import { createClaudeModel, createOllamaModel, type Model, type Transport } from '@shelf/ai';
+import { createClaudeModel, createOllamaModel, type Model, type Transport } from '@philobiblos/ai';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import { SealError, sealingKey, unseal } from '../household/sealed';
@@ -16,13 +16,13 @@ const transport = (e: Egress): Transport => async (url, body, o) => (await e.pos
 export function modelFor(db: Db, cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sealingKey'>, deps: ModelDeps = {}): ModelFor {
   const s = getAi(db);
   if (s.provider === 'none') return { model: null, why: 'the AI is off (Settings)' };
-  if (!cfg.egress) return { model: null, why: 'outgoing requests are turned off (SHELF_EGRESS=off)' };
+  if (!cfg.egress) return { model: null, why: 'outgoing requests are turned off (PHILOBIBLOS_EGRESS=off)' };
   const egress = (rules: Rule[]) => (deps.egress ?? ((r) => createEgress({ rules: r, enabled: cfg.egress })))(rules);
   if (s.provider === 'ollama') {
     if (!cfg.ollamaUrl) return { model: null, why: 'no Ollama is configured (OLLAMA_URL)' };
     return { model: createOllamaModel({ url: cfg.ollamaUrl, model: s.models.ollama.model, visionModel: s.models.ollama.visionModel, transport: transport(egress(aiEgressRules('ollama', cfg.ollamaUrl))) }) };
   }
-  // Claude only while an admin's acceptance covers everything that leaves now (a newer Shelf may send more).
+  // Claude only while an admin's acceptance covers everything that leaves now (a newer Philobiblos may send more).
   if (!leavesAccepted(s)) return { model: null, why: 'what goes to Anthropic changed since an admin accepted it: an admin reads it again and accepts it (Settings)' };
   let apiKey: string | null = null;
   try { apiKey = unseal(db, sealingKey(cfg), CLAUDE_KEY); } catch (e) { if (!(e instanceof SealError)) throw e; }

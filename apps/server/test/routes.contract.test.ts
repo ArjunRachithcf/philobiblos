@@ -9,8 +9,8 @@ import * as t from '../src/db/schema';
 import { seal } from '../src/household/sealed';
 import { ORIGIN, RFC8291_UA_KEY, TEST_SEALING_KEY, expectValid, nowherePush, fakeWebAuthn, household, inboxItems, isPublic, ops, request, security, sessionCookie } from './helpers';
 
-const standalone = () => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY });
-const homerslab = () => loadConfig({ SHELF_MODE: 'homerslab', SHELF_EDGE_IDENTITY: 'homerslab-v1', SHELF_TRUSTED_PROXY: '127.0.0.1', SHELF_ORIGIN: ORIGIN, SHELF_DATA_DIR: '/nonexistent' });
+const standalone = () => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY });
+const homerslab = () => loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '127.0.0.1', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_DATA_DIR: '/nonexistent' });
 const HL_ADULT = { 'x-homerslab-person': 'hl-sam', 'x-homerslab-name': 'Sam', 'x-homerslab-role': 'adult' };
 const HL_KID = { 'x-homerslab-person': 'hl-kid', 'x-homerslab-name': 'Kid 1', 'x-homerslab-role': 'kid' };
 
@@ -123,13 +123,13 @@ describe('homerslab mode', () => {
     const session = (await hl.app.inject({ url: '/api/auth/session', headers: HL_ADULT })).json();
     expect(session).toMatchObject({ mode: 'homerslab', signedIn: true, setupNeeded: false, person: { name: 'Sam' } });
   });
-  it('passkeys and sessions are not Shelf\'s under HomersLab: 404', async () => {
+  it('passkeys and sessions are not Philobiblos\'s under HomersLab: 404', async () => {
     const h = { ...HL_ADULT, origin: ORIGIN };
     for (const [method, url] of [['GET', '/api/me/passkeys'], ['POST', '/api/me/passkeys/invite'], ['POST', '/api/me/sessions/end'], ['DELETE', '/api/me/passkeys/pk1']] as const) {
       expect((await hl.app.inject({ method, url, headers: h })).statusCode, url).toBe(404);
     }
   });
-  it('a change needs Shelf\'s Origin under HomersLab too', async () => {
+  it('a change needs Philobiblos\'s Origin under HomersLab too', async () => {
     expect((await hl.app.inject({ method: 'PATCH', url: '/api/settings', headers: HL_ADULT, payload: {} })).statusCode).toBe(403);
   });
   it('the role must be exactly admin, adult or kid', async () => {
@@ -139,13 +139,13 @@ describe('homerslab mode', () => {
   it('the manifest asks HomersLab for the edge\'s promise and does not make it itself', () => {
     const m = parse(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'));
     expect(m.identity.edge).toBe(EDGE_IDENTITY);
-    for (const k of ['SHELF_EDGE_IDENTITY', 'SHELF_TRUSTED_PROXY', 'SHELF_ORIGIN']) expect(Object.keys(m.env ?? {}), k).not.toContain(k);
+    for (const k of ['PHILOBIBLOS_EDGE_IDENTITY', 'PHILOBIBLOS_TRUSTED_PROXY', 'PHILOBIBLOS_ORIGIN']) expect(Object.keys(m.env ?? {}), k).not.toContain(k);
     expect(m.audience).toBe('adults');
   });
-  it('needs SHELF_ORIGIN, the edge\'s promise (HomersLab #236) and the trusted proxy', () => {
-    expect(() => loadConfig({ SHELF_MODE: 'homerslab' })).toThrow(/SHELF_ORIGIN/);
-    expect(() => loadConfig({ SHELF_MODE: 'homerslab', SHELF_ORIGIN: ORIGIN, SHELF_TRUSTED_PROXY: '127.0.0.1' })).toThrow(/SHELF_EDGE_IDENTITY/);
-    expect(() => loadConfig({ SHELF_MODE: 'homerslab', SHELF_ORIGIN: ORIGIN, SHELF_EDGE_IDENTITY: 'homerslab-v1' })).toThrow(/SHELF_TRUSTED_PROXY/);
+  it('needs PHILOBIBLOS_ORIGIN, the edge\'s promise (HomersLab #236) and the trusted proxy', () => {
+    expect(() => loadConfig({ PHILOBIBLOS_MODE: 'homerslab' })).toThrow(/PHILOBIBLOS_ORIGIN/);
+    expect(() => loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_TRUSTED_PROXY: '127.0.0.1' })).toThrow(/PHILOBIBLOS_EDGE_IDENTITY/);
+    expect(() => loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1' })).toThrow(/PHILOBIBLOS_TRUSTED_PROXY/);
   });
 });
 

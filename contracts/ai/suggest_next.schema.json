@@ -1,6 +1,6 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "shelf/ai/suggest_next.schema.json",
+ "$id": "philobiblos/ai/suggest_next.schema.json",
  "type": "object",
  "required": [
   "suggestions"

@@ -1,15 +1,15 @@
-// Web Push to the household's adults (spec §5 step 5, shelf#8 h; Arjun chose Web Push): "this month's plan is ready",
+// Web Push to the household's adults (spec §5 step 5, philobiblos#8 h; Arjun chose Web Push): "this month's plan is ready",
 // and nothing about who reads what.
 //
 // - The application server key (VAPID, P-256) is made once and sealed like the delivery address (household/sealed.ts,
 //   the key outside the database): its private half is never logged or answered; only the public half is (GET /push/key).
 // - Subscriptions are per person, adults only (kids never sign in; a person who becomes a kid loses theirs, and the role
 //   is checked again at each send), at most PUSH.perPerson a person, each removable by its person.
-// - An endpoint is https on 443 at a push service the server allows (SHELF_PUSH_HOSTS), without credentials, at most 1,024 characters; the
+// - An endpoint is https on 443 at a push service the server allows (PHILOBIBLOS_PUSH_HOSTS), without credentials, at most 1,024 characters; the
 //   browser's keys are a P-256 point and a 16-byte secret. Every send goes through the egress client (net/egress.ts)
 //   with those hosts as its whole allowlist: public addresses only, no redirects, a deadline and size limits.
 // - The payload is encrypted (RFC 8291) and holds only its kind ({"kind":"plan"}); the service worker shows its own
-//   words for the kind and opens Shelf's own origin (apps/web/public/sw.js).
+//   words for the kind and opens Philobiblos's own origin (apps/web/public/sw.js).
 // - A push service's 404 or 410 deletes the subscription; its 429 stops sends to that service for the run.
 // - Rate limits: the plan's push once a period (the monthly refresh's step), a test push 3 times in 10 minutes a person,
 //   10 subscriptions saved in 10 minutes a person.
@@ -30,13 +30,13 @@ import { b64u, encrypt, fromB64u, newVapidKeys, validClientKeys, vapidAuthorizat
 export const PUSH = { perPerson: 10, ttlSeconds: 24 * 3600, endpointMax: 1024 } as const;
 export const VAPID_SEALED = 'vapid_private_key';
 /** RFC 8292's contact for the push services: the project's, never the household's address. */
-export const VAPID_SUBJECT = 'https://github.com/ArjunRachithcf/shelf';
+export const VAPID_SUBJECT = 'https://github.com/ArjunRachithcf/philobiblos';
 
 /** The push client's whole allowlist (net/egress.ts): those services, https on 443, public addresses only. */
 export const pushEgressRules = (hosts: readonly string[] = DEFAULT_PUSH_HOSTS): Rule[] =>
   hosts.map((e) => (e.startsWith('*.') ? { host: '', hostPattern: new RegExp(`^${LABEL}${e.slice(1).replace(/\./g, '\\.')}$`) } : { host: e }));
 
-/** The server's push client: SHELF_PUSH_HOSTS as its whole allowlist, off with SHELF_EGRESS=off. */
+/** The server's push client: PHILOBIBLOS_PUSH_HOSTS as its whole allowlist, off with PHILOBIBLOS_EGRESS=off. */
 export const pushClient = (cfg: Pick<Config, 'pushHosts' | 'egress'>, o: Partial<EgressOptions> = {}): Egress => createEgress({ ...o, rules: pushEgressRules(cfg.pushHosts), enabled: cfg.egress });
 
 export type PushKind = 'plan' | 'test';
@@ -45,7 +45,7 @@ export class PushError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 503, message: string) { super(message); }
 }
 
-export const WRONG_SEALING_KEY = 'the sealing key does not open the notification key (SHELF_SEALING_KEY is not the key it was sealed with): no notifications until the right key is back; the devices are kept';
+export const WRONG_SEALING_KEY = 'the sealing key does not open the notification key (PHILOBIBLOS_SEALING_KEY is not the key it was sealed with): no notifications until the right key is back; the devices are kept';
 
 /**
  * The household's VAPID keys; made and sealed the first time they are needed, and only then: when nothing is sealed yet
@@ -55,7 +55,7 @@ export const WRONG_SEALING_KEY = 'the sealing key does not open the notification
  */
 export function vapidKeys(db: Db, cfg: Pick<Config, 'sealingKey'>): VapidKeys {
   const problem = keyProblem(cfg);
-  if (problem) throw new PushError(503, `notifications need the sealing key, which is ${problem} (SHELF_SEALING_KEY)`);
+  if (problem) throw new PushError(503, `notifications need the sealing key, which is ${problem} (PHILOBIBLOS_SEALING_KEY)`);
   const key = sealingKey(cfg)!;
   if (!isSealed(db, VAPID_SEALED)) sealIfAbsent(db, key, VAPID_SEALED, b64u(newVapidKeys().privateKey));
   try { return vapidFromPrivate(fromB64u(unseal(db, key, VAPID_SEALED)!)); } catch (e) {

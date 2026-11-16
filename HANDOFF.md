@@ -1,6 +1,9 @@
-# Shelf: handoff to Claude Code
+# Philobiblos: handoff to Claude Code
 
-Shelf is a self-hosted app that decides **what to read next** so that a person's knowledge grows in breadth and depth, and
+*Philobiblos, what to read next.* Called Shelf until 2026-11-16 (philobiblos#30): the ADRs keep the old name, and what
+the rename kept for one release is in `docs/security.md` "The rename from Shelf".
+
+Philobiblos is a self-hosted app that decides **what to read next** so that a person's knowledge grows in breadth and depth, and
 turns that into a **monthly book order** within a family budget. It ships as a **HomersLab app** and also runs **standalone**
 with `docker compose up`.
 
@@ -15,7 +18,7 @@ with `docker compose up`.
 
 This folder is the starting point for the repository. Read in this order:
 
-1. `docs/spec.md`: what Shelf does, screen by screen, and the rules
+1. `docs/spec.md`: what Philobiblos does, screen by screen, and the rules
 2. `docs/adr/`: decisions already taken (and the two still open)
 3. `contracts/`: the database schema, the HTTP API, the AI plugin, the connectors, the HomersLab manifest
 4. `design/`: the design decisions to keep (`design/README.md`); the clickable canvas is kept privately for now
@@ -44,7 +47,7 @@ Milestones after M0 are in `docs/spec.md` §10.
 ## What exists today (the prototype, keep it running until M2)
 
 - A published page with the current picks and backlog (its link and template are kept privately, outside the repository)
-- Two Claude scheduled tasks: a daily Instagram catch-up and a monthly refresh. Shelf replaces both at M3.
+- Two Claude scheduled tasks: a daily Instagram catch-up and a monthly refresh. Philobiblos replaces both at M3.
 - The Python script in `seed/reference_scoring_v0.py` is that prototype's scoring. It's the reference, not the design to copy.
 
 ## Conventions from HomersLab

@@ -1,5 +1,5 @@
 // What a file is, from its first bytes: never from its name, its MIME type or what the sender said.
-import { videoContainer } from '@shelf/contracts/media';
+import { videoContainer } from '@philobiblos/contracts/media';
 
 export type Sniffed = 'jpeg' | 'png' | 'webp' | 'gif' | 'pdf' | 'mp4' | 'webm' | 'unknown';
 

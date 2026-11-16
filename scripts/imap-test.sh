@@ -19,5 +19,5 @@ for _ in $(seq 1 60); do up && break; sleep 1; done
 up || { docker logs "$name" | tail -20 >&2; exit 1; }
 docker run --rm -i --network host -u "$(id -u):$(id -g)" -v "$PWD:/w:z" -w /w \
   -e HOME=/tmp -e CI=true -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 -e DOCKER_HOST=unix:///nonexistent \
-  -e SHELF_IMAP_TEST_PORT="$imaps" -e SHELF_SMTP_TEST_PORT="$smtp" "$node" \
+  -e PHILOBIBLOS_IMAP_TEST_PORT="$imaps" -e PHILOBIBLOS_SMTP_TEST_PORT="$smtp" "$node" \
   bash -c 'mkdir -p /tmp/bin && corepack enable --install-directory /tmp/bin && export PATH=/tmp/bin:$PATH && { [ -d node_modules ] || pnpm install --frozen-lockfile >/dev/null; } && pnpm exec vitest run --project unit apps/server/test/imap.test.ts'

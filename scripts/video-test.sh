@@ -24,4 +24,4 @@ git ls-files -co --exclude-standard -z | tar --null -T - -cf - | docker run --rm
     mkdir /work && tar -xf - -C /work && cd /work
     mkdir -p apps/worker/bin && cp /ffmpeg/ffmpeg /ffmpeg/ffprobe apps/worker/bin/
     corepack enable && pnpm install --frozen-lockfile >/dev/null
-    SHELF_VIDEO_TESTS=required pnpm exec vitest run --project unit apps/worker/test/video.test.ts'
+    PHILOBIBLOS_VIDEO_TESTS=required pnpm exec vitest run --project unit apps/worker/test/video.test.ts'

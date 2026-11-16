@@ -1,4 +1,4 @@
-// The mail job (ADR 0007): reads what is new in the Shelf-only mailbox, checks who sent it, parses what the bookshop
+// The mail job (ADR 0007): reads what is new in the Philobiblos-only mailbox, checks who sent it, parses what the bookshop
 // sent (parse.ts) and applies it (effects.ts), recording each verified mail once in mail_seen, keyed by its Message-ID
 // as signed (so a mail seen again, after a UIDVALIDITY change say, is not applied twice). Only a verified mail claims
 // its Message-ID: an unverified one is keyed by a hash of its bytes, so a forgery cannot take the id of the genuine
@@ -9,7 +9,7 @@
 // no parser of this version knows, a mail read before the parsers existed) keeps only where it is in the mailbox, and
 // is read again from there (`reread`), by its UID under the same UIDVALIDITY and never another, through every check
 // once more (`openVerified`). The effects and the mail's row are written in one transaction. A mail that fails the
-// checks is kept as "not verified" with Shelf's reason only, and changes nothing.
+// checks is kept as "not verified" with Philobiblos's reason only, and changes nothing.
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import type { Db } from '../db/open';
@@ -41,7 +41,7 @@ export interface MailDeps {
   open?: (c: MailboxConfig) => Promise<Mailbox>;
   resolver?: TxtResolver;
   now?: () => Date;
-  /** The media worker's PDF text (default: runMediaJob('pdf.text') in SHELF_WORK_DIR). */
+  /** The media worker's PDF text (default: runMediaJob('pdf.text') in PHILOBIBLOS_WORK_DIR). */
   pdfText?: (pdf: Uint8Array) => Promise<MediaOutcome>;
 }
 
@@ -80,7 +80,7 @@ async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Arr
 }
 
 export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {}): Promise<Outcome> {
-  if (!cfg.imap) return { status: 'blocked', detail: 'no mailbox is set up (SHELF_IMAP_HOST, SHELF_IMAP_USER, SHELF_IMAP_PASSWORD)' };
+  if (!cfg.imap) return { status: 'blocked', detail: 'no mailbox is set up (PHILOBIBLOS_IMAP_HOST, PHILOBIBLOS_IMAP_USER, PHILOBIBLOS_IMAP_PASSWORD)' };
   const now = deps.now ?? (() => new Date());
   // The delivery address is sealed (PR #7); it is unsealed here only to find it in the mail and leave it out.
   let address: string[] = [];

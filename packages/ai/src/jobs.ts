@@ -1,13 +1,13 @@
 // What each job sends and what it may answer (contracts/ai-plugin.md, ADR 0009).
 //
-// - `split` is the job's data minimisation: it picks the fields the job needs, bounded, and says which are Shelf's own
+// - `split` is the job's data minimisation: it picks the fields the job needs, bounded, and says which are Philobiblos's own
 //   (`data`: numbers, enums, its fixed lists and settings) and which came from outside or from a model (`untrusted`, by
 //   source: titles, blurbs, captions, takeaways, and idea names, which a model may first have proposed). Nothing else of
 //   the input reaches a provider.
 // - `clean` runs after the answer validated against the contract schema: the answer is data from a model that may have
 //   read hostile text, so every id must be one the input named, every text is one line of plain characters within its
-//   bound, and what Shelf decides (a new idea, a wildcard, the count) is Shelf's, never the model's word.
-import type { CheckRedundantOut, ExplainPickOut, ExtractTitlesOut, ProposeLinksOut, SuggestNextOut, TagBookOut } from '@shelf/contracts';
+//   bound, and what Philobiblos decides (a new idea, a wildcard, the count) is Philobiblos's, never the model's word.
+import type { CheckRedundantOut, ExplainPickOut, ExtractTitlesOut, ProposeLinksOut, SuggestNextOut, TagBookOut } from '@philobiblos/contracts';
 import type { CheckRedundantIn, ExplainPickIn, ExtractTitlesIn, JobIO, JobName, ProposeLinksIn, SuggestNextIn, TagBookIn } from './provider';
 import { EXPLAIN_MAX } from './provider';
 
@@ -21,17 +21,17 @@ const norm = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCa
 const books = (b: { id: string; title: string; authors?: string[] }) => ({ id: b.id, title: line(b.title, 300) ?? '', authors: (b.authors ?? []).slice(0, 5).map((a) => line(a, 200)).filter(Boolean) });
 
 /**
- * What can leave Shelf, field by field, in the words Settings shows (Settings.ai.leaves, the list an admin accepts before
+ * What can leave Philobiblos, field by field, in the words Settings shows (Settings.ai.leaves, the list an admin accepts before
  * Claude is on). Each job's `sends` names the field of every key its request holds, and buildPrompt refuses a request
  * holding a key its job does not name: the list and the requests are built from the same table, so they cannot drift.
  * The order here is the order of Settings' lines.
  */
 export const FIELDS = {
-  share: "A shared post's images (as Shelf re-encoded them), caption and link, for the person who shared it, one share per request",
+  share: "A shared post's images (as Philobiblos re-encoded them), caption and link, for the person who shared it, one share per request",
   backlogBook: "Each book in an adult's backlog, one book per request: its title, authors and description",
   bookIdeas: 'The ideas proposed for that book',
   ideaNames: "The names of the household's ideas",
-  kidsThemes: "Shelf's list of kids' themes",
+  kidsThemes: "Philobiblos's list of kids' themes",
   readBooks: "One adult's read books, up to 60 (titles, authors and ideas), one person per request, without their name",
   takeaways: 'With them, the takeaways of an adult who turned on "Takeaways to the AI" (nobody else\'s)',
   readingMap: "One adult's reading map (the names of their ideas, how many books they read in each, which layers are empty), one person per request, without their name",
@@ -40,7 +40,7 @@ export const FIELDS = {
   ownedBooks: "The household's owned books in the same ideas as a backlog book (titles and authors), up to 200",
   pick: "Each adult's pick for this month, one pick per request: its title, authors, its idea and what it does there (intro, deepen, …), without their name",
   buildsOn: "With it, the titles of that adult's read books the pick builds on, up to 10",
-  ids: "Shelf's own ids of those books (they mean nothing outside Shelf)",
+  ids: "Philobiblos's own ids of those books (they mean nothing outside Philobiblos)",
   jobSettings: "A job's own settings (how many suggestions, whether a wildcard may be one)",
 } as const;
 export type Field = keyof typeof FIELDS;
@@ -84,7 +84,7 @@ const tagBook: Spec<TagBookIn, TagBookOut> = {
   sends: { ideaVocabulary: 'ideaNames', kidsThemes: 'kidsThemes', book: 'backlogBook', 'book.id': 'ids', 'book.title': 'backlogBook', 'book.authors': 'backlogBook', blurb: 'backlogBook' },
   split: (i) => ({
     // Idea names are the household's, but a person may have confirmed one a model first proposed: untrusted, like
-    // anything a model wrote. Only Shelf's own list of kids' themes is the input.
+    // anything a model wrote. Only Philobiblos's own list of kids' themes is the input.
     data: { kidsThemes: i.kidsThemes },
     untrusted: [['ideaVocabulary', i.ideaVocabulary.slice(0, SEND.vocabulary).map((n) => line(n, 60))], ['book', books(i.book)], ['blurb', line(i.blurb, SEND.blurb)]],
   }),
@@ -96,7 +96,7 @@ const tagBook: Spec<TagBookIn, TagBookOut> = {
       if (!name || name.split(' ').length > 6 || seen.has(norm(name))) return [];
       seen.add(norm(name));
       const k = known.get(norm(name));
-      // Whether an idea is new is Shelf's to say: a name the vocabulary has is that idea, spelt as the household does.
+      // Whether an idea is new is Philobiblos's to say: a name the vocabulary has is that idea, spelt as the household does.
       return [{ name: k ?? name, layer: x.layer, confidence: Math.min(1, Math.max(0, x.confidence)), isNewIdea: !k }];
     });
     const themes = (o.kidsThemes ?? []).filter((t) => i.kidsThemes.includes(t)).slice(0, 2);

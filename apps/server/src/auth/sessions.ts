@@ -6,7 +6,14 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { hashToken, looksLikeToken, newToken } from './tokens';
 
-export const SESSION_COOKIE = 'shelf_session';
+export const SESSION_COOKIE = 'philobiblos_session';
+/**
+ * The cookie's name before the rename (philobiblos#30), read until 0.2.0 so nobody is signed out by the upgrade, and
+ * never set again: a request that brings only this one gets SESSION_COOKIE with the same token, for what is left of the
+ * session, and this one cleared (routes/auth.ts sessionCookie). It is the same token checked the same way (its SHA-256
+ * must be a live session row), set with the same attributes; when both cookies come, SESSION_COOKIE's is the one read.
+ */
+export const LEGACY_SESSION_COOKIE = 'shelf_session';
 export const SESSION_DAYS = 30;
 export const IDLE_DAYS = 7;
 const DAY = 86_400_000;
@@ -56,6 +63,14 @@ export function endSession(db: Db, token: string | undefined): void {
 export function pruneSessions(db: Db, now = new Date()): void {
   const idle = new Date(now.getTime() - IDLE_DAYS * DAY).toISOString();
   db.delete(t.session).where(or(lt(t.session.expiresAt, now.toISOString()), lt(t.session.lastSeenAt, idle))).run();
+}
+
+/** The session token a request's cookies carry: SESSION_COOKIE's when it is there, else the old name's. */
+export function sessionToken(cookies: Record<string, string | undefined> | undefined): { token: string | undefined; legacy: boolean } {
+  const now = cookies?.[SESSION_COOKIE];
+  if (now !== undefined) return { token: now, legacy: false };
+  const old = cookies?.[LEGACY_SESSION_COOKIE];
+  return { token: old, legacy: old !== undefined };
 }
 
 export const cookieOptions = (maxAgeSeconds: number) => ({

@@ -1,10 +1,10 @@
-// Bundles the server (dist/main.js) and its CLI (dist/cli.js, `shelf recover`) with the workspace packages. The server's own dependencies (native
+// Bundles the server (dist/main.js) and its CLI (dist/cli.js, `philobiblos recover`) with the workspace packages. The server's own dependencies (native
 // better-sqlite3, Fastify, Drizzle) stay external and are installed in the image by `pnpm deploy`.
 import { cpSync, readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
-const external = Object.keys(pkg.dependencies).filter((d) => !d.startsWith('@shelf/'));
+const external = Object.keys(pkg.dependencies).filter((d) => !d.startsWith('@philobiblos/'));
 
 await build({
   entryPoints: ['src/main.ts', 'src/cli.ts'],

@@ -431,7 +431,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Links and book ideas waiting for a person's decision (book ideas on a merged idea show its new name and keep their own idea id for the review). A proposal written from someone's takeaways is theirs alone: nobody else sees it here (shelf#3). */
+        /** Links and book ideas waiting for a person's decision (book ideas on a merged idea show its new name and keep their own idea id for the review). A proposal written from someone's takeaways is theirs alone: nobody else sees it here (philobiblos#3). */
         get: operations["listProposals"];
         put?: never;
         post?: never;
@@ -796,7 +796,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Turn the month's picks into an order and its Compose link, a mailto with the text filled in (Shelf never sends mail; the text asks for a quote and never holds a card number). The month defaults to the current one. */
+        /** Turn the month's picks into an order and its Compose link, a mailto with the text filled in (Philobiblos never sends mail; the text asks for a quote and never holds a card number). The month defaults to the current one. */
         post: operations["createOrderDraft"];
         delete?: never;
         options?: never;
@@ -900,7 +900,7 @@ export interface components {
             /** @enum {unknown} */
             mode: "homerslab" | "standalone";
             signedIn: boolean;
-            /** @description standalone: no admin has a passkey yet; the setup link is in SHELF_DATA_DIR/setup-link.txt */
+            /** @description standalone: no admin has a passkey yet; the setup link is in PHILOBIBLOS_DATA_DIR/setup-link.txt */
             setupNeeded: boolean;
             person?: components["schemas"]["Person"];
         };
@@ -1128,7 +1128,7 @@ export interface components {
             /** @enum {unknown} */
             kind: "share" | "ai_suggestion" | "unmatched_invoice_line" | "unmatched_quote_line" | "unmatched_shop_line" | "mail_failed" | "mail_waiting" | "mail_unverified";
             by?: components["schemas"]["Person"];
-            /** @description Shelf's own words, or a share's title, or a verified mail's subject (safeField); plain text, never HTML */
+            /** @description Philobiblos's own words, or a share's title, or a verified mail's subject (safeField); plain text, never HTML */
             title: string;
             createdAt: string;
             mediaCount?: number;
@@ -1143,7 +1143,7 @@ export interface components {
                 refused?: number;
                 url?: string | null;
                 note?: string | null;
-                /** @description what the AI could not read of it (images without a vision model, or nothing), Shelf's words */
+                /** @description what the AI could not read of it (images without a vision model, or nothing), Philobiblos's words */
                 aiNote?: string | null;
             };
             /** @description kind mail_unverified: every unverified mail since the item was last dismissed */
@@ -1154,7 +1154,7 @@ export interface components {
                     count?: number;
                 }[];
             };
-            /** @description mail kinds: what Shelf knows of it. An unverified mail has its reason only. */
+            /** @description mail kinds: what Philobiblos knows of it. An unverified mail has its reason only. */
             mail?: {
                 reason?: string | null;
                 /** @description the kind the mail looked like (failed closed) */
@@ -1299,7 +1299,7 @@ export interface components {
             cycle?: {
                 day?: number;
                 time?: string;
-                /** @description an IANA time zone, e.g. Europe/Zurich: the household's one zone, for the refresh and for "this month" everywhere (the plan, /month, add_to_month). SHELF_TZ is only its value at the first start. */
+                /** @description an IANA time zone, e.g. Europe/Zurich: the household's one zone, for the refresh and for "this month" everywhere (the plan, /month, add_to_month). PHILOBIBLOS_TZ is only its value at the first start. */
                 timezone?: string;
                 /**
                  * Format: date-time
@@ -1324,12 +1324,12 @@ export interface components {
                 /** @description never sent back; only in a Compose text */
                 deliveryAddress?: string | null;
                 readonly hasDelivery?: boolean;
-                /** @description false under HomersLab without SHELF_SEALING_KEY */
+                /** @description false under HomersLab without PHILOBIBLOS_SEALING_KEY */
                 readonly canSeal?: boolean;
                 /** @description the key is usable but the rows were sealed under another (rotated): an admin enters both addresses again */
                 readonly needsReentry?: boolean;
                 /**
-                 * @description the server's key configuration is wrong (canSeal false): the addresses are kept; fix SHELF_SEALING_KEY
+                 * @description the server's key configuration is wrong (canSeal false): the addresses are kept; fix PHILOBIBLOS_SEALING_KEY
                  * @enum {unknown}
                  */
                 readonly keyProblem?: "missing" | "unreadable";
@@ -1499,7 +1499,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Not in homerslab mode (HomersLab signs people in) */
+            /** @description Not in homerslab mode (Homeward signs people in) */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -1535,7 +1535,7 @@ export interface operations {
             /** @description Signed in */
             200: {
                 headers: {
-                    /** @description shelf_session; HttpOnly; Secure; SameSite=Strict; Path=/ */
+                    /** @description philobiblos_session; HttpOnly; Secure; SameSite=Strict; Path=/ */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -1646,7 +1646,7 @@ export interface operations {
             /** @description Signed in */
             200: {
                 headers: {
-                    /** @description shelf_session; HttpOnly; Secure; SameSite=Strict; Path=/ */
+                    /** @description philobiblos_session; HttpOnly; Secure; SameSite=Strict; Path=/ */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -1916,7 +1916,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description Not under HomersLab (HomersLab holds the passkeys) */
+            /** @description Not under HomersLab (Homeward holds the passkeys) */
             404: {
                 headers: {
                     [name: string]: unknown;

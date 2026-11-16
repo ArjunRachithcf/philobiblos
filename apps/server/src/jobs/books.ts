@@ -3,7 +3,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, eq, inArray, isNotNull, isNull, notInArray } from 'drizzle-orm';
-import { writeAtomic } from '@shelf/contracts/media';
+import { writeAtomic } from '@philobiblos/contracts/media';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { EgressError, type Egress } from '../net/egress';

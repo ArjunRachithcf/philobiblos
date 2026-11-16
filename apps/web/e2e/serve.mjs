@@ -12,9 +12,9 @@ for (const d of [data, keys]) { rmSync(d, { recursive: true, force: true }); mkd
 const serverDir = fileURLToPath(new URL('../../server/', import.meta.url));
 const env = {
   ...process.env,
-  SHELF_MODE: 'standalone', SHELF_PORT: port, SHELF_HOST: '127.0.0.1', SHELF_ORIGIN: `http://localhost:${port}`,
-  SHELF_DATA_DIR: data, SHELF_KEYS_DIR: keys, SHELF_WEB_DIR: fileURLToPath(new URL('../dist/', import.meta.url)),
-  SHELF_MIGRATIONS_DIR: `${serverDir}drizzle/`,
+  PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_PORT: port, PHILOBIBLOS_HOST: '127.0.0.1', PHILOBIBLOS_ORIGIN: `http://localhost:${port}`,
+  PHILOBIBLOS_DATA_DIR: data, PHILOBIBLOS_KEYS_DIR: keys, PHILOBIBLOS_WEB_DIR: fileURLToPath(new URL('../dist/', import.meta.url)),
+  PHILOBIBLOS_MIGRATIONS_DIR: `${serverDir}drizzle/`,
 };
 if (seed) {
   const r = spawnSync(`${serverDir}node_modules/.bin/tsx`, ['src/seed/cli.ts', fileURLToPath(new URL(`../../../${seed}`, import.meta.url))], { cwd: serverDir, env, stdio: ['ignore', 'ignore', 'inherit'] });

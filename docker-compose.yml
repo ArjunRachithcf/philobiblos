@@ -2,37 +2,41 @@
 # passkey (published on this machine only, ADR 0009; sign-in, ADR 0010).
 # Back up data/ as you like; keys/ holds the key that seals the addresses (docs/security.md): keep its copy apart
 # (a password manager, say), never in the same backup as data/.
+# From Shelf (the app's old name, philobiblos#30): the services are now philobiblos and philobiblos-worker, so start this
+# file with `docker compose up -d --remove-orphans`, which stops the old shelf containers (two servers or two workers must
+# never share data/ and work/). data/, keys/ and work/ stay where they are, the database still data/shelf.sqlite.
+# A .env with SHELF_* names still works until 0.2.0; rename them to PHILOBIBLOS_* (PHILOBIBLOS_* wins when both are set).
 services:
-  shelf:
-    image: ${SHELF_IMAGE:-shelf:0.1.0}
+  philobiblos:
+    image: ${PHILOBIBLOS_IMAGE:-${SHELF_IMAGE:-philobiblos:0.1.0}}
     build: .
-    user: "${SHELF_UID:-1000}:${SHELF_GID:-1000}"
+    user: "${PHILOBIBLOS_UID:-${SHELF_UID:-1000}}:${PHILOBIBLOS_GID:-${SHELF_GID:-1000}}"
     environment:
-      SHELF_MODE: standalone
+      PHILOBIBLOS_MODE: standalone
       # The address you open; passkeys are bound to it (https, or http://localhost). See ADR 0010.
-      SHELF_ORIGIN: ${SHELF_ORIGIN:-http://localhost:${SHELF_PORT:-8080}}
-      SHELF_DATA_DIR: /data
-      SHELF_KEYS_DIR: /keys
-      SHELF_WORK_DIR: /work
+      PHILOBIBLOS_ORIGIN: ${PHILOBIBLOS_ORIGIN:-${SHELF_ORIGIN:-http://localhost:${PHILOBIBLOS_PORT:-${SHELF_PORT:-8080}}}}
+      PHILOBIBLOS_DATA_DIR: /data
+      PHILOBIBLOS_KEYS_DIR: /keys
+      PHILOBIBLOS_WORK_DIR: /work
       # The household's time zone at the first start only; Settings holds it after.
-      SHELF_TZ: Europe/Zurich
+      PHILOBIBLOS_TZ: Europe/Zurich
       # AI: Ollama is the default; Claude only after the opt-in in Settings.
       OLLAMA_URL: ${OLLAMA_URL:-}
       # off: nothing leaves (prices, Open Library and covers stay as they are); docs/security.md
-      SHELF_EGRESS: ${SHELF_EGRESS:-on}
+      PHILOBIBLOS_EGRESS: ${PHILOBIBLOS_EGRESS:-${SHELF_EGRESS:-on}}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Mail (ADR 0007): the Shelf-only mailbox, read over IMAP (TLS) with an app password.
-      SHELF_IMAP_HOST: ${SHELF_IMAP_HOST:-}
-      SHELF_IMAP_USER: ${SHELF_IMAP_USER:-}
-      SHELF_IMAP_PASSWORD: ${SHELF_IMAP_PASSWORD:-}
-      SHELF_IMAP_FOLDER: ${SHELF_IMAP_FOLDER:-INBOX}
+      # Mail (ADR 0007): the Philobiblos-only mailbox, read over IMAP (TLS) with an app password.
+      PHILOBIBLOS_IMAP_HOST: ${PHILOBIBLOS_IMAP_HOST:-${SHELF_IMAP_HOST:-}}
+      PHILOBIBLOS_IMAP_USER: ${PHILOBIBLOS_IMAP_USER:-${SHELF_IMAP_USER:-}}
+      PHILOBIBLOS_IMAP_PASSWORD: ${PHILOBIBLOS_IMAP_PASSWORD:-${SHELF_IMAP_PASSWORD:-}}
+      PHILOBIBLOS_IMAP_FOLDER: ${PHILOBIBLOS_IMAP_FOLDER:-${SHELF_IMAP_FOLDER:-INBOX}}
       # Whose ARC seal vouches for a forward that broke the bookshop's DKIM: your mail provider's (Gmail: google.com).
-      SHELF_MAIL_ARC_SEALERS: ${SHELF_MAIL_ARC_SEALERS:-google.com}
+      PHILOBIBLOS_MAIL_ARC_SEALERS: ${PHILOBIBLOS_MAIL_ARC_SEALERS:-${SHELF_MAIL_ARC_SEALERS:-google.com}}
       # The household's addresses the bookshop writes to (comma-separated); mail to anyone else is not taken.
-      SHELF_MAIL_RECIPIENTS: ${SHELF_MAIL_RECIPIENTS:-}
+      PHILOBIBLOS_MAIL_RECIPIENTS: ${PHILOBIBLOS_MAIL_RECIPIENTS:-${SHELF_MAIL_RECIPIENTS:-}}
     # work/ is shared with the media worker (:z, shared label): in/ the server's, out/ the worker's; only jobs in flight.
     volumes: [ "./data:/data:Z", "./keys:/keys:Z", "./work:/work:z" ]
-    ports: [ "127.0.0.1:${SHELF_PORT:-8080}:8080" ]
+    ports: [ "127.0.0.1:${PHILOBIBLOS_PORT:-${SHELF_PORT:-8080}}:8080" ]
     read_only: true
     tmpfs: [ /tmp ]
     cap_drop: [ ALL ]
@@ -41,16 +45,16 @@ services:
   # The media worker (ADR 0009): decodes shared images, covers and invoice PDFs, the hostile files, away from the server.
   # No network at all, a read-only root, no capabilities, memory and process limits (768 MB bounds what the child's
   # 256 MB heap does not: ArrayBuffers, libvips); it sees only work/in and work/out.
-  # Its own user (SHELF_WORKER_UID: never SHELF_UID, never 0) in Shelf's group: it reads work/in (read-only) and writes only
+  # Its own user (PHILOBIBLOS_WORKER_UID: never PHILOBIBLOS_UID, never 0) in Philobiblos's group: it reads work/in (read-only) and writes only
   # work/out, which it cannot replace (its parent is the image's read-only /work). The server makes both at start.
-  shelf-worker:
-    image: ${SHELF_IMAGE:-shelf:0.1.0}
-    user: "${SHELF_WORKER_UID:-61000}:${SHELF_GID:-1000}"
+  philobiblos-worker:
+    image: ${PHILOBIBLOS_IMAGE:-${SHELF_IMAGE:-philobiblos:0.1.0}}
+    user: "${PHILOBIBLOS_WORKER_UID:-${SHELF_WORKER_UID:-61000}}:${PHILOBIBLOS_GID:-${SHELF_GID:-1000}}"
     command: [ "node", "/app/worker/dist/main.js" ]
     environment:
-      SHELF_WORK_DIR: /work
+      PHILOBIBLOS_WORK_DIR: /work
     volumes: [ "./work/in:/work/in:ro,z", "./work/out:/work/out:z" ]
-    depends_on: { shelf: { condition: service_healthy } }
+    depends_on: { philobiblos: { condition: service_healthy } }
     network_mode: none
     read_only: true
     tmpfs: [ /tmp ]

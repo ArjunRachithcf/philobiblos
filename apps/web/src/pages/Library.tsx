@@ -184,7 +184,7 @@ function KidLibrary({ lib, onFeedback }: { lib: Lib; onFeedback: (it: Item, f: F
             ))}
           </ul>
         ) : <Empty />}
-        <p className="group-foot">Kids never sign in: the adults tell Shelf how a book went.</p>
+        <p className="group-foot">Kids never sign in: the adults tell Philobiblos how a book went.</p>
       </section>
     </>
   );

@@ -15,7 +15,7 @@ function serviceWorker() {
   const opened: string[] = [];
   const windows: { url: string; focus: () => Promise<void>; navigate: (u: string) => Promise<void> }[] = [];
   const self = {
-    location: { origin: 'https://shelf.test' }, addEventListener: (n: string, f: (e: unknown) => void) => { listeners[n] = f; }, skipWaiting() {},
+    location: { origin: 'https://philobiblos.test' }, addEventListener: (n: string, f: (e: unknown) => void) => { listeners[n] = f; }, skipWaiting() {},
     clients: { claim: async () => {}, matchAll: async () => windows, openWindow: async (u: string) => { opened.push(u); } },
     registration: { showNotification: async (title: string, options: Record<string, unknown>) => { shown.push({ title, options }); } },
   };
@@ -31,7 +31,7 @@ function serviceWorker() {
     click: (data: unknown) => wait((w) => listeners.notificationclick!({ ...w, notification: { close() {}, data } })),
     async share(form: FormData) {
       let answer: Promise<Response> | undefined;
-      const e: Fetch = { request: new Request('https://shelf.test/share-target', { method: 'POST', body: form }), respondWith: (r) => { answer = r; } };
+      const e: Fetch = { request: new Request('https://philobiblos.test/share-target', { method: 'POST', body: form }), respondWith: (r) => { answer = r; } };
       listeners.fetch!(e);
       await answer;
       const [kept] = [...cached.values()];
@@ -63,20 +63,20 @@ describe('notifications in the service worker', () => {
     await sw.push({ kind: 'plan', title: 'Your bank needs you', body: 'Sam reads <b>Secrets</b>', url: 'https://evil.example' });
     await sw.push({ kind: 'test' });
     for (const odd of [{ kind: 'constructor' }, { kind: '__proto__' }, { kind: ['plan'] }, 'not json', null, { body: 'hello' }]) await sw.push(odd);
-    expect(sw.shown.map((n) => n.options.body)).toEqual(['This month’s plan is ready.', 'Notifications from Shelf work on this device.', ...Array(6).fill('Shelf has something new.')]);
-    expect(new Set(sw.shown.map((n) => n.title))).toEqual(new Set(['Shelf']));
+    expect(sw.shown.map((n) => n.options.body)).toEqual(['This month’s plan is ready.', 'Notifications from Philobiblos work on this device.', ...Array(6).fill('Philobiblos has something new.')]);
+    expect(new Set(sw.shown.map((n) => n.title))).toEqual(new Set(['Philobiblos']));
     await sw.push({ kind: 'other' });
-    expect(sw.shown.at(-1)!.options.body).toBe('Shelf has something new.');
+    expect(sw.shown.at(-1)!.options.body).toBe('Philobiblos has something new.');
     expect(JSON.stringify(sw.shown)).not.toMatch(/evil|bank|Sam|Secrets/);
   });
-  it('a tap opens This month on Shelf\'s own origin, whatever the message says', async () => {
+  it('a tap opens This month on Philobiblos\'s own origin, whatever the message says', async () => {
     const sw = serviceWorker();
     await sw.click({ url: 'https://evil.example/' });
-    expect(sw.opened).toEqual(['https://shelf.test/month']);
+    expect(sw.opened).toEqual(['https://philobiblos.test/month']);
     const went: string[] = [];
-    sw.windows.push({ url: 'https://other.example/', focus: async () => { went.push('other'); }, navigate: async () => {} }, { url: 'https://shelf.test/library', focus: async () => { went.push('focus'); }, navigate: async (u) => { went.push(u); } });
+    sw.windows.push({ url: 'https://other.example/', focus: async () => { went.push('other'); }, navigate: async () => {} }, { url: 'https://philobiblos.test/library', focus: async () => { went.push('focus'); }, navigate: async (u) => { went.push(u); } });
     await sw.click(null);
-    expect(went).toEqual(['focus', 'https://shelf.test/month']);
+    expect(went).toEqual(['focus', 'https://philobiblos.test/month']);
     expect(sw.opened).toHaveLength(1);
   });
 });

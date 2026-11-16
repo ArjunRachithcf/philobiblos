@@ -1,8 +1,8 @@
-// The providers' requests, as they would leave Shelf, and how their answers are read. The transport is a stub: nothing
+// The providers' requests, as they would leave Philobiblos, and how their answers are read. The transport is a stub: nothing
 // here opens a connection (the server's tests run the same adapters over its egress client against a mock server).
 import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AI_SCHEMAS } from '@shelf/contracts';
+import { AI_SCHEMAS } from '@philobiblos/contracts';
 import {
   CLAUDE_DEFAULT_MODEL, JOBS, JOB_NAMES, ModelError, buildPrompt, createClaudeModel, createOllamaModel, promptText, quote, wireSchema, type ModelRequest, type Transport,
 } from '../src';
@@ -40,7 +40,7 @@ describe('prompts', () => {
     expect(b.user).toContain('2 images attached');
     expect(b.promptVersion).toBe('extract_titles.v1');
   });
-  it('book titles, blurbs and idea names are untrusted too; only Shelf\'s own fixed lists and numbers are the input', () => {
+  it('book titles, blurbs and idea names are untrusted too; only Philobiblos\'s own fixed lists and numbers are the input', () => {
     const b = buildPrompt('tagBook', { book: { id: 'b1', title: '<b>Title</b>', authors: ['A'] }, blurb: 'From a page', ideaVocabulary: ['Value'], kidsThemes: ['Friendship'] });
     expect(b.user).toMatch(/<untrusted source="book">\n\{"authors":\["A"\],"id":"b1","title":"\\u003cb\\u003eTitle\\u003c\/b\\u003e"\}/);
     expect(b.user).toContain('<untrusted source="blurb">');

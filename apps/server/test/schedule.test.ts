@@ -1,10 +1,10 @@
-// The scheduler and the monthly refresh (spec §5 step 1, shelf#8 h): a period runs once whatever restarts, overlaps,
+// The scheduler and the monthly refresh (spec §5 step 1, philobiblos#8 h): a period runs once whatever restarts, overlaps,
 // clocks and time zones do; failures are tried again with a backoff, then given up; a retry does only the steps left;
 // nothing new starts past the run's deadline. The clock is a fake one throughout; no request leaves (egress off).
 import { createECDH } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import { fakeModel } from '@shelf/ai';
+import { fakeModel } from '@philobiblos/ai';
 import { AiJobs } from '../src/ai/jobs';
 import { buildApp } from '../src/app';
 import type { PriceSource } from '../src/books/prices';
@@ -404,7 +404,7 @@ describe('the monthly refresh', () => {
 
   it('the AI\'s steps stop at the deadline: the picks left are explained by the retry, suggestions are never asked twice', async () => {
     const db = household();
-    const cfg = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY });
+    const cfg = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY });
     let clock = Date.parse('2026-12-01T20:00:00Z');
     const m = fakeModel((r) => { clock += 60_000; return r.job === 'explainPick' ? { why: 'Deepens Markets and value.' } : { suggestions: [] }; });
     const ai = new AiJobs(db, cfg, { model: () => m, now: () => new Date(clock) });
@@ -435,7 +435,7 @@ describe('through the app', () => {
       push: async (url) => { pushed.push(url); return { status: 201, type: '', body: Buffer.alloc(0), url }; },
     };
     let scheduler: Scheduler | undefined;
-    const built = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY, SHELF_EGRESS: 'off' }), db, {
+    const built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off' }), db, {
       push,
       jobs: { prices: { id: 'orellfuessli', find }, env: { sleep: async () => {} }, started: (_j, d) => byHand.push(d), schedule: { now: () => clock.now, start: false, onScheduler: (s) => { scheduler = s; } } },
     });
@@ -454,13 +454,13 @@ describe('through the app', () => {
   });
 
   it('the month is the household\'s: the plan kept and its picks explained for the month in its zone', async () => {
-    // 03:00 UTC on 1 December: December in Zurich (the server's SHELF_TZ), still November in New York (the household's).
+    // 03:00 UTC on 1 December: December in Zurich (the server's PHILOBIBLOS_TZ), still November in New York (the household's).
     const clock = { now: at('2026-12-01T03:00:00Z') };
     const db = household();
     setCycle(db, { day: 1, time: '00:00', timezone: 'America/New_York' });
     let scheduler: Scheduler | undefined;
     const m = fakeModel((r) => (r.job === 'explainPick' ? { why: 'Deepens Markets and value.' } : { suggestions: [] }));
-    await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY, SHELF_EGRESS: 'off' }), db, {
+    await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off' }), db, {
       ai: { model: () => m, now: () => clock.now },
       jobs: { env: { sleep: async () => {} }, schedule: { now: () => clock.now, start: false, onScheduler: (s) => { scheduler = s; } } },
     });
@@ -552,7 +552,7 @@ describe('through the app', () => {
     expect(a.db.select().from(t.jobPeriod).all()).toHaveLength(1);
   });
 
-  it('one time zone, the household\'s: at 00:30 on the 1st in Zurich with SHELF_TZ in New York, the plan, the push, /month and "add to this month" are all December', async () => {
+  it('one time zone, the household\'s: at 00:30 on the 1st in Zurich with PHILOBIBLOS_TZ in New York, the plan, the push, /month and "add to this month" are all December', async () => {
     vi.useFakeTimers({ now: at('2026-11-30T23:45:00Z'), toFake: ['Date'] });
     try {
       const db = household();
@@ -560,7 +560,7 @@ describe('through the app', () => {
       let scheduler: Scheduler | undefined;
       const pushed: string[] = [];
       const push: Egress = { get: async () => { throw new Error('no'); }, post: async () => { throw new Error('no'); }, push: async (url) => { pushed.push(url); return { status: 201, type: '', body: Buffer.alloc(0), url }; } };
-      const { app: built } = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY, SHELF_EGRESS: 'off', SHELF_TZ: 'America/New_York' }), db, {
+      const { app: built } = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off', PHILOBIBLOS_TZ: 'America/New_York' }), db, {
         push, jobs: { env: { sleep: async () => {} }, schedule: { start: false, onScheduler: (x) => { scheduler = x; } } },
       });
       const b = createECDH('prime256v1'); b.generateKeys();
@@ -582,17 +582,17 @@ describe('through the app', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('SHELF_TZ is only the zone the household starts with: once its settings exist, it is never read again', async () => {
+  it('PHILOBIBLOS_TZ is only the zone the household starts with: once its settings exist, it is never read again', async () => {
     const db = household();
-    const start = (tz: string) => buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY, SHELF_EGRESS: 'off', SHELF_TZ: tz }), db, { jobs: { schedule: { start: false } } });
+    const start = (tz: string) => buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off', PHILOBIBLOS_TZ: tz }), db, { jobs: { schedule: { start: false } } });
     await start('Asia/Tokyo');
     expect(cycleView(db, 'monthly').timezone).toBe('Asia/Tokyo');
     await start('America/New_York');
     expect(cycleView(db, 'monthly').timezone).toBe('Asia/Tokyo');
-    expect(() => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_TZ: 'Mars/Olympus' })).toThrow(/SHELF_TZ/);
+    expect(() => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_TZ: 'Mars/Olympus' })).toThrow(/PHILOBIBLOS_TZ/);
     // The row itself is never made with a zone this server does not know, whoever makes it.
     const fresh = household();
-    expect(() => initHousehold(fresh, 'Mars/Olympus')).toThrow(/SHELF_TZ/);
+    expect(() => initHousehold(fresh, 'Mars/Olympus')).toThrow(/PHILOBIBLOS_TZ/);
     expect(fresh.select().from(t.householdSettings).all()).toEqual([]);
   });
 

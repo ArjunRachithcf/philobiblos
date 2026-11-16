@@ -1,6 +1,6 @@
 // Ideas, layers, links and the Brain (ADR 0005) on the sample seed (seed-sample/, all invented): proposals stay
 // proposals until a person decides, the reviewer is recorded, merges and renames, the brain's shape, and the privacy
-// of proposals written from someone's takeaways (shelf#3). Authorization per route.
+// of proposals written from someone's takeaways (philobiblos#3). Authorization per route.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,7 @@ beforeAll(async () => {
   importSeed(db, SAMPLE, '2026-11-01T00:00:00.000Z');
   for (const p of db.select().from(t.person).all()) id[p.handle!] = p.id;
   for (const h of ['alex', 'partner', 'kid1']) cookie[h] = sessionCookie(db, id[h]!);
-  built = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent' }), db);
+  built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent' }), db);
   await built.app.ready();
 });
 afterAll(() => built.app.close());
@@ -230,7 +230,7 @@ describe('ideas: rename and merge', () => {
   });
 });
 
-describe('writing from an AI run (shelf#3)', () => {
+describe('writing from an AI run (philobiblos#3)', () => {
   const run = (rid: string, of: string | null) => db.insert(t.aiRun).values({ id: rid, job: 'link', provider: 'ollama', model: 'm', promptVersion: 'v1', inputHash: rid, startedAt: new Date().toISOString(), takeawaysOf: of }).run();
 
   it('private_to comes from the run: whose takeaways it read, or nobody\'s; an unknown run is refused', () => {

@@ -6,7 +6,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { FIELDS, JOBS, JOB_NAMES, buildPrompt, createClaudeModel, createOllamaModel, fakeModel, keyPaths, type Field, type JobName } from '@shelf/ai';
+import { FIELDS, JOBS, JOB_NAMES, buildPrompt, createClaudeModel, createOllamaModel, fakeModel, keyPaths, type Field, type JobName } from '@philobiblos/ai';
 import { AI_LIMITS, AiBudget, AiError, runAi, scrub } from '../src/ai/run';
 import { modelFor } from '../src/ai/model';
 import { CLAUDE_KEY, DEFAULT_JOBS, JOBS_OF, SealKeyMissing, checkAi, leaves, leavesVersion, type AiJobs } from '../src/ai/settings';
@@ -64,7 +64,7 @@ describe('runAi', () => {
     await expect(runAi(db, fakeModel(() => tag), 'tagBook', other, { budget: new AiBudget() })).resolves.toMatchObject({ cached: false });
   });
 
-  it('a provider that throws is tried once more, and its message is Shelf\'s', async () => {
+  it('a provider that throws is tried once more, and its message is Philobiblos\'s', async () => {
     const db = household();
     let n = 0;
     const m = { ...fakeModel(() => tag), async complete(): Promise<never> { n++; throw new Error('boom with sk-ant-secret'); } };
@@ -130,7 +130,7 @@ describe('runAi', () => {
     expect(m.requests[0]!.user).toContain('my own line');
   });
 
-  it('an answer is data: ids only from the input, Shelf decides what is new, texts one line', async () => {
+  it('an answer is data: ids only from the input, Philobiblos decides what is new, texts one line', async () => {
     const db = household();
     const links = fakeModel(() => ({ links: [
       { toBookId: 'b_elsewhere', reason: 'a book the input never named', confidence: 1 },
@@ -312,7 +312,7 @@ describe('Settings.ai and the opt-in', () => {
   afterEach(async () => { for (const b of built.splice(0)) await b.app.close(); });
   async function app(env: Record<string, string> = {}) {
     const db = household();
-    const cfg = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent-shelf', SHELF_SEALING_KEY: TEST_SEALING_KEY, ...env });
+    const cfg = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent-shelf', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, ...env });
     const b = await buildApp(cfg, db, {});
     built.push(b);
     const alex = sessionCookie(db, 'p_alex'), sam = sessionCookie(db, 'p_sam');
@@ -376,7 +376,7 @@ describe('Settings.ai and the opt-in', () => {
   });
 
   it('without a sealing key no Claude key is taken (409)', async () => {
-    const a = await app({ SHELF_SEALING_KEY: '', SHELF_MODE: 'homerslab', SHELF_ORIGIN: 'https://shelf.example', SHELF_EDGE_IDENTITY: 'homerslab-v1', SHELF_TRUSTED_PROXY: '10.0.0.1' });
+    const a = await app({ PHILOBIBLOS_SEALING_KEY: '', PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_ORIGIN: 'https://shelf.example', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '10.0.0.1' });
     expect(a.cfg.sealingKey).toBeNull();
     expect(() => checkAi(a.db, a.cfg, { claudeApiKey: KEY })).toThrow(SealKeyMissing);
     expect(() => checkAi(a.db, a.cfg, { model: 'gemma3' })).not.toThrow();
@@ -407,6 +407,22 @@ describe('Settings.ai and the opt-in', () => {
     expect(modelFor(a.db, a.cfg, deps).model).toBeNull();
   });
 
+  it('an acceptance from before the rename (philobiblos#30, the lines with the old name) still holds; any other change does not', async () => {
+    const a = await app();
+    const deps = { egress: (rules: Rule[]) => createEgress({ rules }) };
+    expect((await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: V() })).statusCode).toBe(200);
+    const stored = JSON.parse(a.db.select().from(t.householdSettings).get()!.aiLeavesAccepted!) as string[];
+    const renamed = stored.filter((l) => l.includes('Philobiblos'));
+    expect(renamed.length).toBeGreaterThan(0);
+    const before = stored.map((l) => l.replaceAll('Philobiblos', 'Shelf'));
+    a.db.update(t.householdSettings).set({ aiLeavesAccepted: JSON.stringify(before) }).run();
+    expect((await a.get()).ai).toMatchObject({ provider: 'claude', leavesAccepted: true });
+    expect(modelFor(a.db, a.cfg, deps).model).toMatchObject({ provider: 'claude' });
+    // only the name: a line that differs in anything else is not the line of now
+    a.db.update(t.householdSettings).set({ aiLeavesAccepted: JSON.stringify(before.map((l) => l.replace("Shelf's own ids", "Shelf's ids"))) }).run();
+    expect((await a.get()).ai.leavesAccepted).toBe(false);
+  });
+
   it('an acceptance covers the list it was given: a line it does not hold pauses Claude until an admin accepts again', async () => {
     const a = await app();
     const deps = { egress: (rules: Rule[]) => createEgress({ rules }) };
@@ -416,7 +432,7 @@ describe('Settings.ai and the opt-in', () => {
     // A job off keeps it accepted (it sends less).
     expect((await a.patch(a.alex, { jobs: { explain: false } })).statusCode).toBe(200);
     expect((await a.get()).ai.leavesAccepted).toBe(true);
-    // A newer Shelf whose list holds a line the admin never saw (here: the stored acceptance lacks one).
+    // A newer Philobiblos whose list holds a line the admin never saw (here: the stored acceptance lacks one).
     const stored = JSON.parse(a.db.select().from(t.householdSettings).get()!.aiLeavesAccepted!) as string[];
     a.db.update(t.householdSettings).set({ aiLeavesAccepted: JSON.stringify(stored.filter((l) => l !== FIELDS.readBooks)) }).run();
     expect((await a.get()).ai).toMatchObject({ provider: 'claude', leavesAccepted: false });

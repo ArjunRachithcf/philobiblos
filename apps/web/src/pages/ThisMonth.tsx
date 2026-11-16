@@ -3,7 +3,7 @@
 // each adult's picks with their move, the kids' with their theme, and Compose: your own mail app opens with the order.
 // Nothing acts on a value change: the handles move a draft, a button applies it (WCAG 3.2.2).
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import type { components } from '@shelf/contracts/openapi';
+import type { components } from '@philobiblos/contracts/openapi';
 import { ApiError, api, message, type Me } from '../api';
 import { Notice, PageHead } from '../ui';
 
@@ -262,7 +262,7 @@ function ComposeCard({ total, order, empty, onCompose, go }: { total: number; or
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <div>
         <h2 className="card-title" id={`${id}-h`}>Order from the bookshop</h2>
-        <p className="footnote">Compose writes the order to the bookshop, about {chf(total)}, and asks for prices and delivery times first. Your mail app sends it, not Shelf, and it never holds a card number. <a href="/settings" onClick={(e) => { e.preventDefault(); go('/settings'); }}>Where orders go</a></p>
+        <p className="footnote">Compose writes the order to the bookshop, about {chf(total)}, and asks for prices and delivery times first. Your mail app sends it, not Philobiblos, and it never holds a card number. <a href="/settings" onClick={(e) => { e.preventDefault(); go('/settings'); }}>Where orders go</a></p>
       </div>
       {!order ? (
         <div className="btn-row"><button type="button" className="btn btn-primary" disabled={empty} onClick={onCompose}>Compose the order</button></div>

@@ -36,7 +36,7 @@ export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; u
 export interface AppOptions { ai?: AiJobOptions; push?: Egress; logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
-  // The household's settings row, with SHELF_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
+  // The household's settings row, with PHILOBIBLOS_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
   initHousehold(db, cfg.timezone);
   const app = Fastify({
     logger: opts.logger ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]'] } : false,
@@ -47,7 +47,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     // body is at most 1 MB.
     requestTimeout: SHARE_UPLOADS.deadlineMs + 60_000,
   });
-  // Every response: no framing, no sniffing, no referrer, scripts and styles from Shelf only, nothing from the network
+  // Every response: no framing, no sniffing, no referrer, scripts and styles from Philobiblos only, nothing from the network
   // on page render (ADR 0003, ADR 0009).
   app.addHook('onSend', async (_req, reply) => {
     void reply.header('X-Content-Type-Options', 'nosniff');
@@ -91,7 +91,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   if (cfg.webDir && existsSync(cfg.webDir)) {
     await app.register(fastifyStatic, { root: cfg.webDir });
     // The PWA's share target is the service worker's (public/sw.js): a share that reaches the server here came before
-    // the worker was installed. Nothing of it is read; the share screen says to open Shelf once and share again.
+    // the worker was installed. Nothing of it is read; the share screen says to open Philobiblos once and share again.
     app.post('/share-target', async (_req, reply) => reply.code(303).header('location', '/share?offline=1').send());
     app.setNotFoundHandler((req, reply) => (req.url.startsWith('/api/') ? reply.code(404).send({ error: 'not found' }) : reply.sendFile('index.html')));
   }

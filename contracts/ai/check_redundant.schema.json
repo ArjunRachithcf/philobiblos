@@ -1,6 +1,6 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "shelf/ai/check_redundant.schema.json",
+ "$id": "philobiblos/ai/check_redundant.schema.json",
  "type": "object",
  "properties": {
   "repeats": {

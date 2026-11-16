@@ -1,5 +1,9 @@
 # ADR 0010: Sign-in
 
+> Written when the app was called **Shelf**; it is **Philobiblos** since 2026-11-16 (philobiblos#30). This record is
+> kept as decided: read Shelf as Philobiblos, `SHELF_*` as `PHILOBIBLOS_*` and `shelf_session` as `philobiblos_session`;
+> a shelf of books is still a shelf.
+
 Status: **Accepted** · 2026-11-15
 
 **Decision**: Standalone Shelf signs people in with **passkeys only**; under HomersLab it trusts HomersLab's forwarded

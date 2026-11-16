@@ -1,14 +1,14 @@
 // Ideas, layers and links (ADR 0005, spec §6). Proposals (from the AI, or the seed's guesses) stay proposals until a
 // person confirms or rejects them; nothing else changes their state, and the reviewer is recorded.
 //
-// Privacy (shelf#3): a link or book idea written from someone's takeaways carries `private_to` (set when the AI writes
+// Privacy (philobiblos#3): a link or book idea written from someone's takeaways carries `private_to` (set when the AI writes
 // it, kept whatever happens to the run): only that person sees its reason and decides it; for everyone else it does
 // not exist as a proposal (404, not 403: no hint that it is there). A decided private link still counts for scores (a
 // link between two books is the household's); others see a neutral reason in its place.
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { ulid } from 'ulid';
-import type { components } from '@shelf/contracts/openapi';
+import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson } from '../household/people';

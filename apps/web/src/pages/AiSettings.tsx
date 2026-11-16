@@ -28,7 +28,7 @@ export function AiSettings({ admin }: { admin: boolean }) {
   // A new choice of provider asks again: the tick is for the list shown with it.
   useEffect(() => { setAccept(false); }, [provider]);
 
-  // Turning Claude on, or Claude on with a list an admin has not accepted as it is now (a newer Shelf sends more).
+  // Turning Claude on, or Claude on with a list an admin has not accepted as it is now (a newer Philobiblos sends more).
   const optingIn = provider === 'claude' && (ai?.provider !== 'claude' || ai?.leavesAccepted !== true);
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,7 +56,7 @@ export function AiSettings({ admin }: { admin: boolean }) {
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <div>
         <h2 className="card-title" id={`${id}-h`}>The AI</h2>
-        <p className="footnote">It reads shared posts, tags books with ideas, proposes links and suggests what to read next. It proposes; Shelf’s own rules pick, and you confirm.</p>
+        <p className="footnote">It reads shared posts, tags books with ideas, proposes links and suggests what to read next. It proposes; Philobiblos’s own rules pick, and you confirm.</p>
       </div>
       {!ai ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : (
         <>

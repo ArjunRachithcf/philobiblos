@@ -12,8 +12,8 @@ import { refreshMail } from '../src/mail/job';
 import { MailboxError, openMailbox, type MailboxConfig } from '../src/net/imap';
 import { household } from './helpers';
 
-const IMAPS = Number(process.env.SHELF_IMAP_TEST_PORT ?? 0);
-const SMTP = Number(process.env.SHELF_SMTP_TEST_PORT ?? 0);
+const IMAPS = Number(process.env.PHILOBIBLOS_IMAP_TEST_PORT ?? 0);
+const SMTP = Number(process.env.PHILOBIBLOS_SMTP_TEST_PORT ?? 0);
 const CA = readFileSync(new URL('./fixtures/tls/cert.pem', import.meta.url), 'utf8');
 const USER = 'shelf@shelf.test', PASS = 'test-password';
 const cfg = (o: Partial<MailboxConfig> = {}, test: Partial<NonNullable<MailboxConfig['test']>> = {}): MailboxConfig =>

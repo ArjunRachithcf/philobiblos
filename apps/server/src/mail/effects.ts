@@ -1,5 +1,5 @@
 // What a parsed bookshop mail changes (ADR 0007, contracts/connectors.md "Effect"), and only from a mail `openVerified`
-// produced (a `VerifiedMail`): anything else is refused here, whatever the caller. Effects touch Shelf's own records
+// produced (a `VerifiedMail`): anything else is refused here, whatever the caller. Effects touch Philobiblos's own records
 // only: order lines quoted or unavailable, the order's quoted total and status, copies from an invoice (owned), and the
 // prices learnt. They never create people, settings or outgoing mail.
 //
@@ -45,7 +45,7 @@ function authorIs(stored: string, given: string): boolean {
 
 /** The one book a line names: by EAN, then by normalised title and author; null for none or several. */
 export function matchBook(books: BookKey[], l: { ean: string | null; title: string | null; author?: string | null; notBook?: true; eanUnreadable?: true }): string | null {
-  // An EAN that is no ISBN, or one Shelf could not read: never matched, not even by its title (to the Inbox).
+  // An EAN that is no ISBN, or one Philobiblos could not read: never matched, not even by its title (to the Inbox).
   if (l.notBook || l.eanUnreadable) return null;
   if (l.ean) {
     const hit = books.filter((b) => b.isbn13 === l.ean);
@@ -75,7 +75,7 @@ function tiedOrder(tx: Tx, m: VerifiedMail) {
 const thread = (ref: string | null, id: string | null | undefined) => [...new Set([...(ref ?? '').split(' ').filter(Boolean), ...(id && !/\s/.test(id) ? [id] : [])])].slice(-THREAD_MAX).join(' ') || null;
 
 /**
- * Applies a parsed mail to Shelf's records, in the caller's transaction, and returns what is kept of it. `key` is the
+ * Applies a parsed mail to Philobiblos's records, in the caller's transaction, and returns what is kept of it. `key` is the
  * mail's own row in mail_seen (for an invoice already read under another Message-ID).
  */
 export function applyMail(tx: Tx, m: VerifiedMail, p: Parsed, o: { key: string; now: string }): Applied {

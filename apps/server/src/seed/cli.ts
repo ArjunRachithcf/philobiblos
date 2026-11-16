@@ -1,7 +1,8 @@
-// pnpm seed [folder]: imports a seed folder into the database at SHELF_DATA_DIR. Without a folder: seed/ if it
+// pnpm seed [folder]: imports a seed folder into the database at PHILOBIBLOS_DATA_DIR. Without a folder: seed/ if it
 // exists, else seed-sample/. Prints counts only (the seed is the household's private data).
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { resolveEnv } from '@philobiblos/contracts/env';
 import { loadConfig } from '../config';
 import { openDb } from '../db/open';
 import { importSeed } from './import';
@@ -24,7 +25,8 @@ if (!existsSync(dir)) {
   console.error(`seed folder not found: ${dir}`);
   process.exit(1);
 }
-const cfg = loadConfig({ ...process.env, SHELF_DATA_DIR: process.env.SHELF_DATA_DIR ?? join(root, 'data') });
+const env = resolveEnv();
+const cfg = loadConfig({ ...env, PHILOBIBLOS_DATA_DIR: env.PHILOBIBLOS_DATA_DIR || join(root, 'data') });
 const db = openDb(cfg.dbFile);
 const counts = importSeed(db, dir);
 console.log(JSON.stringify({ folder: dir.startsWith(root) ? dir.slice(root.length + 1) : dir, db: cfg.dbFile, ...counts }, null, 2));

@@ -26,7 +26,7 @@ export function Notifications({ admin }: { admin: boolean }) {
   const turnOn = async () => {
     setError(null); setOk(''); setBusy(true);
     try {
-      if ((await Notification.requestPermission()) !== 'granted') { setError('Notifications are blocked for Shelf in this browser’s settings.'); return; }
+      if ((await Notification.requestPermission()) !== 'granted') { setError('Notifications are blocked for Philobiblos in this browser’s settings.'); return; }
       const { publicKey } = await api<{ publicKey: string }>('/push/key');
       const reg = await navigator.serviceWorker.ready;
       const sub = await freshSubscription(reg.pushManager, bytes(publicKey));
@@ -77,7 +77,7 @@ export function Notifications({ admin }: { admin: boolean }) {
             </ul>
           ) : <p className="footnote">No device gets notifications yet.</p>}
           {keyError && <Notice kind="error">{keyError}</Notice>}
-          {!supported() && <Notice kind="warn">This browser cannot get notifications. On an iPhone, add Shelf to the home screen first.</Notice>}
+          {!supported() && <Notice kind="warn">This browser cannot get notifications. On an iPhone, add Philobiblos to the home screen first.</Notice>}
           {error && <Notice kind="error">{error}</Notice>}
           {ok && <Notice kind="ok">{ok}</Notice>}
           <div className="btn-row">

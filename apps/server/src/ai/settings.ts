@@ -4,13 +4,13 @@
 //   request that turns it on must carry `acceptLeaves`: the version of the list Settings showed (`leavesVersion` of
 //   `leavesWithClaude`), refused when it is not the list as it is now
 //   before it is on and (`leaves`) while it is. The accepted list is stored; once what leaves holds a line it does not
-//   (a job turned on, a newer Shelf), Claude is not called until an admin accepts again.
+//   (a job turned on, a newer Philobiblos), Claude is not called until an admin accepts again.
 // - The Claude API key is sealed like the delivery address (household/sealed.ts: AES-256-GCM, the key outside the
 //   database, the row's name bound to it). It is write-only: no answer of any route holds it, only `hasClaudeKey`.
 // - Removing the key while Claude is on turns the AI off ('none'), never over to another provider.
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { CLAUDE_DEFAULT_MODEL, CLAUDE_MODEL, FIELDS, fieldsOf, type Field, type JobName } from '@shelf/ai';
+import { CLAUDE_DEFAULT_MODEL, CLAUDE_MODEL, FIELDS, fieldsOf, type Field, type JobName } from '@philobiblos/ai';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -39,6 +39,12 @@ export const JOBS_OF: Record<Exclude<keyof AiJobs, 'wildcards'>, JobName[]> = {
 
 const obj = (s: string): Record<string, unknown> => { try { const o = JSON.parse(s) as unknown; return o && typeof o === 'object' && !Array.isArray(o) ? o as Record<string, unknown> : {}; } catch { return {}; } };
 
+/**
+ * The lines of what leaves as an admin accepted them before the rename (philobiblos#30), each the line of now with the
+ * app's old name: the same field, so the acceptance still holds (until 0.2.0). Any other change still needs a new one.
+ */
+const RENAMED_LINES = new Map((Object.values(FIELDS) as string[]).filter((l) => l.includes('Philobiblos')).map((l) => [l.replaceAll('Philobiblos', 'Shelf'), l]));
+
 function row(db: Db) {
   db.insert(t.householdSettings).values({ id: 1 }).onConflictDoNothing().run();
   return db.select().from(t.householdSettings).where(eq(t.householdSettings.id, 1)).get()!;
@@ -60,7 +66,7 @@ export function getAi(db: Db): AiSettings {
     },
     hasClaudeKey: isSealed(db, CLAUDE_KEY),
     dailyTokens: r.aiDailyTokens,
-    leavesAccepted: (() => { try { const a = JSON.parse(r.aiLeavesAccepted ?? '[]') as unknown; return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []; } catch { return []; } })(),
+    leavesAccepted: (() => { try { const a = JSON.parse(r.aiLeavesAccepted ?? '[]') as unknown; return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string').map((l) => RENAMED_LINES.get(l) ?? l) : []; } catch { return []; } })(),
   };
 }
 
@@ -87,7 +93,7 @@ export function leavesVersion(lines: string[]): string {
 
 /**
  * Whether an admin accepted everything that leaves now: each line of `leaves` must be one they accepted. Turning a job
- * off keeps it accepted; a job turned on, or a line that changed (a new Shelf that sends something new), needs them to
+ * off keeps it accepted; a job turned on, or a line that changed (a new Philobiblos that sends something new), needs them to
  * accept again, and until then Claude is not called (ai/model.ts).
  */
 export function leavesAccepted(s: Pick<AiSettings, 'provider' | 'jobs' | 'leavesAccepted'>): boolean {
@@ -151,7 +157,7 @@ export function checkAi(db: Db, cfg: Pick<Config, 'sealingKey'>, v: unknown): (t
   if (provider === 'claude' && !keyAfter) provider = 'none';
   // While Claude is on, a job turned on that sends what was not accepted needs the same acceptance, for the list as it is
   // then. Anything else is saved; Claude still waits for an acceptance that covers what leaves (leavesAccepted).
-  // An acceptance is of one list: the one this request leaves sending. A page that showed another (an older Shelf, or
+  // An acceptance is of one list: the one this request leaves sending. A page that showed another (an older Philobiblos, or
   // other jobs) is refused, and reads the list again.
   if (p.acceptLeaves !== undefined && p.acceptLeaves !== leavesVersion(leaves('claude', jobs))) {
     throw new SettingsError('ai.acceptLeaves: what leaves is not the list you accepted (it changed): read leavesWithClaude again');
@@ -179,4 +185,4 @@ export function checkAi(db: Db, cfg: Pick<Config, 'sealingKey'>, v: unknown): (t
 }
 
 /** A key to seal with is missing or unreadable (409, like the addresses). */
-export class SealKeyMissing extends Error { constructor() { super('the sealing key is missing or unreadable: fix SHELF_SEALING_KEY on the server'); } }
+export class SealKeyMissing extends Error { constructor() { super('the sealing key is missing or unreadable: fix PHILOBIBLOS_SEALING_KEY on the server'); } }

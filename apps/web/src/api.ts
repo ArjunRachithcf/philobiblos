@@ -1,6 +1,6 @@
 // The API client: same origin, cookies only (the session is HttpOnly), JSON in and out. Errors carry the server's
 // message, which is written for people to read.
-import type { components } from '@shelf/contracts/openapi';
+import type { components } from '@philobiblos/contracts/openapi';
 
 export type Person = components['schemas']['Person'];
 export type AuthSession = components['schemas']['AuthSession'];

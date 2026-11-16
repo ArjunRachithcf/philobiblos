@@ -1,6 +1,6 @@
 // Example payloads for the M0 stubs. contracts/openapi.yaml has no `example`s, so these are made up; they are typed
 // against the generated API types and checked against the spec at runtime (test/routes.contract.test.ts).
-import type { components } from '@shelf/contracts/openapi';
+import type { components } from '@philobiblos/contracts/openapi';
 
 type S = components['schemas'];
 

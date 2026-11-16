@@ -1,4 +1,4 @@
--- Shelf database schema v8 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Philobiblos database schema v8 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -6,7 +6,7 @@ PRAGMA foreign_keys = ON;
 -- People ---------------------------------------------------------------
 CREATE TABLE person (
   id            TEXT PRIMARY KEY NOT NULL,
-  external_id   TEXT UNIQUE,              -- HomersLab person id when SHELF_MODE=homerslab
+  external_id   TEXT UNIQUE,              -- HomersLab person id when PHILOBIBLOS_MODE=homerslab
   name          TEXT NOT NULL,
   role          TEXT NOT NULL CHECK (role IN ('admin','adult','kid')),
   birth_year    INTEGER,                  -- kids: drives age band
@@ -41,7 +41,7 @@ CREATE TABLE session (                     -- a signed-in browser; the cookie ho
 CREATE TABLE invite (                      -- one-time link to enrol a passkey (ADR 0010)
   id          TEXT PRIMARY KEY NOT NULL,
   kind        TEXT NOT NULL CHECK (kind IN ('setup','admin','self','recovery')), -- the first admin's; an admin's invite;
-                                           -- your own for another device; `shelf recover`'s
+                                           -- your own for another device; `philobiblos recover`'s
   person_id   TEXT REFERENCES person(id) ON DELETE CASCADE, -- null for 'setup' (the admin is created when it is used)
   token_hash  TEXT NOT NULL UNIQUE,        -- SHA-256 of the link's token; the token itself is never stored
   created_by  TEXT REFERENCES person(id) ON DELETE SET NULL,
@@ -60,7 +60,7 @@ CREATE TABLE household_settings (
   ai_jobs_json      TEXT NOT NULL DEFAULT '{"read":true,"link":true,"suggest":true,"explain":true,"wildcards":true}',
   cycle_day         INTEGER NOT NULL DEFAULT 1,
   cycle_time        TEXT NOT NULL DEFAULT '20:17',
-  timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',  -- the household's one zone; the row is made at the first start with SHELF_TZ, never read after
+  timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',  -- the household's one zone; the row is made at the first start with PHILOBIBLOS_TZ, never read after
   ai_models_json    TEXT NOT NULL DEFAULT '{}',  -- the AI's models (Ollama's text and vision model, Claude's); the Claude key is sealed, never here
   ai_leaves_accepted TEXT,                      -- JSON: the lines of what leaves with Claude an admin accepted; Claude runs only while they cover it
   ai_daily_tokens   INTEGER NOT NULL DEFAULT 200000 -- the household's Claude allowance: tokens in any 24 hours, every run together
@@ -145,7 +145,7 @@ CREATE TABLE book_idea (
   ai_run_id  TEXT REFERENCES ai_run(id),
   reviewed_by TEXT REFERENCES person(id) ON DELETE SET NULL, -- who confirmed or rejected it; only a person does
   reviewed_at TEXT,
-  private_to TEXT REFERENCES person(id) ON DELETE CASCADE, -- written from this person's takeaways: theirs alone (shelf#3)
+  private_to TEXT REFERENCES person(id) ON DELETE CASCADE, -- written from this person's takeaways: theirs alone (philobiblos#3)
   PRIMARY KEY (book_id, idea_id)
 );
 
@@ -184,7 +184,7 @@ CREATE TABLE book_link (                   -- candidate builds on a book (the "â
   ai_run_id  TEXT REFERENCES ai_run(id),
   reviewed_by TEXT REFERENCES person(id) ON DELETE SET NULL, -- who confirmed or rejected it; only a person does
   reviewed_at TEXT,
-  private_to TEXT REFERENCES person(id) ON DELETE CASCADE, -- written from this person's takeaways: theirs alone (shelf#3)
+  private_to TEXT REFERENCES person(id) ON DELETE CASCADE, -- written from this person's takeaways: theirs alone (philobiblos#3)
   PRIMARY KEY (from_book, to_book)
 );
 
@@ -256,7 +256,7 @@ CREATE TABLE share (
   title      TEXT, caption TEXT,            -- what the phone sent with it (untrusted: marked so in prompts, shown as text)
   media_total INTEGER NOT NULL DEFAULT 0,  -- files received; progress = kept + refused of this
   media_refused INTEGER NOT NULL DEFAULT 0,-- files the media worker refused (not an image, too many pixels, unreadable)
-  error      TEXT,                         -- Shelf's own words when it failed
+  error      TEXT,                         -- Philobiblos's own words when it failed
   token_id   TEXT REFERENCES share_token(id) ON DELETE SET NULL, -- the share token it came with (NULL: a session)
   ai_read_at TEXT                          -- when the AI read it: daily AI reads counted per person and per token
 );
@@ -297,7 +297,7 @@ CREATE TABLE share_token (                 -- phone share tokens (ADR 0009): per
 
 CREATE TABLE sealed_secret (               -- the delivery address (ADR 0009); the card number is never stored
   key         TEXT PRIMARY KEY NOT NULL,            -- 'order_address'
-  ciphertext  BLOB NOT NULL,               -- AES-256-GCM; the key is outside the database (SHELF_SEALING_KEY_FILE)
+  ciphertext  BLOB NOT NULL,               -- AES-256-GCM; the key is outside the database (PHILOBIBLOS_SEALING_KEY_FILE)
   key_id      TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
@@ -348,7 +348,7 @@ CREATE TABLE job_period (
   PRIMARY KEY (job, period)
 );
 
--- Privacy of proposals (shelf#3): private_to follows the AI run's takeaways_of, whoever writes the row.
+-- Privacy of proposals (philobiblos#3): private_to follows the AI run's takeaways_of, whoever writes the row.
 CREATE TRIGGER book_link_private_to_check_insert BEFORE INSERT ON book_link
 WHEN NEW.ai_run_id IS NOT NULL AND NEW.private_to IS NOT NULL AND NEW.private_to IS NOT (SELECT takeaways_of FROM ai_run WHERE id = NEW.ai_run_id)
 BEGIN SELECT RAISE(ABORT, 'book_link.private_to must be its run''s takeaways_of'); END;

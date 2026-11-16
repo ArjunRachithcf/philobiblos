@@ -38,7 +38,7 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     if (e instanceof LibraryError) return reply.code(e.status).send({ error: e.message });
     if (e instanceof SettingsError || e instanceof BudgetError || e instanceof CycleError) return reply.code(400).send({ error: e.message });
     if (e instanceof SealKeyMissing) return reply.code(409).send({ error: e.message });
-    if (e instanceof SealError) return reply.code(409).send({ error: 'the sealing key is missing or wrong; see SHELF_SEALING_KEY' });
+    if (e instanceof SealError) return reply.code(409).send({ error: 'the sealing key is missing or wrong; see PHILOBIBLOS_SEALING_KEY' });
     throw e;
   };
 
@@ -54,7 +54,7 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.get('/settings', async (req, reply) => {
     try {
       // The delivery address never leaves sealed storage except in a Compose text; Settings says only whether it is set.
-      // The key is read only when something is sealed (a standalone Shelf makes its key on the first seal).
+      // The key is read only when something is sealed (a standalone Philobiblos makes its key on the first seal).
       // A key that was replaced or lost leaves the sealed rows unreadable: Settings still answers, without them, and says
       // they need entering again (docs/security.md, "Rotating the sealing key").
       let email: string | null = null;
@@ -84,7 +84,7 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     try {
       // All or nothing: both parts are checked before either is written.
       const order = body.order === undefined ? null : checkOrder(body.order);
-      if (order && keyProblem(cfg)) return reply.code(409).send({ error: `the sealing key is ${keyProblem(cfg)}: fix SHELF_SEALING_KEY (or SHELF_SEALING_KEY_FILE) on the server` });
+      if (order && keyProblem(cfg)) return reply.code(409).send({ error: `the sealing key is ${keyProblem(cfg)}: fix PHILOBIBLOS_SEALING_KEY (or PHILOBIBLOS_SEALING_KEY_FILE) on the server` });
       const key = order ? sealingKey(cfg) : null;
       // The AI part: the opt-in and the Claude key's sealing are checked here too, before anything is written.
       const ai = body.ai === undefined ? null : checkAi(db, cfg, body.ai);

@@ -92,14 +92,14 @@ describe('what may be reached', () => {
 });
 
 describe('answers are held to limits', () => {
-  it('JSON comes back, with Shelf\'s User-Agent, no cookies and no compression asked for', async () => {
+  it('JSON comes back, with Philobiblos\'s User-Agent, no cookies and no compression asked for', async () => {
     reset({ '/a': json({ ok: 1 }, 'application/json; charset=utf-8') });
     const r = await client([books()]).get(`http://books.test:${hport}/a`, 'json');
     expect(JSON.parse(r.body.toString())).toEqual({ ok: 1 });
     expect(seen[0]!.headers['user-agent']).toBe(USER_AGENT);
     expect(seen[0]!.headers['accept-encoding']).toBe('identity');
     expect(seen[0]!.headers.cookie).toBeUndefined();
-    expect(USER_AGENT).toMatch(/^Shelf\/\d/);
+    expect(USER_AGENT).toMatch(/^Philobiblos\/\d/);
   });
 
   it('the wrong content type is refused (a page where JSON was asked for, an SVG for an image)', async () => {

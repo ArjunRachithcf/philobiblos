@@ -2,9 +2,9 @@
 // score, ADR 0004), filtered by the query language of contracts/backlog-query.md (parsed by packages/contracts),
 // sorted, counted per tab and per facet. The backlog is shared by design (docs/security.md): every adult sees it.
 import { eq, inArray } from 'drizzle-orm';
-import { parseQuery, type ParsedQuery, type Term } from '@shelf/contracts';
-import type { components } from '@shelf/contracts/openapi';
-import { scoreAdult, scoreKid, type Layer, type ScorePart } from '@shelf/scoring';
+import { parseQuery, type ParsedQuery, type Term } from '@philobiblos/contracts';
+import type { components } from '@philobiblos/contracts/openapi';
+import { scoreAdult, scoreKid, type Layer, type ScorePart } from '@philobiblos/scoring';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { household, view } from '../household/people';
@@ -60,7 +60,7 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
   for (const r of tags) ideasOfBook.set(r.bookId, [...(ideasOfBook.get(r.bookId) ?? []), r]);
   const themesOfBook = new Map<string, string[]>();
   for (const r of db.select().from(t.bookTheme).orderBy(t.bookTheme.theme).all()) themesOfBook.set(r.bookId, [...(themesOfBook.get(r.bookId) ?? []), r.theme]);
-  // A reason from someone's takeaways is theirs (shelf#3): everyone else sees a neutral one.
+  // A reason from someone's takeaways is theirs (philobiblos#3): everyone else sees a neutral one.
   const linksFrom = new Map<string, { to: string; reason: string; confidence: number; state: string }[]>();
   for (const l of db.select().from(t.bookLink).all()) {
     if (l.state === 'confirmed' || (l.state === 'proposed' && !fromAi(l) && l.confidence >= COUNTED)) linksFrom.set(l.fromBook, [...(linksFrom.get(l.fromBook) ?? []), { to: l.toBook, reason: visibleReason(l, viewer), confidence: l.confidence, state: l.state }]);

@@ -1,5 +1,9 @@
 # ADR 0007: Order mail loop (IMAP, Compose)
 
+> Written when the app was called **Shelf**; it is **Philobiblos** since 2026-11-16 (philobiblos#30). This record is
+> kept as decided: read Shelf as Philobiblos, `SHELF_*` as `PHILOBIBLOS_*` and `shelf_session` as `philobiblos_session`;
+> a shelf of books is still a shelf.
+
 Status: **Accepted** · 2026-11-15 (revised the same day: no Gmail API, see "Changed")
 
 **Decision**: Shelf reads the bookshop's mail from a **Shelf-only mailbox over IMAP** and never sends mail. Orders go

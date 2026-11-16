@@ -1,4 +1,4 @@
-// The media worker's protocol (ADR 0009): the server and the worker share nothing but a folder (SHELF_WORK_DIR), and
+// The media worker's protocol (ADR 0009): the server and the worker share nothing but a folder (PHILOBIBLOS_WORK_DIR), and
 // the folder is the boundary. A decoder exploit owns the worker, so nothing the worker writes is trusted:
 //
 // - in/ is the server's: it drops a job there (its input, then its description, each written to a fresh name and
@@ -110,7 +110,7 @@ export function dirs(root: string) {
 }
 
 /**
- * The server's side: in/ for Shelf's user (the worker shares its group, never its user, and reads in/ through a
+ * The server's side: in/ for Philobiblos's user (the worker shares its group, never its user, and reads in/ through a
  * read-only mount), out/ writable by the group so the worker can write its results there and the server can remove
  * them. Throws if any of the three is not a real directory (a link planted in its place, say).
  */

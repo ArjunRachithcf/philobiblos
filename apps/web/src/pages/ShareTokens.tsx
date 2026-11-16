@@ -53,13 +53,13 @@ export function ShareTokens() {
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <div>
         <h2 className="card-title" id={`${id}-h`}>Phone share</h2>
-        <p className="footnote">On Android, install Shelf from the browser’s menu and share to it. On an iPhone, a Shortcut sends shares with a token of yours: it can post to your Inbox and nothing else.</p>
+        <p className="footnote">On Android, install Philobiblos from the browser’s menu and share to it. On an iPhone, a Shortcut sends shares with a token of yours: it can post to your Inbox and nothing else.</p>
       </div>
       <p className="sr-only" role="status">{status}</p>
       {fresh ? (
         <div className="stack" role="group" aria-labelledby={`${id}-f`}>
           <h3 className="subhead" id={`${id}-f`}>Your new token for {fresh.label}</h3>
-          <Notice kind="warn" title="Shown once.">Put it in the Shortcut now: after Done, Shelf cannot show it again (it keeps only a hash).</Notice>
+          <Notice kind="warn" title="Shown once.">Put it in the Shortcut now: after Done, Philobiblos cannot show it again (it keeps only a hash).</Notice>
           <div className="cluster">
             <Qr text={`Bearer ${fresh.token}`} label="QR code of the Shortcut’s Authorization value" />
             <div className="stack">
@@ -69,7 +69,7 @@ export function ShareTokens() {
               </div>
               <p className="footnote">Address: <span className="mono">{location.origin}/api/shares</span></p>
               <ol className="footnote">
-                <li>Shortcuts: a new shortcut “Send to Shelf”, shown in the Share Sheet, for images and URLs.</li>
+                <li>Shortcuts: a new shortcut “Send to Philobiblos”, shown in the Share Sheet, for images and URLs.</li>
                 <li>Add “Convert Image” to JPEG, then “Get Contents of URL”: the address above, method POST, request body Form.</li>
                 <li>Header Authorization: scan the QR code with the Camera and paste the text.</li>
                 <li>Form fields: “url” the Shortcut Input’s URL, “text” its text, “media” the converted images (one field per image).</li>

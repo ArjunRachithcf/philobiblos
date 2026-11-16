@@ -27,7 +27,7 @@ beforeAll(async () => {
   importSeed(db, SAMPLE, '2026-11-01T00:00:00.000Z');
   for (const p of db.select().from(t.person).all()) id[p.handle!] = p.id;
   for (const h of ['alex', 'partner']) cookie[h] = sessionCookie(db, id[h]!);
-  built = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent' }), db);
+  built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent' }), db);
   await built.app.ready();
 });
 afterAll(() => built.app.close());

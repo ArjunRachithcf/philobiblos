@@ -1,4 +1,4 @@
-// POST /jobs/{job}/run (admins only): starts a job now instead of at its time. The ones that reach outside Shelf go
+// POST /jobs/{job}/run (admins only): starts a job now instead of at its time. The ones that reach outside Philobiblos go
 // through the egress client (src/net/egress.ts) and nothing else. The monthly refresh also runs by itself, on the
 // household's day (jobs/schedule.ts); by hand it runs every step again for this month.
 import type { FastifyInstance } from 'fastify';

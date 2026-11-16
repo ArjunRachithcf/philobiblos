@@ -6,7 +6,8 @@
 import { fork } from 'node:child_process';
 import { closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readdirSync, rmSync, utimesSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { JOB_ID, MEDIA_KINDS, clampLimits, dirs, paths, serverWaitMs, writeAtomic, type MediaKind, type MediaResult } from '@shelf/contracts/media';
+import { JOB_ID, MEDIA_KINDS, clampLimits, dirs, paths, serverWaitMs, writeAtomic, type MediaKind, type MediaResult } from '@philobiblos/contracts/media';
+import { resolveEnv } from '@philobiblos/contracts/env';
 
 export interface WorkerOptions {
   root: string;
@@ -40,7 +41,7 @@ export function runChild(o: WorkerOptions, kind: string, input: string, output: 
     const child = fork(o.child?.path ?? here('./child.js'), [kind, input, output, id], {
       execArgv: [...(o.child?.execArgv ?? []), `--max-old-space-size=${heapMb}`],
       // The child gets no environment of the worker's beyond what it needs, and no stdin.
-      env: { NODE_ENV: 'production', ...(process.env.SHELF_WORKER_TEST === '1' ? { SHELF_WORKER_TEST: '1' } : {}) },
+      env: { NODE_ENV: 'production', ...(process.env.PHILOBIBLOS_WORKER_TEST === '1' ? { PHILOBIBLOS_WORKER_TEST: '1' } : {}) },
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
       serialization: 'json',
       detached: true,
@@ -134,8 +135,8 @@ export function assertOwnUser(root: string, uid = process.getuid?.()): void {
 
 /** Why `uid` may not run the worker over a folder owned by `owner`, or null. */
 export function userProblem(uid: number, owner: number): string | null {
-  if (uid === 0) return 'the media worker must not run as root (SHELF_WORKER_UID)';
-  if (uid === owner) return 'the media worker must run as its own user, not the server\'s (SHELF_WORKER_UID)';
+  if (uid === 0) return 'the media worker must not run as root (PHILOBIBLOS_WORKER_UID)';
+  if (uid === owner) return 'the media worker must run as its own user, not the server\'s (PHILOBIBLOS_WORKER_UID)';
   return null;
 }
 
@@ -181,7 +182,7 @@ async function loop(root: string) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const root = process.env.SHELF_WORK_DIR;
-  if (!root) { console.error('SHELF_WORK_DIR must be set'); process.exit(1); }
+  const root = resolveEnv().PHILOBIBLOS_WORK_DIR;
+  if (!root) { console.error('PHILOBIBLOS_WORK_DIR must be set'); process.exit(1); }
   void loop(root);
 }

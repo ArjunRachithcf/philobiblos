@@ -1,6 +1,6 @@
 // DNS for the mail checks (ADR 0007): DKIM and ARC keys only. The resolver answers TXT queries for `<selector>._domainkey.
 // <domain>` names and nothing else (no SPF, no DMARC policy fetches, no BIMI, no address lookups), with a time limit
-// and a cap on lookups per mail, so a hostile mail cannot use Shelf to query whatever it names.
+// and a cap on lookups per mail, so a hostile mail cannot use Philobiblos to query whatever it names.
 import { Resolver } from 'node:dns/promises';
 
 const KEY_NAME = /^[a-z0-9_-]{1,63}(\.[a-z0-9_-]{1,63})*\._domainkey(\.[a-z0-9-]{1,63}){2,}$/i;

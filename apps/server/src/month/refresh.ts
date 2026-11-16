@@ -1,4 +1,4 @@
-// The monthly refresh (spec §5 step 1, shelf#8 h): new invoices → copies (the mail), new shares read, prices refreshed
+// The monthly refresh (spec §5 step 1, philobiblos#8 h): new invoices → copies (the mail), new shares read, prices refreshed
 // for the candidates, the month's plan kept (scored by packages/scoring as it is made), the AI's suggestions and its one
 // line of why for the picks, then a push to the adults (push/push.ts: "this month's plan is ready", the scheduled run
 // only, once a period). Run by the scheduler on the household's day (jobs/schedule.ts), or by an admin by hand.

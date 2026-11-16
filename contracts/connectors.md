@@ -6,25 +6,25 @@ log to `job_run`, and are idempotent (`mail_seen`, input hashes).
 ## Mail over IMAP (ADR 0007)
 
 No Gmail API and no Google token. The person sets up a filter in their own mail account that forwards **only** the
-bookshop's mail (from `orellfuessli.ch`) to a mailbox used by Shelf and nothing else. Shelf reads that mailbox over
+bookshop's mail (from `orellfuessli.ch`) to a mailbox used by Philobiblos and nothing else. Philobiblos reads that mailbox over
 IMAP: TLS only (port 993, certificate verified, no STARTTLS downgrade, no plain auth without TLS), an app password kept
-as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), read-only (`EXAMINE`, never `STORE`,
+as a secret (`PHILOBIBLOS_IMAP_PASSWORD`, never in the database, the API or logs), read-only (`EXAMINE`, never `STORE`,
 `MOVE`, `EXPUNGE` or delete; `mail_seen` keeps what was read). New messages after the last run, by UID.
 
 **Every mail is hostile input.** Forwarded mail can be spoofed, so before a mail has any effect:
 
 - the original sender (the forwarded `From`, exactly one address, and `Sender` where present) must be the bookshop's
   domain; `Return-Path` is not checked, because a forwarding filter rewrites it to the forwarder (SRS) (M3 c);
-- it must be addressed (To or Cc) to the household (`SHELF_MAIL_RECIPIENTS`, or the mailbox itself), so a genuine
-  bookshop mail to someone else cannot be replayed into Shelf;
-- what Shelf reads from the headers must be what was signed: a header that may appear once appears once, the passing
+- it must be addressed (To or Cc) to the household (`PHILOBIBLOS_MAIL_RECIPIENTS`, or the mailbox itself), so a genuine
+  bookshop mail to someone else cannot be replayed into Philobiblos;
+- what Philobiblos reads from the headers must be what was signed: a header that may appear once appears once, the passing
   signature covers From, To, Subject, Date, Message-ID, MIME-Version and Content-Type (and Cc, Sender, Reply-To,
   In-Reply-To, References and Content-Transfer-Encoding when present) and no fewer instances than the mail has, and
   a signature over part of the body (`l=`) does not count;
 - the DKIM signature of the bookshop's domain must pass, or, for a forward that broke it, the `ARC-Authentication-Results`
   of the forwarding provider must show `dkim=pass` for that domain; a mail that fails, or has neither, is stored with
   `accepted = 0` and shown in the Inbox as "not verified", and changes nothing (and none of its content is kept). The
-  forwarding providers whose ARC seal counts are `SHELF_MAIL_ARC_SEALERS` (default `google.com`); DNS is asked only for
+  forwarding providers whose ARC seal counts are `PHILOBIBLOS_MAIL_ARC_SEALERS` (default `google.com`); DNS is asked only for
   DKIM key records (`<selector>._domainkey.<domain>`, a few per mail), never SPF, DMARC or anything a mail names;
 - the header block must be strict RFC 5322 (every line a field, `name:` of printable ASCII, or a continuation; no NUL,
   no lone CR, no other control character but tab, no continuation that is only white space, no encoded word in a
@@ -48,7 +48,7 @@ as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), rea
 - links in mail are never followed, fetched or shown as clickable; images are not loaded;
 - MIME is parsed with limits (25 MB per mail, depth 8, 64 parts, 256 KB of headers, no nested message); only
   `application/pdf` attachments (by their bytes, 10 MB) are read, in the media worker (ADR 0009), never in the server;
-- what the parsers extract only proposes changes to Shelf's own records (prices, quote states, copies); it never
+- what the parsers extract only proposes changes to Philobiblos's own records (prices, quote states, copies); it never
   creates people, settings or outgoing mail.
 
 Parsers are versioned (`apps/server/src/mail/parse.ts`; `mail_seen.parser_version` is the reader's and the parser's,
@@ -60,7 +60,7 @@ split and matched by anchored expressions, never one pattern over the whole text
 (nothing from the first reply marker on, no `>` line: the household's quoted request is never read), and **fails
 closed**: a recognised mail whose layout is not one it knows is `unknown_layout`, keeps the parser's version and its
 reason, changes nothing, waits in the Inbox, and is read again only under a new parser version. Unknown means: an
-amount Shelf cannot place (anything but a book's price, a total, postage, a discount or VAT), a book without a title,
+amount Philobiblos cannot place (anything but a book's price, a total, postage, a discount or VAT), a book without a title,
 without a price or a status, or with two prices, an ISBN that is not 13 digits, an article of a kind it does not know,
 an invoice row that begins with an EAN and does not read whole, a stated total that is not the rows' sum (with
 postage), or a PDF the worker cut short.
@@ -69,13 +69,13 @@ postage), or a PDF the worker cut short.
 |---|---|---|---|
 | `bookshop_quote` | from english-orders@, with prices | per title: ISBN, price, delivery; "not in stock / backorder" | order lines quoted / unavailable; order total = the quoted lines; status quoted |
 | `bookshop_confirm` | from english-orders@: "We have now ordered…", order number | order number | order status drafted → quoted |
-| `online_order` | subject "Ihre Orell Füssli Bestellung (n)" | items: title, author, price; skip non-books (Spielwaren) | lines matched and kept; no Shelf order is made (the month's order is Compose's), the invoice makes the copies |
+| `online_order` | subject "Ihre Orell Füssli Bestellung (n)" | items: title, author, price; skip non-books (Spielwaren) | lines matched and kept; no Philobiblos order is made (the month's order is Compose's), the invoice makes the copies |
 | `click_collect` | subject "Wir bearbeiten Ihre Bestellung (n)" | "Buch <title> von <author> EAN: <ean> \| Fr. <price>" | as `online_order` |
 | `invoice` | subject "Ihre OrellFüssli-Rechnung Nr. n" + PDF | PDF rows: `EAN  Title  qty ST  price  [discount %]  total CHF  VAT %` | a copy per unit (owned), priced; its order's lines delivered, the order invoiced; the same invoice number again counts once |
 
 A quote or confirmation belongs to a composed order (status drafted or quoted): the one whose `mail_thread_ref` holds
 the mail's signed In-Reply-To (the bookshop's own earlier mail in that thread), or else the one of the month its signed
-Subject names as Compose writes it ("Re: Book order, November 2026"). The person's request never reaches Shelf
+Subject names as Compose writes it ("Re: Book order, November 2026"). The person's request never reaches Philobiblos
 (Compose adds no Bcc), so only the bookshop's own signed mail ties a reply to an order. Each tied mail's Message-ID
 joins the order's thread (at most 20). Lines match books by EAN first, then by normalised title and author (the full
 name, "Surname, First" or the surname alone; the title alone on an invoice), never by its title to a book with another
@@ -93,14 +93,14 @@ Layouts (quotes, all must parse; the shop's mails as the fixtures write them):
 - `Paulsen, The Quiet Hedgehog / ISBN: n / Price. CHF 16.90 / delivery due: 2-3 days`
 - one line per book: `- Okafor, Value Beyond Price, CHF 18.90, delivery time 1-3 days` (or `…, not in stock`)
 - online order and click & collect, a line per article: `<kind> <title> von <author> [EAN: <ean>] | [<n> x ]Fr. <price>`,
-  where the kind is `Buch` or `Taschenbuch` (books) or one Shelf knows to skip (`Spielwaren`, `Kalender`, …)
+  where the kind is `Buch` or `Taschenbuch` (books) or one Philobiblos knows to skip (`Spielwaren`, `Kalender`, …)
 - invoice rows as the media worker splits the PDF (cells at wide gaps); `Versandkosten`/`Porto` and `Total` rows
   are read for the sum; the PDF's text is never stored
 
-**Compose** (instead of drafts): Shelf builds a `mailto:` link to english-orders@orellfuessli.ch with the subject and
+**Compose** (instead of drafts): Philobiblos builds a `mailto:` link to english-orders@orellfuessli.ch with the subject and
 the text filled in (the books, the delivery address, a request for prices and delivery times). The person's own mail
-app opens it; Shelf never sends, and the link has no Cc or Bcc: the request, and whatever the person adds to it, goes
-to the bookshop alone, never to Shelf's mailbox (decided 2026-11-16, PR #14 review). **Shelf never sees the card
+app opens it; Philobiblos never sends, and the link has no Cc or Bcc: the request, and whatever the person adds to it, goes
+to the bookshop alone, never to Philobiblos's mailbox (decided 2026-11-16, PR #14 review). **Philobiblos never sees the card
 number**: the text holds no card line at all, and the person adds the number in their own mail app if the bookshop
 needs it. The delivery address is sealed
 at rest with a key outside the database (`sealed_secret`, ADR 0009).
@@ -110,7 +110,7 @@ at rest with a key outside the database (`sealed_secret`, ADR 0009).
 `PriceSource` interface. Orell Füssli implementation: GET `https://www.orellfuessli.ch/suche?sq=<title author>`,
 parse result tiles (title, author, format "Buch (Taschenbuch|Gebundene Ausgabe)", "Fr. 24.90", availability text,
 article id from `/shop/home/artikeldetails/A…`). Choose the English print edition whose normalised title matches.
-1 request / 3 s, cache 7 days, User-Agent identifies Shelf. Read-only: never touches wishlist, cart or account.
+1 request / 3 s, cache 7 days, User-Agent identifies Philobiblos. Read-only: never touches wishlist, cart or account.
 The page is hostile input: 2 MB and 10 s at most, no redirects off the host, parsed as text (no script runs), and only
 the fields above are kept.
 
@@ -128,8 +128,8 @@ All outgoing requests go through one HTTP client that allows only the hosts in t
 
 - Android: the web app is a PWA with `share_target` (POST multipart to `/share-target`, title + text + url + files).
   Its service worker takes that POST, keeps the parts in the browser's cache for a moment and opens the share screen,
-  which posts them to `/api/shares` itself: with Shelf's Origin and session, as every other change (ADR 0010).
-- iOS: a Shortcut "Send to Shelf" posting the same multipart to `/api/shares` with a per-person share token
+  which posts them to `/api/shares` itself: with Philobiblos's Origin and session, as every other change (ADR 0010).
+- iOS: a Shortcut "Send to Philobiblos" posting the same multipart to `/api/shares` with a per-person share token
   (`Authorization: Bearer`), created in Settings and shown once with a QR code (steps in `docs/phone-share.md`). The
   token is its id and 256 random bits, stored hashed, compared in constant time, can be revoked, and is write-only: it
   is accepted by `POST /api/shares` and nothing else (ADR 0009).
@@ -137,7 +137,7 @@ All outgoing requests go through one HTTP client that allows only the hosts in t
   VP8 or VP9, up to 180 s and 4K), by their bytes. A video becomes a frame every ~2 s, at most 30 (further apart past a
   minute), each a JPEG of at most 1280 pixels a side; its sound and the video itself are never kept. Until the AI reads
   shares (M3 g) a share is `done` once its images are re-encoded and its videos' frames taken.
-- A share carries images, the link and the caption. Shelf never logs in to Instagram and never holds an Instagram
+- A share carries images, the link and the caption. Philobiblos never logs in to Instagram and never holds an Instagram
   session (ADR 0006); the link is stored as text and fetched only through oEmbed without a login, if at all.
 - Media are size-limited (an image 20 MB, a video 64 MB, 100 MB a share, 30 files), type-checked by content, and processed in
   the media worker.
@@ -146,4 +146,4 @@ All outgoing requests go through one HTTP client that allows only the hosts in t
 ## Wishlist import (one-off, optional)
 
 Seed already contains the Orell Füssli wishlist and "To buy" list as of 2026-11-15 (`seed/wishlist.json`, `tobuy` flag).
-A later importer may read a logged-in wishlist export if the person provides one; Shelf does not log in to retailers.
+A later importer may read a logged-in wishlist export if the person provides one; Philobiblos does not log in to retailers.

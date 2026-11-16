@@ -60,7 +60,7 @@ describe('is it the bookshop?', () => {
   });
 
   it.each([
-    ['sealed by a provider Shelf does not trust', () => sealed(message(), 'evil.example', 'mx.evil.example; dkim=pass header.i=@orellfuessli.ch')],
+    ['sealed by a provider Philobiblos does not trust', () => sealed(message(), 'evil.example', 'mx.evil.example; dkim=pass header.i=@orellfuessli.ch')],
     ['a trusted seal that saw the bookshop\'s DKIM fail', () => sealed(message(), 'google.com', 'mx.google.com; dkim=fail header.i=@orellfuessli.ch')],
     ['a trusted seal that saw another domain pass', () => sealed(message(), 'google.com', 'mx.google.com; dkim=pass header.i=@evil.example')],
     ['a seal broken by a change after it', async () => Buffer.from((await sealed(message(), 'google.com', 'mx.google.com; dkim=pass header.i=@orellfuessli.ch')).toString().replace('CHF 19.90', 'CHF 1.90'))],
@@ -98,7 +98,7 @@ describe('the header block is strict, and what was parsed is what was signed', (
     ['a NUL', 'X-Note: a\u0000b'],
     ['a continuation first', ' Price correction CHF 999.00'],
     ['a lone CR', 'X-Note: a\rSubject: forged'],
-    // shelf#13: no bypass known, but parsers disagree on each, and genuine bookshop mail has none.
+    // philobiblos#13: no bypass known, but parsers disagree on each, and genuine bookshop mail has none.
     ['a form feed', 'X-Note: a\fb'],
     ['a continuation that is only white space', 'X-Note: a\r\n \t'],
     ['an encoded word as a name', '=?utf-8?q?Subject?=: forged'],
@@ -124,7 +124,7 @@ describe('the header block is strict, and what was parsed is what was signed', (
     const mail = await signed(message({ id: 'fields1', body: 'Delivery to: Somewhere Street 1, 8000 Exampletown\r\nCard 4111 1111 1111 1111\r\nTotal CHF 19.90' }));
     await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 6, raw: mail }]), resolver });
     const kept = JSON.parse(db.select().from(t.mailSeen).get()!.parsedJson!);
-    // A quote with no book in it is a layout Shelf does not know: refused, and only that is kept.
+    // A quote with no book in it is a layout Philobiblos does not know: refused, and only that is kept.
     expect(kept).toEqual({ subject: 'Re: Book order', date: expect.any(String), messageId: '<fields1@orellfuessli.ch>', inReplyTo: null, pdfs: 0, uidValidity: 7, uid: 6, parser: 'quote-1', expected: 'bookshop_quote', reason: 'no books' });
     expect(JSON.stringify(kept)).not.toMatch(/Somewhere|4111|19\.90/);
   });
@@ -143,7 +143,7 @@ describe('a kept field never holds the address or a long number', () => {
     ['slashes', '4111/1111/1111/1111'], ['NBSP', '4111 1111 1111 1111'],
   ])('a card-like number with %s: dropped', (_n, v) => expect(safeField(`Card ${v}`, [])).toBeNull());
 
-  // shelf#13's residue, against an address whose name and street share no word (so each rule is tested alone).
+  // philobiblos#13's residue, against an address whose name and street share no word (so each rule is tested alone).
   const other = addressParts('Alex Brightwater\nBahnhofstrasse 12\n8000 Zürich');
   it.each([
     ['a compound street abbreviated', 'Bahnhofstr. 12'], ['ue for ü', 'CH-8000 Zuerich'], ['the surname alone', 'Herr Brightwater'],
@@ -187,7 +187,7 @@ describe('a kept field never holds the address or a long number', () => {
 
 
 describe('the mail job', () => {
-  it('records each mail once: verified with its content, not verified with only Shelf\'s reason', async () => {
+  it('records each mail once: verified with its content, not verified with only Philobiblos\'s reason', async () => {
     const db = household();
     const good = await signed(message({ id: 'good1' }));
     const forged = message({ id: 'forged1', from: 'english-orders@orellfuessli.ch', body: 'Pay here: https://evil.example' });

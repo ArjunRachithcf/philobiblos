@@ -138,7 +138,7 @@ describe('the prices job', () => {
     expect(db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).get()).toMatchObject({ priceC: 1990, seenAt: NOW.toISOString() });
   });
 
-  it('when the shop refuses Shelf (403, 429), the run stops at once and nothing changes', async () => {
+  it('when the shop refuses Philobiblos (403, 429), the run stops at once and nothing changes', async () => {
     for (const status of [403, 429]) {
       const db = household();
       let calls = 0;
@@ -153,7 +153,7 @@ describe('the prices job', () => {
   it('an unknown price counts as CHF 25 in the month, and the screen says it is unknown', async () => {
     expect(UNKNOWN_PRICE_C).toBe(2500);
     const db = household();
-    const { app } = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY }), db);
+    const { app } = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY }), db);
     const cookie = sessionCookie(db, 'p_alex');
     const month = (await app.inject({ url: '/api/month', headers: { cookie } })).json();
     type Pick = { candidate: { price?: number } };
@@ -224,7 +224,7 @@ describe('covers', () => {
 
   it('only the media worker\'s fresh JPEG is kept, never the original; a cover id that is not a number is never asked for', async () => {
     const db = withMeta();
-    const dataDir = mkdtempSync(join(tmpdir(), 'shelf-covers-'));
+    const dataDir = mkdtempSync(join(tmpdir(), 'philobiblos-covers-'));
     const original = Buffer.from('original bytes, EXIF and all');
     const e = fakeEgress((u, want) => (want === 'image' && u === 'https://covers.openlibrary.org/b/id/42-L.jpg?default=false' ? original : null));
     const handed: Buffer[] = [];
@@ -238,7 +238,7 @@ describe('covers', () => {
 
   it('a cover the worker refuses is not kept; without a worker the run stops', async () => {
     const db = withMeta();
-    const dataDir = mkdtempSync(join(tmpdir(), 'shelf-covers-'));
+    const dataDir = mkdtempSync(join(tmpdir(), 'philobiblos-covers-'));
     const e = fakeEgress(() => Buffer.from('x'));
     await refreshCovers(db, e, { dataDir, workDir: '/work' }, { sleep: noSleep, media: async () => ({ id: 'x', ok: false, error: 'not_this_type' }) });
     expect(existsSync(join(dataDir, 'covers', 'b_tide.jpg'))).toBe(false);
@@ -250,7 +250,7 @@ describe('POST /jobs/{job}/run', () => {
   const app = async (find: PriceSource['find']) => {
     const db = household();
     const runs: Promise<void>[] = [];
-    const built = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY, SHELF_EGRESS: 'off' }), db,
+    const built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off' }), db,
       { jobs: { prices: { id: 'orellfuessli', find }, env: { sleep: noSleep }, started: (_j, d) => runs.push(d) } });
     return { db, app: built.app, runs, admin: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN }, adult: { cookie: sessionCookie(db, 'p_sam'), origin: ORIGIN } };
   };
@@ -273,6 +273,6 @@ describe('POST /jobs/{job}/run', () => {
     const a = await app(async () => null);
     const r = await a.app.inject({ method: 'POST', url: '/api/jobs/metadata/run', headers: a.admin });
     await Promise.all(a.runs);
-    expect(a.db.select().from(t.jobRun).where(eq(t.jobRun.id, r.json().id)).get()).toMatchObject({ status: 'blocked', detail: expect.stringContaining('SHELF_EGRESS=off') });
+    expect(a.db.select().from(t.jobRun).where(eq(t.jobRun.id, r.json().id)).get()).toMatchObject({ status: 'blocked', detail: expect.stringContaining('PHILOBIBLOS_EGRESS=off') });
   });
 });

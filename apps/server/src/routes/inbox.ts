@@ -32,7 +32,7 @@ export async function inboxRoutes(app: FastifyInstance, cfg: Config, db: Db, sha
     try { dismiss(db, req.caller!.personId, req.params.itemId); return reply.code(204).send(); } catch (e) { return fail(reply, e); }
   });
 
-  // A share from the PWA (through its service worker, so with Shelf's Origin and session) or a Shortcut (its token).
+  // A share from the PWA (through its service worker, so with Philobiblos's Origin and session) or a Shortcut (its token).
   const rate = new Limiter(SHARE_RATE.max, SHARE_RATE.windowMs);
   app.post('/shares', { config: { auth: 'person-or-share-token' } }, async (req, reply) => {
     const me = req.caller!.personId;

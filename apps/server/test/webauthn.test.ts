@@ -1,12 +1,14 @@
 // simpleWebAuthn() against a software authenticator (ES256, attestation "none"): what a browser and a passkey would
-// send, built here byte by byte, so the checks Shelf relies on are tested without a browser: origin, RP ID, user
+// send, built here byte by byte, so the checks Philobiblos relies on are tested without a browser: origin, RP ID, user
 // verification, the challenge and the signature counter.
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { simpleWebAuthn, type StoredCredential } from '../src/auth/webauthn';
+import { RP_NAME, simpleWebAuthn, type StoredCredential } from '../src/auth/webauthn';
+import { loadConfig } from '../src/config';
+import { resetLegacyEnvWarning } from '@philobiblos/contracts/env';
 
-const ORIGIN = 'https://shelf.example.org';
-const RP_ID = 'shelf.example.org';
+const ORIGIN = 'https://philobiblos.example.org';
+const RP_ID = 'philobiblos.example.org';
 const sha256 = (b: Buffer | string): Buffer => createHash('sha256').update(b).digest();
 const b64u = (b: Buffer) => b.toString('base64url');
 
@@ -131,5 +133,28 @@ describe('sign-in', () => {
     const { challenge } = await wa.authenticationOptions();
     const r = other.assert(challenge);
     expect(await wa.verifyAuthentication({ response: { ...r, id: stored.id, rawId: stored.id }, challenge, credential: stored })).toBeNull();
+  });
+});
+
+// philobiblos#30: the app was Shelf, and so was its RP name. A passkey is bound to the RP ID (the origin's host), never to
+// the name, so one made before the rename, on the same address, still signs in after it.
+describe('the rename keeps every passkey', () => {
+  it('the prompt shows the new name; the RP ID is still the origin\'s host', async () => {
+    const { options } = await wa.registrationOptions({ userId: 'p_alex', userName: 'Alex', exclude: [] });
+    expect(options).toMatchObject({ rp: { name: RP_NAME, id: RP_ID } });
+    expect(RP_NAME).toBe('Philobiblos');
+  });
+  it('a passkey enrolled by the old deployment (SHELF_ORIGIN) signs in to the new one (PHILOBIBLOS_ORIGIN)', async () => {
+    const before = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_ORIGIN: ORIGIN });
+    resetLegacyEnvWarning();
+    const after = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_ORIGIN: ORIGIN });
+    const old = simpleWebAuthn(before), now = simpleWebAuthn(after);
+    const a = new SoftAuthenticator();
+    const reg = await old.registrationOptions({ userId: 'p_alex', userName: 'Alex', exclude: [] });
+    const cred = (await old.verifyRegistration({ response: a.register(reg.challenge), challenge: reg.challenge }))!;
+    expect(cred).not.toBeNull();
+    a.counter = 2;
+    const { challenge } = await now.authenticationOptions();
+    expect(await now.verifyAuthentication({ response: a.assert(challenge), challenge, credential: { id: cred.id, publicKey: cred.publicKey, counter: cred.counter, transports: cred.transports } })).toEqual({ newCounter: 2 });
   });
 });

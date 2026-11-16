@@ -1,6 +1,6 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "shelf/ai/explain_pick.schema.json",
+ "$id": "philobiblos/ai/explain_pick.schema.json",
  "type": "object",
  "required": [
   "why"

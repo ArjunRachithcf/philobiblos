@@ -40,14 +40,14 @@ jobs:
       - name: Generated files match contracts/
         run: |
           pnpm gen:api
-          pnpm --filter @shelf/server exec drizzle-kit generate --name check
+          pnpm --filter @philobiblos/server exec drizzle-kit generate --name check
           git -c safe.directory='*' diff --exit-code
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test:unit
       - run: pnpm test:contract
       - name: The importer runs on the sample seed
-        run: SHELF_DATA_DIR=$RUNNER_TEMP/seed-data pnpm seed seed-sample
+        run: PHILOBIBLOS_DATA_DIR=$RUNNER_TEMP/seed-data pnpm seed seed-sample
 
   e2e:
     name: End-to-end (Chromium, real passkeys, axe)
@@ -67,8 +67,8 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: pnpm --filter @shelf/web exec playwright install --with-deps chromium
-      - run: pnpm --filter @shelf/web e2e
+      - run: pnpm --filter @philobiblos/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @philobiblos/web e2e
 
   imap:
     name: Mail read from a real IMAP server (GreenMail)

@@ -13,7 +13,7 @@ import * as t from '../src/db/schema';
 import { currentMonth } from '../src/month/plan';
 import { UNVERIFIED_ID, mailItemId } from '../src/inbox/inbox';
 
-/** Plans are made for this month and the next only: the tests use the server's this month (SHELF_TZ default). */
+/** Plans are made for this month and the next only: the tests use the server's this month (PHILOBIBLOS_TZ default). */
 export const THIS_MONTH = currentMonth('Europe/Zurich');
 
 export const ORIGIN = 'http://localhost:8080';
@@ -183,7 +183,7 @@ export function inboxItems(db: Db): void {
 }
 
 export function sessionCookie(db: Db, personId: string): string {
-  return `shelf_session=${createSession(db, personId).token}`;
+  return `philobiblos_session=${createSession(db, personId).token}`;
 }
 
 /**

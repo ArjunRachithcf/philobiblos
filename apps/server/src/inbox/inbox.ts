@@ -4,7 +4,7 @@
 //   share may rest on its sharer's takeaways (private_to), so this is where that rule holds for shares.
 // - The bookshop's mail is the household's (orders and copies are shared): every adult sees the lines of verified mail
 //   that matched no book (notBook lines, toys and games, too), the mail that failed closed or waits for the media
-//   worker, and the mail that was not verified, of which the Inbox shows Shelf's reason and the day only (none of its
+//   worker, and the mail that was not verified, of which the Inbox shows Philobiblos's reason and the day only (none of its
 //   content is kept, contracts/connectors.md).
 // - AI suggestions (M3 g) are their person's alone, like shares: suggestNext's runs for that person, each checked again
 //   against its schema when read; adding one puts it in your own backlog (origin ai), never a kid's or another adult's.
@@ -15,14 +15,14 @@ import { createHash } from 'node:crypto';
 import { and, count, desc, eq, gt, inArray, isNotNull, lt, lte, max, sql } from 'drizzle-orm';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { ulid } from 'ulid';
-import type { components } from '@shelf/contracts/openapi';
+import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
 import { matchBook } from '../mail/effects';
 import { norm } from '../seed/import';
 import { foundBooks, keptFiles, ownShare, shareAiNote, type ShareRow } from '../shares/shares';
-import { validateAiOutput, type SuggestNextOut } from '@shelf/contracts';
+import { validateAiOutput, type SuggestNextOut } from '@philobiblos/contracts';
 
 type S = components['schemas'];
 export type InboxItem = S['InboxItem'];
@@ -101,7 +101,7 @@ function mailItem(r: MailRow, decided: Map<number, string> | undefined): InboxIt
   const number = str(p.invoiceNumber, 40) ?? str(p.orderNumber, 40);
   if (FAILED.includes(r.kind)) {
     const reason = r.kind === 'reread_refused' ? str(json(r.authJson).reason, 500) : str(p.reason, 500);
-    return { id, kind: 'mail_failed', title: str(p.subject) ?? 'A bookshop mail Shelf could not read', createdAt: r.seenAt, mail: { reason, expected: str(p.expected, 40), date, number }, found: [] };
+    return { id, kind: 'mail_failed', title: str(p.subject) ?? 'A bookshop mail Philobiblos could not read', createdAt: r.seenAt, mail: { reason, expected: str(p.expected, 40), date, number }, found: [] };
   }
   if (WAITING.includes(r.kind)) {
     const tries = typeof p.tries === 'number' ? p.tries : 0;

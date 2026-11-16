@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 import sharp from 'sharp';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { MEDIA_LIMITS, SERVER_WAIT_MS, clampLimits, dirs, paths, prepareDirs, readResult, writeAtomic } from '@shelf/contracts/media';
+import { MEDIA_LIMITS, SERVER_WAIT_MS, clampLimits, dirs, paths, prepareDirs, readResult, writeAtomic } from '@philobiblos/contracts/media';
 // The server's marker check, run on the worker's real output (the server's tests never load sharp).
 import { cleanJpeg } from '../../server/src/media/client';
 import { LOADERS, loadSharp } from '../src/jobs';
@@ -20,8 +20,8 @@ const child = { path: fileURLToPath(new URL('../src/child.ts', import.meta.url))
 let root: string;
 let o: WorkerOptions;
 beforeAll(() => {
-  process.env.SHELF_WORKER_TEST = '1';
-  root = mkdtempSync(join(tmpdir(), 'shelf-worker-'));
+  process.env.PHILOBIBLOS_WORKER_TEST = '1';
+  root = mkdtempSync(join(tmpdir(), 'philobiblos-worker-'));
   prepareDirs(root);
   o = { root, child };
 });

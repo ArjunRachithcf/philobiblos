@@ -1,6 +1,6 @@
 // The Inbox (spec §4): your shares, the AI's suggestions for you, and the household's bookshop mail that needs a person. For each book: add or skip;
 // each item can be dismissed. Everything here is data from the server, rendered as text (never as markup): titles,
-// captions and links come from phones and mail Shelf did not write, and a link is shown, never made clickable.
+// captions and links come from phones and mail Philobiblos did not write, and a link is shown, never made clickable.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, message, type InboxItem, type Me } from '../api';
 import { Choice, MenuButton, Notice, PageHead } from '../ui';
@@ -103,11 +103,11 @@ function Item({ it, kids, busy, onDecide, onDismiss }: {
         {it.share && <ShareFacts s={it.share} media={it.mediaCount ?? 0} />}
         {it.kind === 'mail_unverified' && (
           <>
-            <Notice kind="warn" title="Not verified, so they changed nothing.">Shelf could not confirm the bookshop sent them. Nothing of their content is kept.</Notice>
+            <Notice kind="warn" title="Not verified, so they changed nothing.">Philobiblos could not confirm the bookshop sent them. Nothing of their content is kept.</Notice>
             <ul className="footnote" aria-label="Why">{(it.unverified?.reasons ?? []).map((r) => <li key={r.reason}>{r.reason}: {r.count}</li>)}</ul>
           </>
         )}
-        {it.kind === 'mail_failed' && <Notice kind="warn" title="Shelf could not read this mail, so it changed nothing.">{it.mail?.reason}{it.mail?.expected ? ` (it looked like: ${it.mail.expected.replace(/_/g, ' ')})` : ''}</Notice>}
+        {it.kind === 'mail_failed' && <Notice kind="warn" title="Philobiblos could not read this mail, so it changed nothing.">{it.mail?.reason}{it.mail?.expected ? ` (it looked like: ${it.mail.expected.replace(/_/g, ' ')})` : ''}</Notice>}
         {it.kind === 'mail_waiting' && <Notice kind="info">{it.mail?.reason}</Notice>}
         {it.share?.aiNote && <Notice kind="info">{it.share.aiNote}</Notice>}
         {it.kind === 'ai_suggestion' && <p className="footnote">The AI suggests these from your reading map. Nothing is added until you add it.</p>}

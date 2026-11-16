@@ -1,8 +1,8 @@
-// `shelf recover <admin handle>` (ADR 0010): when an admin has lost every passkey, the person who runs Shelf's
+// `philobiblos recover <admin handle>` (ADR 0010): when an admin has lost every passkey, the person who runs Philobiblos's
 // container writes a one-time link (24 hours) for that admin to enrol a new one. The link goes into
-// SHELF_DATA_DIR/setup-link.txt (0600), never to the terminal or a log.
-// `shelf media-check [jobs]`: hands the media worker a tiny made-up image (that many times) and says whether it came
-// back re-encoded (ADR 0009). `shelf media-check video < file.mp4`: hands it a video from stdin and says how many frames
+// PHILOBIBLOS_DATA_DIR/setup-link.txt (0600), never to the terminal or a log.
+// `philobiblos media-check [jobs]`: hands the media worker a tiny made-up image (that many times) and says whether it came
+// back re-encoded (ADR 0009). `philobiblos media-check video < file.mp4`: hands it a video from stdin and says how many frames
 // came back (the smoke test's check of ffmpeg in the worker's own container).
 import { createRecoveryLink } from './auth/invites';
 import { loadConfig } from './config';
@@ -23,7 +23,7 @@ if (cmd === 'media-check' && handle === 'video' && !rest.length) {
     process.exit(0);
   })().catch((e) => { console.error(e instanceof MediaUnavailable ? e.message : 'media worker: failed'); process.exit(1); });
 } else if (cmd === 'media-check' && (!handle || /^\d{1,3}$/.test(handle)) && !rest.length) {
-  // `shelf media-check 50`: that many jobs in a row, each must come back (the smoke test's check that clean jobs
+  // `philobiblos media-check 50`: that many jobs in a row, each must come back (the smoke test's check that clean jobs
   // never make the worker restart).
   const times = Number(handle ?? 1);
   (async () => {
@@ -35,7 +35,7 @@ if (cmd === 'media-check' && handle === 'video' && !rest.length) {
     process.exit(0);
   })().catch((e) => { console.error(e instanceof MediaUnavailable ? e.message : 'media worker: failed'); process.exit(1); });
 } else if (cmd !== 'recover' || !handle || rest.length) {
-  console.error('usage: shelf recover <admin handle> | shelf media-check [jobs] | shelf media-check video < file');
+  console.error('usage: philobiblos recover <admin handle> | philobiblos media-check [jobs] | philobiblos media-check video < file');
   process.exit(2);
 } else try {
   const cfg = loadConfig();

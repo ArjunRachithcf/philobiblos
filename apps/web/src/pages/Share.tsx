@@ -1,7 +1,7 @@
 // The phone share screen (spec §4 "Phone share", contracts/connectors.md). A share from the phone's share sheet lands
 // in the service worker (public/sw.js), which keeps it for a moment and opens this screen. Any website can make the
 // browser POST to the share target, so this screen never sends on its own: it shows what arrived, and only the
-// person's tap on "Send to the Inbox" posts it to /api/shares (as Shelf's own page, with Shelf's Origin and the
+// person's tap on "Send to the Inbox" posts it to /api/shares (as Philobiblos's own page, with Philobiblos's Origin and the
 // session). An untouched share expires after an hour. Then it shows how the media worker gets on.
 // Without a pending share it is a form: a link, a note and images or videos, by hand.
 import { useEffect, useId, useRef, useState } from 'react';
@@ -23,9 +23,9 @@ function upload(form: FormData, onProgress: (sent: number, total: number) => voi
       let body: { id?: string; status?: string; error?: string } = {};
       try { body = JSON.parse(x.responseText) as typeof body; } catch { /* no body */ }
       if (x.status === 202 && typeof body.id === 'string') resolve({ id: body.id, status: body.status ?? 'received' });
-      else reject(new Error(body.error ?? (x.status === 413 ? 'Too many files, or too large: an image up to 20 MB, a video up to 64 MB, 100 MB together.' : x.status === 429 ? 'Too many shares; wait a few minutes.' : 'Shelf did not take the share.')));
+      else reject(new Error(body.error ?? (x.status === 413 ? 'Too many files, or too large: an image up to 20 MB, a video up to 64 MB, 100 MB together.' : x.status === 429 ? 'Too many shares; wait a few minutes.' : 'Philobiblos did not take the share.')));
     };
-    x.onerror = () => reject(new Error('Shelf did not answer.'));
+    x.onerror = () => reject(new Error('Philobiblos did not answer.'));
     x.send(form);
   });
 }
@@ -54,7 +54,7 @@ export function Share({ go }: { go: (to: string) => void }) {
   const [shareId, setShareId] = useState<string | null>(() => (SHARE_ID.test(params.get('id') ?? '') ? params.get('id') : null));
   const [sent, setSent] = useState<{ sent: number; total: number } | null>(null);
   const [view, setView] = useState<ShareView | null>(null);
-  const [error, setError] = useState<string | null>(params.get('error') ? 'The phone’s share could not be read. Try again, or share the link alone.' : params.has('offline') ? 'Open Shelf once in this browser, then share again: the share target needs Shelf to have been opened.' : null);
+  const [error, setError] = useState<string | null>(params.get('error') ? 'The phone’s share could not be read. Try again, or share the link alone.' : params.has('offline') ? 'Open Philobiblos once in this browser, then share again: the share target needs Philobiblos to have been opened.' : null);
   const [url, setUrl] = useState('');
   const [note, setNote] = useState('');
   const files = useRef<HTMLInputElement>(null);
@@ -115,12 +115,12 @@ export function Share({ go }: { go: (to: string) => void }) {
   const total = view?.progress.total ?? 0;
   const done = view?.progress.done ?? 0;
   const pct = sent && !shareId ? Math.round((sent.sent / Math.max(1, sent.total)) * 100) : total ? Math.round((done / total) * 100) : view ? 100 : 0;
-  const what = !shareId ? 'Sending to Shelf' : !view ? 'Sent' : view.status === 'received' ? 'Waiting for the media worker'
+  const what = !shareId ? 'Sending to Philobiblos' : !view ? 'Sent' : view.status === 'received' ? 'Waiting for the media worker'
     : view.status === 'reading' ? `Reading the images and videos: ${done} of ${total}` : view.status === 'done' ? 'Done' : 'It could not be read';
 
   return (
     <>
-      <PageHead title="Share to Shelf" sub="A post’s images or video, its link and its caption go to your Inbox. Shelf never logs in to Instagram." />
+      <PageHead title="Share to Philobiblos" sub="A post’s images or video, its link and its caption go to your Inbox. Philobiblos never logs in to Instagram." />
       <div className="stack">
         {error && <Notice kind="error">{error}</Notice>}
         {(sent || shareId) && (
@@ -195,7 +195,7 @@ function PendingShare({ p, onSend, onDiscard }: { p: Pending; onSend: () => void
   return (
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <h2 className="card-title" id={`${id}-h`} ref={head} tabIndex={-1}>Send this to your Inbox?</h2>
-      <p className="footnote">It arrived through Shelf’s share target. Send it only if you shared it just now: another website can open this screen too.</p>
+      <p className="footnote">It arrived through Philobiblos’s share target. Send it only if you shared it just now: another website can open this screen too.</p>
       <dl className="kv">
         {field('title') && <><dt>Title</dt><dd className="wrap">{field('title')}</dd></>}
         {field('url') && <><dt>Link</dt><dd className="wrap mono">{field('url')}</dd></>}

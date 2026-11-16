@@ -38,7 +38,7 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db) {
       if (typeof month !== 'string') throw new MonthError(400, 'month: YYYY-MM');
       checkWindow(db, month, true);
       const problem = keyProblem(cfg);
-      if (problem && (isSealed(db, SEALED.bookshopEmail) || isSealed(db, SEALED.deliveryAddress))) throw new MonthError(409, `the sealing key is ${problem}: the server's SHELF_SEALING_KEY needs fixing`);
+      if (problem && (isSealed(db, SEALED.bookshopEmail) || isSealed(db, SEALED.deliveryAddress))) throw new MonthError(409, `the sealing key is ${problem}: the server's PHILOBIBLOS_SEALING_KEY needs fixing`);
       const open = (name: string) => (isSealed(db, name) ? unseal(db, sealingKey(cfg), name) : null);
       const places = { bookshopEmail: open(SEALED.bookshopEmail), deliveryAddress: open(SEALED.deliveryAddress) };
       return reply.code(201).send(composeOrder(db, month, req.caller!.personId, places));

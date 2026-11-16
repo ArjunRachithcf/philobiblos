@@ -3,7 +3,7 @@
 //
 // Every parser is bounded (lines, line length, books per mail) and linear: lines are split and matched with anchored
 // expressions that cannot backtrack, never one pattern over the whole text. Each fails closed: a mail whose kind is
-// recognised but whose layout is not (a price Shelf cannot place, a book row it cannot read, a stated total that is
+// recognised but whose layout is not (a price Philobiblos cannot place, a book row it cannot read, a stated total that is
 // not the sum of the rows) is `unknown_layout`, stamped with the parser's version, and changes nothing. Every string
 // field passes `safeField` (read.ts) on its way out. The household's own request, quoted below a reply, is never read:
 // lines from the first reply marker on, and any line starting with `>`, are left out.
@@ -126,7 +126,7 @@ export function parseQuote(text: string, address: string[]): Parsed {
     const unavailable = Boolean(b.unavailable) || UNAVAILABLE.test(`${b.price ?? ''} ${b.delivery ?? ''}`);
     if (p == null && !unavailable) { problem = 'a book with neither a price nor a status'; return; }
     const ean = b.isbn ? digits(b.isbn) : null;
-    if (ean != null && !EAN.test(ean)) { problem = 'an ISBN Shelf cannot read'; return; }
+    if (ean != null && !EAN.test(ean)) { problem = 'an ISBN Philobiblos cannot read'; return; }
     out.push({ title: field(b.title, address), author: field(b.author, address, 120), ean: field(ean, address), priceC: unavailable ? null : p, delivery: field(b.delivery, address, 80), available: !unavailable, ...notBook(ean) });
   };
   // The next non-empty line after each, found in one backward pass (not a search per line: linear).
@@ -140,7 +140,7 @@ export function parseQuote(text: string, address: string[]): Parsed {
       const name = f[1]!.toLowerCase();
       const label = (name.startsWith('delivery') || name === 'availability' ? 'delivery' : name) as 'author' | 'title' | 'isbn' | 'price' | 'delivery';
       const v = f[2]!.trim();
-      // A second author, title or ISBN starts the next book; a second price or delivery in one book is a layout Shelf does not know.
+      // A second author, title or ISBN starts the next book; a second price or delivery in one book is a layout Philobiblos does not know.
       if (cur && (cur as Block)[label] !== undefined) {
         if (label === 'price' || label === 'delivery') { problem = `two ${label} lines for one book`; continue; }
         flush();
@@ -158,7 +158,7 @@ export function parseQuote(text: string, address: string[]): Parsed {
       const at = parts.findIndex((p) => /^(?:CHF|Fr\.)\s?\d/i.test(p));
       const end = at >= 0 ? at : parts.length - 1;
       if (parts.length < 3 || end < 2 || (at < 0 && !UNAVAILABLE.test(parts[end]!))) {
-        if (HAS_PRICE.test(l)) problem = 'a price Shelf cannot place';
+        if (HAS_PRICE.test(l)) problem = 'a price Philobiblos cannot place';
         continue;
       }
       cur = { author: parts[0], title: parts.slice(1, end).join(', '), price: at >= 0 ? parts[at] : undefined, delivery: parts.slice(end + (at >= 0 ? 1 : 0)).join(', ').replace(/^delivery (?:time|due)\s?:?\s?/i, '') || undefined };
@@ -173,7 +173,7 @@ export function parseQuote(text: string, address: string[]): Parsed {
       continue;
     }
     if (cur && UNAVAILABLE.test(l) && !HAS_PRICE.test(l)) { cur.unavailable = true; continue; }
-    if (HAS_PRICE.test(l) && !SUMMARY.test(l)) problem = 'a price Shelf cannot place';
+    if (HAS_PRICE.test(l) && !SUMMARY.test(l)) problem = 'a price Philobiblos cannot place';
   }
   if (!problem) flush();
   if (problem) return refuse('bookshop_quote', P, problem);
@@ -201,7 +201,7 @@ export function parseShop(kind: 'online_order' | 'click_collect', number: string
     const right = bar >= 0 ? /^(?:(\d{1,2}) ?[x×] ?)?Fr\. ?(\d{1,4})[.,](\d{2})$/i.exec(l.slice(bar + 3)) : null;
     const sp = l.indexOf(' ');
     const what = sp > 0 ? l.slice(0, sp).toLowerCase() : '';
-    if (!right || sp > bar || (!BOOKS.has(what) && !NOT_BOOKS.has(what))) return refuse(kind, P, 'a price Shelf cannot place');
+    if (!right || sp > bar || (!BOOKS.has(what) && !NOT_BOOKS.has(what))) return refuse(kind, P, 'a price Philobiblos cannot place');
     if (NOT_BOOKS.has(what)) continue;
     let left = l.slice(sp + 1, bar);
     const ean = / EAN: ?(\d{13})$/i.exec(left);
@@ -256,7 +256,7 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
       if (from === 0 || from > i) continue;
       out.push({ ean: null, title: field(tok.slice(from, i + 1).join(' '), address), qty, priceC: price, discountPct: discount, totalC: total, vatPct: vat, eanUnreadable: true });
     } else {
-      if (!whole || i < 1) return refuse('invoice', P, 'a book row Shelf cannot read');
+      if (!whole || i < 1) return refuse('invoice', P, 'a book row Philobiblos cannot read');
       // A row whose EAN is no ISBN is read whole (it counts in the total) but is not a book (notBook).
       out.push({ ean: field(tok[0], address), title: field(tok.slice(1, i + 1).join(' '), address), qty, priceC: price, discountPct: discount, totalC: total, vatPct: vat, ...notBook(tok[0]) });
     }

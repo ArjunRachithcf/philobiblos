@@ -26,7 +26,7 @@ beforeAll(async () => {
   importSeed(db, SAMPLE, '2026-11-01T00:00:00.000Z');
   for (const p of db.select().from(t.person).all()) id[p.handle!] = p.id;
   for (const h of ['alex', 'partner']) cookie[h] = sessionCookie(db, id[h]!);
-  built = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY }), db);
+  built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY }), db);
   await built.app.ready();
 });
 afterAll(() => built.app.close());
@@ -189,8 +189,8 @@ describe('which months', () => {
 
 describe('a replaced sealing key', () => {
   it('Settings still answers (the budget too) and asks for the addresses again; re-entering them works', async () => {
-    const imap = { SHELF_IMAP_HOST: 'imap.example.org', SHELF_IMAP_USER: 'shelf.box@example.org', SHELF_IMAP_PASSWORD: 'not-a-real-password' };
-    const other = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64'), ...imap }), db);
+    const imap = { PHILOBIBLOS_IMAP_HOST: 'imap.example.org', PHILOBIBLOS_IMAP_USER: 'shelf.box@example.org', PHILOBIBLOS_IMAP_PASSWORD: 'not-a-real-password' };
+    const other = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: Buffer.alloc(32, 9).toString('base64'), ...imap }), db);
     await other.app.ready();
     const h = { cookie: cookie.alex!, origin: ORIGIN, 'content-type': 'application/json' };
     const s = await other.app.inject({ url: '/api/settings', headers: h });
@@ -214,8 +214,8 @@ describe('a replaced sealing key', () => {
 
 describe('a broken key configuration', () => {
   it('says the key is missing or unreadable, never "enter both addresses again"', async () => {
-    for (const [env, problem] of [[{ SHELF_SEALING_KEY: 'too-short' }, 'unreadable'], [{ SHELF_SEALING_KEY_FILE: '/nonexistent/sealing.key' }, 'missing']] as const) {
-      const app = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', ...env }), db);
+    for (const [env, problem] of [[{ PHILOBIBLOS_SEALING_KEY: 'too-short' }, 'unreadable'], [{ PHILOBIBLOS_SEALING_KEY_FILE: '/nonexistent/sealing.key' }, 'missing']] as const) {
+      const app = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', ...env }), db);
       await app.app.ready();
       const h = { cookie: cookie.alex!, origin: ORIGIN, 'content-type': 'application/json' };
       const s = await app.app.inject({ url: '/api/settings', headers: h });

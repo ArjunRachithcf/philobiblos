@@ -2,7 +2,7 @@
 // HomersLab they arrive with each request from the proxy (identity.ts) and are kept in step.
 import { and, count, eq, isNull, ne } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import type { components } from '@shelf/contracts/openapi';
+import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { purgeTakeawayRuns } from '../library/ai-context';
@@ -142,7 +142,7 @@ export function removePerson(db: Db, id: string, by: string): void {
 
 /**
  * Under HomersLab: the person the proxy names, added the first time and kept in step after (name, role). A request
- * without a role is refused by the caller: Shelf cannot tell an adult from a kid without it.
+ * without a role is refused by the caller: Philobiblos cannot tell an adult from a kid without it.
  */
 export function syncHomersLabPerson(db: Db, id: Identity & { role: Role }): Person {
   const existing = db.select().from(t.person).where(eq(t.person.externalId, id.externalId)).get();

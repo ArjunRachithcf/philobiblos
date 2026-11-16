@@ -1,6 +1,6 @@
 // The jobs themselves, run only inside the child process (child.ts): sharp and pdfjs-dist are loaded here and nowhere
-// else in Shelf (ADR 0009). Each takes bytes and gives back plain data; errors are a fixed vocabulary.
-import { MEDIA_LIMITS, type MediaError } from '@shelf/contracts/media';
+// else in Philobiblos (ADR 0009). Each takes bytes and gives back plain data; errors are a fixed vocabulary.
+import { MEDIA_LIMITS, type MediaError } from '@philobiblos/contracts/media';
 import { sniff } from './sniff';
 
 export class JobError extends Error {
