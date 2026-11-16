@@ -265,8 +265,8 @@ describe('explainPick', () => {
     expect(db.select().from(t.orderLine).where(eq(t.orderLine.bookId, 'b_pdf')).get()!.why).toBeNull();
     // This month shows it in place of Shelf's own words.
     const { getMonth } = await import('../src/month/plan');
-    const alex = getMonth(db, currentMonth(cfg.timezone), 'p_alex').adults.find((x) => x.person.id === 'p_alex')!;
-    expect(alex.picks.find((x) => x.candidate.book.id === 'b_mail')!.why).toBe('Deepens Markets and value.');
+    const alex = getMonth(db, currentMonth(cfg.timezone), 'p_alex').adults?.find((x) => x.person?.id === 'p_alex');
+    expect(alex?.picks?.find((x) => x.candidate?.book?.id === 'b_mail')?.why).toBe('Deepens Markets and value.');
   });
 });
 
