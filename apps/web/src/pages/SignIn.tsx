@@ -9,8 +9,8 @@ export function SignIn({ session, onSignedIn }: { session: AuthSession; onSigned
   if (session.mode === 'homerslab') {
     return (
       <main className="auth" id="main">
-        <h1 className="large-title">Shelf</h1>
-        <Notice kind="info" title="Open Shelf from HomersLab.">HomersLab signs you in; Shelf has no sign-in of its own here.</Notice>
+        <h1 className="large-title">Philobiblos</h1>
+        <Notice kind="info" title="Open Philobiblos from HomersLab.">HomersLab signs you in; Philobiblos has no sign-in of its own here.</Notice>
       </main>
     );
   }
@@ -21,13 +21,13 @@ export function SignIn({ session, onSignedIn }: { session: AuthSession; onSigned
   };
   return (
     <main className="auth" id="main">
-      <h1 className="large-title">Shelf</h1>
+      <h1 className="large-title">Philobiblos</h1>
       <p className="auth-sub">What to read next, and the month's order.</p>
       <div className="stack">
         {session.setupNeeded && (
-          <Notice kind="info" title="Shelf needs its first admin.">
-            Open the setup link in the file <code>setup-link.txt</code> in Shelf's data folder. It works once, for 24 hours;
-            restarting Shelf makes a new one.
+          <Notice kind="info" title="Philobiblos needs its first admin.">
+            Open the setup link in the file <code>setup-link.txt</code> in Philobiblos's data folder. It works once, for 24 hours;
+            restarting Philobiblos makes a new one.
           </Notice>
         )}
         <button type="button" className="btn btn-primary btn-lg btn-block" onClick={go} aria-busy={busy} disabled={busy}>
@@ -36,7 +36,7 @@ export function SignIn({ session, onSignedIn }: { session: AuthSession; onSigned
         {error && <Notice kind="error">{error}</Notice>}
         <p className="footnote">
           No passkey yet? An admin of the household sends you a link to make one. An admin who lost every passkey asks
-          whoever runs Shelf for a recovery link (<code>shelf recover</code>).
+          whoever runs Philobiblos for a recovery link (<code>philobiblos recover</code>).
         </p>
       </div>
     </main>

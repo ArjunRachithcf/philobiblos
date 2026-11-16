@@ -2,14 +2,14 @@
 // mail is easy to forge, so a mail counts only when:
 // - its From is exactly one address at the bookshop's domain (a Sender, if there is one, too), and
 // - a DKIM signature of that domain, aligned with the From, verifies here (keys from DNS, nothing else looked up); or,
-//   for a forward that broke the signature, the ARC chain verifies, its newest seal is from a provider Shelf trusts
-//   (SHELF_MAIL_ARC_SEALERS), and that provider recorded dkim=pass for the bookshop's domain.
+//   for a forward that broke the signature, the ARC chain verifies, its newest seal is from a provider Philobiblos trusts
+//   (PHILOBIBLOS_MAIL_ARC_SEALERS), and that provider recorded dkim=pass for the bookshop's domain.
 // Return-Path is not checked: a forwarding filter rewrites it to the forwarder's address (SRS), so it says nothing.
-// And whatever Shelf later reads from the headers must be what was signed: a header that may appear once appears
-// once, the passing signature covers the ones Shelf reads (From, To, Subject, Date, Message-ID, the MIME headers, and
+// And whatever Philobiblos later reads from the headers must be what was signed: a header that may appear once appears
+// once, the passing signature covers the ones Philobiblos reads (From, To, Subject, Date, Message-ID, the MIME headers, and
 // In-Reply-To/References/Cc/Sender/Reply-To when present), covers no fewer instances than the mail has, and covers
-// the whole body (no l=). The mail must be addressed to the household (SHELF_MAIL_RECIPIENTS or the mailbox itself),
-// so a genuine bookshop mail to someone else cannot be replayed into Shelf.
+// the whole body (no l=). The mail must be addressed to the household (PHILOBIBLOS_MAIL_RECIPIENTS or the mailbox itself),
+// so a genuine bookshop mail to someone else cannot be replayed into Philobiblos.
 // Anything else is kept as "not verified" and changes nothing.
 import { authenticate } from 'mailauth';
 import { dkimKeyResolver, type TxtResolver } from '../net/dns';
@@ -18,7 +18,7 @@ export const BOOKSHOP_DOMAIN = 'orellfuessli.ch';
 
 export interface MailAuth {
   accepted: boolean;
-  /** How it passed, or why not (Shelf's own words). */
+  /** How it passed, or why not (Philobiblos's own words). */
   via: 'dkim' | 'arc' | null;
   reason: string;
   fromDomain: string | null;
@@ -35,7 +35,7 @@ const inDomain = (d: string | null | undefined, domain: string) => !!d && (d.toL
  * 33–126 other than `:`, then `:` at once) or the continuation of the one above it (starting with a space or tab).
  * A line that is neither, a NUL, a lone CR, a continuation first or a block over 256 KB makes the mail unreadable:
  * a parser that stops at such a line would read the signed headers as body, and whatever stood above as the mail.
- * Refused as well, though no bypass is known (shelf#13): any other control character (a form feed, say), a
+ * Refused as well, though no bypass is known (philobiblos#13): any other control character (a form feed, say), a
  * continuation that is only white space (obsolete folding) and a name holding an encoded word (`=?`): parsers
  * disagree on each, and genuine bookshop mail has none.
  */
@@ -79,11 +79,11 @@ export const addressDomains = (value: string) => addresses(value).map((a) => a.s
 
 /** Headers a mail has at most once (RFC 5322 section 3.6); a second one is a forgery prepended above the signed mail. */
 const SINGLE = ['from', 'sender', 'reply-to', 'to', 'cc', 'subject', 'date', 'message-id', 'in-reply-to', 'references', 'mime-version', 'content-type', 'content-transfer-encoding'];
-/** What Shelf reads from the headers: the passing signature must cover each (the optional ones when the mail has them). */
+/** What Philobiblos reads from the headers: the passing signature must cover each (the optional ones when the mail has them). */
 const COVERED = ['from', 'to', 'subject', 'date', 'message-id', 'mime-version', 'content-type'];
 const COVERED_IF_PRESENT = ['cc', 'sender', 'reply-to', 'in-reply-to', 'references', 'content-transfer-encoding'];
 
-/** Why a signature (DKIM's or ARC's message signature) does not vouch for everything Shelf reads, or null. */
+/** Why a signature (DKIM's or ARC's message signature) does not vouch for everything Philobiblos reads, or null. */
 export function coverageProblem(sig: { signingHeaders?: { keys?: string[] | string }; canonBodyLengthLimited?: boolean } | undefined, hs: { name: string }[]): string | null {
   if (!sig) return 'no signature';
   if (sig.canonBodyLengthLimited) return 'its signature covers only part of the body (l=)';
@@ -114,14 +114,14 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
   if (of('sender').length && !addressDomains(of('sender')[0]!).every((d) => inDomain(d, domain))) return no('its Sender is not the bookshop', fromDomain);
   const to = [...of('to'), ...of('cc')].flatMap(addresses);
   const household = o.recipients.map((r) => r.toLowerCase());
-  if (!household.length) return no('no household address is set up to receive the bookshop\'s mail (SHELF_MAIL_RECIPIENTS)', fromDomain);
+  if (!household.length) return no('no household address is set up to receive the bookshop\'s mail (PHILOBIBLOS_MAIL_RECIPIENTS)', fromDomain);
   if (!to.some((a) => household.includes(a))) return no('not addressed to the household', fromDomain);
 
   let res;
   try {
     res = await authenticate(raw, {
       resolver: dkimKeyResolver(o.resolver) as unknown as (name: string, rr: string) => Promise<never>,
-      disableDmarc: true, disableBimi: true, ip: '192.0.2.1', helo: 'shelf.invalid', sender: '', mta: 'shelf.invalid', minBitLength: 1024,
+      disableDmarc: true, disableBimi: true, ip: '192.0.2.1', helo: 'philobiblos.invalid', sender: '', mta: 'philobiblos.invalid', minBitLength: 1024,
     });
   } catch {
     return no('its signatures could not be read', fromDomain);
@@ -137,7 +137,7 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
   const arc = res.arc as { status?: { result?: string }; signature?: Parameters<typeof coverageProblem>[0] & { signingDomain?: string }; authenticationResults?: { dkim?: { result?: string; header?: { i?: string; d?: string } }[] } } | undefined;
   if (arc?.status?.result === 'pass') {
     const sealer = arc.signature?.signingDomain?.toLowerCase() ?? '';
-    if (!o.arcSealers.some((s) => inDomain(sealer, s))) return no(`the forward was sealed by ${sealer.slice(0, 80)}, not a provider Shelf trusts`, fromDomain);
+    if (!o.arcSealers.some((s) => inDomain(sealer, s))) return no(`the forward was sealed by ${sealer.slice(0, 80)}, not a provider Philobiblos trusts`, fromDomain);
     const ok = (arc.authenticationResults?.dkim ?? []).some((d) => d.result === 'pass' && inDomain((d.header?.d ?? d.header?.i?.replace(/^.*@/, '')) ?? '', domain));
     if (!ok) return no(`the forward's seal by ${sealer} does not show the bookshop's DKIM passing`, fromDomain);
     const problem = coverageProblem(arc.signature, hs);

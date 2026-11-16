@@ -1,4 +1,4 @@
-// The order mail (ADR 0007): Shelf never sends mail. Compose is a mailto: link with the request filled in, opened in
+// The order mail (ADR 0007): Philobiblos never sends mail. Compose is a mailto: link with the request filled in, opened in
 // the person's own mail app. The text asks for a quote and never holds a card number: the person gives payment details
 // themselves. Pure: no database, no clock.
 
@@ -36,5 +36,5 @@ export function mailto(to: string, subject: string, body: string): { url: string
   const url = (b: string) => `mailto:${to}?subject=${enc(subject)}&body=${enc(b)}`;
   const full = url(body);
   if (full.length <= MAILTO_MAX) return { url: full, complete: true };
-  return { url: url('Hello,\n\n(Paste the order from Shelf here: it is too long for this link.)\n'), complete: false };
+  return { url: url('Hello,\n\n(Paste the order from Philobiblos here: it is too long for this link.)\n'), complete: false };
 }

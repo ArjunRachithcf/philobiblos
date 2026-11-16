@@ -1,4 +1,4 @@
-// A Shelf with the sample seed imported (seed-sample/, all invented), one browser for the whole file: Alex claims the
+// A Philobiblos with the sample seed imported (seed-sample/, all invented), one browser for the whole file: Alex claims the
 // imported admin; the Library (books marked, a takeaway, Sam's library without takeaways or controls, Kid 2's); the
 // Backlog (the filter bar, labels, tabs, a score's parts, grouping, bulk actions, a book added); the budget; the Brain
 // (the map and its table, views, the panel) and the proposals waiting for a decision (confirm, reject, a layer change);
@@ -512,7 +512,7 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
 
   // By hand on the share screen: progress, then done.
   await page.goto('/share');
-  await expect(page.getByRole('heading', { name: 'Share to Shelf', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Share to Philobiblos', level: 1 })).toBeVisible();
   await page.getByLabel('Link').fill('https://example.org/p/8');
   await page.getByLabel('Note').fill('Recommended by a friend');
   await expectAccessible(page, 'share by hand');
@@ -521,7 +521,7 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
   await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
   await expectAccessible(page, 'a share sent');
 
-  // The share target: the phone's POST is the service worker's; the share screen then posts it as Shelf's own page.
+  // The share target: the phone's POST is the service worker's; the share screen then posts it as Philobiblos's own page.
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   await page.reload();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
@@ -529,7 +529,7 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
     const f = new FormData();
     f.append('title', 'A post about gardens');
     f.append('text', 'Three books on the commons https://example.org/p/9');
-    // A photo over the image limit (but under a video's): left out by itself, never failing the share (shelf#20).
+    // A photo over the image limit (but under a video's): left out by itself, never failing the share (philobiblos#20).
     const big = new Uint8Array(21 * 1024 * 1024); big.set([0xff, 0xd8, 0xff, 0xe0]);
     f.append('media', new File([big], 'big.jpg', { type: 'image/jpeg' }));
     return (await fetch('/share-target', { method: 'POST', body: f })).url;
@@ -569,7 +569,7 @@ test('another website cannot post a share through the share target: the share sc
   await other.waitForTimeout(1500);
   expect(posted).toEqual([]);
   // Discard comes first in the tab order; Send says it is disabled while the moment after the screen is shown lasts
-  // (shelf#18), and that moment starts again whenever the screen comes back into view: another tab brought forward, or
+  // (philobiblos#18), and that moment starts again whenever the screen comes back into view: another tab brought forward, or
   // the page restored from the browser's page cache.
   const send = other.getByRole('button', { name: 'Send to the Inbox' });
   await other.keyboard.press('Tab');
@@ -620,14 +620,14 @@ test('an empty first page with more after it is followed: never "Nothing waiting
   const dis = db.prepare("INSERT INTO inbox_decision (item, idx, decision, decided_at) VALUES (?, -1, 'dismissed', 'x')");
   const itemId = (key: string) => `m_${createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 32)}`;
   db.exec('BEGIN');
-  ins.run('<e2e-old@orellfuessli.ch>', JSON.stringify({ subject: 'An old quote Shelf could not read', reason: 'a price Shelf cannot place' }), '2020-01-01T00:00:00.000Z');
+  ins.run('<e2e-old@orellfuessli.ch>', JSON.stringify({ subject: 'An old quote Philobiblos could not read', reason: 'a price Philobiblos cannot place' }), '2020-01-01T00:00:00.000Z');
   for (let i = 0; i < 2100; i++) { ins.run(`<e2e-d${i}@orellfuessli.ch>`, '{}', '2030-01-01T00:00:00.000Z'); dis.run(itemId(`<e2e-d${i}@orellfuessli.ch>`)); }
   db.exec('COMMIT');
   db.close();
   await page.goto('/inbox');
-  await expect(page.getByRole('heading', { name: 'An old quote Shelf could not read' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'An old quote Philobiblos could not read' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Nothing waiting' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Dismiss An old quote Shelf could not read' }).click();
-  await expect(page.getByRole('heading', { name: 'An old quote Shelf could not read' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss An old quote Philobiblos could not read' }).click();
+  await expect(page.getByRole('heading', { name: 'An old quote Philobiblos could not read' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Show more' })).toHaveCount(0);
 });

@@ -1,4 +1,4 @@
-// Web Push (shelf#8 h): RFC 8291's encryption checked against its own example, VAPID (RFC 8292) verified with the
+// Web Push (philobiblos#8 h): RFC 8291's encryption checked against its own example, VAPID (RFC 8292) verified with the
 // public key, the key sealed like the delivery address, subscriptions per adult and checked, sends only to the push
 // services through the egress client, 404/410 removing a device, a payload that says only its kind. No real push
 // service is ever reached: the sends go to a fake egress client, or to the real one with a fake resolver.
@@ -16,7 +16,7 @@ import { b64u, encrypt, fromB64u, vapidAuthorization } from '../src/push/webpush
 import { PUSH_LIMITS } from '../src/routes/push';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
 
-const cfg = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY });
+const cfg = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY });
 
 /** A browser: its key pair and auth secret, and the decryption RFC 8291 asks of it. */
 function browser() {
@@ -101,7 +101,7 @@ describe('the application server key', () => {
     const old = vapidKeys(db, cfg);
     subscribe(db, 'p_sam', sub());
     const before = db.select().from(t.sealedSecret).where(eq(t.sealedSecret.key, VAPID_SEALED)).get()!;
-    const wrong = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') });
+    const wrong = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') });
     expect(() => vapidKeys(db, wrong)).toThrow(expect.objectContaining({ status: 503, message: expect.stringContaining('sealing key does not open') }));
     expect(db.select().from(t.sealedSecret).where(eq(t.sealedSecret.key, VAPID_SEALED)).get()).toEqual(before);
     expect(listSubscriptions(db, 'p_sam')).toHaveLength(1);
@@ -128,7 +128,7 @@ describe('the application server key', () => {
   });
   it('without a usable sealing key there are no notifications (503), and nothing is sent', async () => {
     const db = household();
-    const none = loadConfig({ SHELF_MODE: 'homerslab', SHELF_DATA_DIR: '/nonexistent', SHELF_ORIGIN: 'https://shelf.example', SHELF_EDGE_IDENTITY: 'homerslab-v1', SHELF_TRUSTED_PROXY: '10.0.0.1' });
+    const none = loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_ORIGIN: 'https://shelf.example', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '10.0.0.1' });
     expect(() => vapidKeys(db, none)).toThrow(PushError);
     db.insert(t.pushSubscription).values({ id: 's1', personId: 'p_alex', endpoint: ENDPOINT(), ...browser().keys, createdAt: new Date().toISOString() }).run();
     const f = fakeEgress();
@@ -149,16 +149,16 @@ describe('subscriptions', () => {
       expect(() => checkSubscription({ endpoint, keys: k })).toThrow(PushError);
     }
   });
-  it('no push vendor is built in: the server\'s SHELF_PUSH_HOSTS names them, checked as host names', async () => {
+  it('no push vendor is built in: the server\'s PHILOBIBLOS_PUSH_HOSTS names them, checked as host names', async () => {
     const k = browser().keys;
-    const own = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY, SHELF_PUSH_HOSTS: 'push.example.org, *.push.example.net' });
+    const own = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_PUSH_HOSTS: 'push.example.org, *.push.example.net' });
     expect(own.pushHosts).toEqual(['push.example.org', '*.push.example.net']);
     expect(checkSubscription({ endpoint: 'https://push.example.org/d/1', keys: k }, own.pushHosts).endpoint).toBe('https://push.example.org/d/1');
     expect(checkSubscription({ endpoint: 'https://eu.push.example.net/d/1', keys: k }, own.pushHosts).endpoint).toBe('https://eu.push.example.net/d/1');
     expect(() => checkSubscription({ endpoint: ENDPOINT(), keys: k }, own.pushHosts)).toThrow(PushError);
     expect(cfg.pushHosts).toEqual(DEFAULT_PUSH_HOSTS);
     for (const bad of ['localhost', 'push.example.org/path', '*.*.example.org', 'https://push.example.org', '10.0.0.1', '*', '*.co.uk', '*.com.au', '*.org.uk', '*.co.jp', '*.ne.jp', '*.gov.uk', '*.ac.uk', '*.github.io', '*.me.uk', '*.gr.jp', '*.uk.com', '*.cn.com', '*.id.au', '*.police.uk', '*.blogspot.com', '*.herokuapp.com', '*.k12.ca.us', '*.lib.ny.us', '*.ltd.co.im', '*.example.net']) {
-      expect(() => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_PUSH_HOSTS: bad })).toThrow(/SHELF_PUSH_HOSTS/);
+      expect(() => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_PUSH_HOSTS: bad })).toThrow(/PHILOBIBLOS_PUSH_HOSTS/);
     }
     // The server's push client and its routes use them.
     const looked: string[] = [];
@@ -167,8 +167,8 @@ describe('subscriptions', () => {
     await expect(c.push('https://push.example.org/d/1', Buffer.from('x'), { headers: {} })).rejects.toMatchObject({ reason: 'private-address' });
     expect(looked).toEqual(['push.example.org']);
     // A wildcard under a real domain (not a public suffix) stays.
-    expect(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_PUSH_HOSTS: '*.push.example.co.uk, *.notify.windows.com, *.example.co.uk' }).pushHosts).toEqual(['*.push.example.co.uk', '*.notify.windows.com', '*.example.co.uk']);
-    // SHELF_EGRESS=off: the push client sends nothing and looks nothing up.
+    expect(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_PUSH_HOSTS: '*.push.example.co.uk, *.notify.windows.com, *.example.co.uk' }).pushHosts).toEqual(['*.push.example.co.uk', '*.notify.windows.com', '*.example.co.uk']);
+    // PHILOBIBLOS_EGRESS=off: the push client sends nothing and looks nothing up.
     const off: string[] = [];
     const quiet = pushClient({ pushHosts: own.pushHosts, egress: false }, { resolve: async (h) => { off.push(h); return [{ address: '93.184.215.14', family: 4 }]; } });
     await expect(quiet.push('https://push.example.org/d/1', Buffer.from('x'), { headers: {} })).rejects.toMatchObject({ reason: 'off' });
@@ -293,7 +293,7 @@ describe('through the app', () => {
     const db = household();
     vapidKeys(db, cfg);
     subscribe(db, 'p_sam', sub());
-    const other = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') });
+    const other = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') });
     const { app: built } = await buildApp(other, db, { push: fakeEgress().e });
     const h = { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN };
     expect((await built.inject({ url: '/api/push/key', headers: h })).statusCode).toBe(503);

@@ -1,5 +1,5 @@
 {
-  "name": "@shelf/worker",
+  "name": "@philobiblos/worker",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@shelf/contracts": "workspace:*",
+    "@philobiblos/contracts": "workspace:*",
     "pdfjs-dist": "6.4.299",
     "sharp": "0.35.5"
   },

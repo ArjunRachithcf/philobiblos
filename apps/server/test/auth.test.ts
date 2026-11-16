@@ -21,7 +21,7 @@ let db: Db;
 let app: BuiltApp['app'];
 
 beforeEach(async () => {
-  cfg = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: mkdtempSync(join(tmpdir(), 'shelf-auth-')) });
+  cfg = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: mkdtempSync(join(tmpdir(), 'philobiblos-auth-')) });
   db = openDb(':memory:');
   app = (await buildApp(cfg, db, { webauthn: fakeWebAuthn() })).app;
 });
@@ -37,8 +37,8 @@ async function enrol(token: string, name?: string, credId = 'cred-1') {
   return post('/api/auth/enrol/verify', { challengeId, response: { id: credId, challenge: options.challenge }, label: 'Laptop' });
 }
 const cookieOf = (res: { cookies: { name: string; value: string }[] }) => {
-  const c = res.cookies.find((x) => x.name === 'shelf_session');
-  return c ? `shelf_session=${c.value}` : '';
+  const c = res.cookies.find((x) => x.name === 'philobiblos_session');
+  return c ? `philobiblos_session=${c.value}` : '';
 };
 const setupToken = () => readFileSync(join(cfg.dataDir, SETUP_FILE), 'utf8').trim().split('#')[1]!;
 
@@ -53,7 +53,7 @@ describe('first admin', () => {
     const res = await enrol(token, 'Alex');
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toMatchObject({ signedIn: true, person: { name: 'Alex', role: 'admin', signsIn: true } });
-    const raw = res.cookies.find((c) => c.name === 'shelf_session')!;
+    const raw = res.cookies.find((c) => c.name === 'philobiblos_session')!;
     expect(raw).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
     expect(existsSync(file)).toBe(false);
     expect((await app.inject({ url: '/api/auth/session', headers: { cookie: cookieOf(res) } })).json()).toMatchObject({ setupNeeded: false, signedIn: true });
@@ -135,7 +135,7 @@ describe('invites and the household', () => {
   it('an admin invites an adult, who enrols their own passkey; kids cannot be invited', async () => {
     const hh = household();
     const a = await buildApp(cfg, hh, { webauthn: fakeWebAuthn() });
-    const cookie = `shelf_session=${createSession(hh, 'p_alex').token}`;
+    const cookie = `philobiblos_session=${createSession(hh, 'p_alex').token}`;
     const inv = await a.app.inject({ method: 'POST', url: '/api/people/p_sam/invites', headers: { ...H, cookie } });
     expect(inv.statusCode).toBe(201);
     const token = inv.json().url.split('#')[1];
@@ -151,12 +151,12 @@ describe('invites and the household', () => {
   it('the last admin stays; nobody removes themselves; a kid loses passkeys and sessions', async () => {
     const hh = household();
     const a = await buildApp(cfg, hh, { webauthn: fakeWebAuthn() });
-    const cookie = `shelf_session=${createSession(hh, 'p_alex').token}`;
+    const cookie = `philobiblos_session=${createSession(hh, 'p_alex').token}`;
     const h = { ...H, cookie };
     expect((await a.app.inject({ method: 'PATCH', url: '/api/people/p_alex', headers: h, payload: { role: 'adult' } })).statusCode).toBe(409);
     expect((await a.app.inject({ method: 'DELETE', url: '/api/people/p_alex', headers: h })).statusCode).toBe(409);
     hh.insert(t.passkey).values({ id: 'cred-sam', personId: 'p_sam', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
-    const sam = `shelf_session=${createSession(hh, 'p_sam').token}`;
+    const sam = `philobiblos_session=${createSession(hh, 'p_sam').token}`;
     expect((await a.app.inject({ method: 'PATCH', url: '/api/people/p_sam', headers: h, payload: { role: 'kid', birthYear: 2019 } })).json()).toMatchObject({ role: 'kid', birthYear: 2019, signsIn: false });
     expect((await a.app.inject({ url: '/api/me', headers: { cookie: sam } })).statusCode).toBe(401);
     expect((await a.app.inject({ method: 'POST', url: '/api/people', headers: h, payload: { name: 'Pat', role: 'adult', handle: 'alex' } })).statusCode).toBe(409);
@@ -169,7 +169,7 @@ describe('invites and the household', () => {
   it('your last passkey stays', async () => {
     const hh = household();
     const a = await buildApp(cfg, hh, { webauthn: fakeWebAuthn() });
-    const h = { ...H, cookie: `shelf_session=${createSession(hh, 'p_alex').token}` };
+    const h = { ...H, cookie: `philobiblos_session=${createSession(hh, 'p_alex').token}` };
     expect((await a.app.inject({ method: 'DELETE', url: '/api/me/passkeys/pk1', headers: h })).statusCode).toBe(204);
     expect((await a.app.inject({ method: 'DELETE', url: '/api/me/passkeys/pk2', headers: h })).statusCode).toBe(409);
     expect((await a.app.inject({ method: 'DELETE', url: '/api/me/passkeys/nope', headers: h })).statusCode).toBe(404);
@@ -226,7 +226,7 @@ describe('passkeys after the first (review round 1)', () => {
   }
   const stale = (personId: string) => {
     const old = new Date(Date.now() - (FRESH_MINUTES + 1) * 60_000);
-    return `shelf_session=${createSession(hh, personId, null, old).token}`;
+    return `philobiblos_session=${createSession(hh, personId, null, old).token}`;
   };
 
   it('you add a passkey on another device with your own link; it needs a fresh sign-in', async () => {
@@ -256,9 +256,9 @@ describe('passkeys after the first (review round 1)', () => {
   });
 
   it('removing a passkey ends the sessions it signed in; sign out everywhere ends all', async () => {
-    const viaPk1 = `shelf_session=${createSession(hh, 'p_alex', 'pk1').token}`;
-    const viaPk2 = `shelf_session=${createSession(hh, 'p_alex', 'pk2').token}`;
-    const other = `shelf_session=${createSession(hh, 'p_alex', 'pk2').token}`;
+    const viaPk1 = `philobiblos_session=${createSession(hh, 'p_alex', 'pk1').token}`;
+    const viaPk2 = `philobiblos_session=${createSession(hh, 'p_alex', 'pk2').token}`;
+    const other = `philobiblos_session=${createSession(hh, 'p_alex', 'pk2').token}`;
     expect((await call('DELETE', '/api/me/passkeys/pk1', viaPk2)).statusCode).toBe(204);
     expect((await call('GET', '/api/me', viaPk1)).statusCode).toBe(401);
     expect((await call('GET', '/api/me', other)).statusCode).toBe(200);
@@ -334,7 +334,7 @@ describe('passkeys after the first (review round 1)', () => {
 });
 
 describe('recovery and the link file', () => {
-  it('shelf recover writes a one-time link for an admin, removed once used; the file survives a restart meanwhile', async () => {
+  it('philobiblos recover writes a one-time link for an admin, removed once used; the file survives a restart meanwhile', async () => {
     const hh = household();
     const a = (await buildApp(cfg, hh, { webauthn: fakeWebAuthn() })).app;
     expect(() => createRecoveryLink(hh, cfg, 'partner')).toThrow(/no admin/);
@@ -360,5 +360,66 @@ describe('recovery and the link file', () => {
     expect(lstatSync(file).isSymbolicLink()).toBe(false);
     expect(readFileSync(target, 'utf8')).toBe('keep\n');
     expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+});
+
+// philobiblos#30: the cookie was shelf_session before the rename. Read until 0.2.0 so the upgrade signs nobody out,
+// checked exactly as the new one is, and moved to the new name the first time it comes.
+describe('the session cookie\'s old name (until 0.2.0)', () => {
+  const setCookie = (res: { headers: Record<string, unknown> }) => ([] as string[]).concat((res.headers['set-cookie'] as string | string[] | undefined) ?? []);
+
+  it('an old cookie still signs in, and comes back as the new one with the same token and the old one cleared', async () => {
+    const hh = household();
+    const a = await buildApp(cfg, hh, { webauthn: fakeWebAuthn() });
+    const { token, expiresAt } = createSession(hh, 'p_alex', null, new Date(Date.now() - 2 * 86_400_000));
+    const res = await a.app.inject({ url: '/api/me', headers: { cookie: `shelf_session=${token}` } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ person: { id: 'p_alex' } });
+    const moved = res.cookies.find((c) => c.name === 'philobiblos_session')!;
+    expect(moved).toMatchObject({ value: token, httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
+    // what is left of the session, never a new 30 days
+    expect(moved.maxAge).toBeLessThanOrEqual(Math.ceil((expiresAt.getTime() - Date.now()) / 1000));
+    expect(moved.maxAge).toBeGreaterThan(27 * 86_400);
+    expect(setCookie(res).some((c) => /^shelf_session=;/.test(c) && /Max-Age=0|Expires=Thu, 01 Jan 1970/i.test(c))).toBe(true);
+    // /auth/session (the page's first call) moves it as well
+    const s = await a.app.inject({ url: '/api/auth/session', headers: { cookie: `shelf_session=${token}` } });
+    expect(s.json()).toMatchObject({ signedIn: true, person: { id: 'p_alex' } });
+    expect(s.cookies.find((c) => c.name === 'philobiblos_session')?.value).toBe(token);
+    await a.app.close();
+  });
+
+  it('an old cookie that names no live session signs nobody in, gets no new cookie, and is cleared', async () => {
+    const hh = household();
+    const a = await buildApp(cfg, hh, { webauthn: fakeWebAuthn() });
+    const res = await a.app.inject({ url: '/api/me', headers: { cookie: `shelf_session=${'A'.repeat(43)}` } });
+    expect(res.statusCode).toBe(401);
+    expect(res.cookies.find((c) => c.name === 'philobiblos_session')).toBeUndefined();
+    expect(setCookie(res).some((c) => /^shelf_session=;/.test(c))).toBe(true);
+    await a.app.close();
+  });
+
+  it('with both cookies, the new name\'s is the one read', async () => {
+    const hh = household();
+    const a = await buildApp(cfg, hh, { webauthn: fakeWebAuthn() });
+    const alex = createSession(hh, 'p_alex').token, sam = createSession(hh, 'p_sam').token;
+    const res = await a.app.inject({ url: '/api/me', headers: { cookie: `shelf_session=${alex}; philobiblos_session=${sam}` } });
+    expect(res.json()).toMatchObject({ person: { id: 'p_sam' } });
+    // a dead new cookie does not fall back to a live old one
+    const dead = await a.app.inject({ url: '/api/me', headers: { cookie: `shelf_session=${alex}; philobiblos_session=${'B'.repeat(43)}` } });
+    expect(dead.statusCode).toBe(401);
+    await a.app.close();
+  });
+
+  it('signing out with an old cookie ends its session and clears both names', async () => {
+    const hh = household();
+    const a = await buildApp(cfg, hh, { webauthn: fakeWebAuthn() });
+    const { token } = createSession(hh, 'p_alex');
+    const out = await a.app.inject({ method: 'POST', url: '/api/auth/sign-out', headers: { ...H, cookie: `shelf_session=${token}` } });
+    expect(out.statusCode).toBe(204);
+    expect(sessionPerson(hh, token)).toBeNull();
+    const cleared = setCookie(out).map((c) => c.split('=')[0]);
+    expect(cleared).toEqual(expect.arrayContaining(['philobiblos_session', 'shelf_session']));
+    expect((await a.app.inject({ url: '/api/me', headers: { cookie: `shelf_session=${token}` } })).statusCode).toBe(401);
+    await a.app.close();
   });
 });

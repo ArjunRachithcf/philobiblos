@@ -99,12 +99,12 @@ describe('quotes: the three layouts, and only the bookshop\'s own lines', () => 
   });
 
   it.each([
-    ['a price Shelf cannot place', 'Title: Value Beyond Price\nPrice: CHF 18.90\nSpecial offer this week: CHF 5.00 off', 'a price Shelf cannot place'],
+    ['a price Philobiblos cannot place', 'Title: Value Beyond Price\nPrice: CHF 18.90\nSpecial offer this week: CHF 5.00 off', 'a price Philobiblos cannot place'],
     ['a book without a price or a status', 'Author: Mira Okafor\nTitle: Value Beyond Price\nDelivery due: 3 days', 'a book with neither a price nor a status'],
     ['two prices for one book', 'Title: Value Beyond Price\nPrice: CHF 18.90\nPrice: CHF 9.90', 'two price lines for one book'],
-    ['an ISBN that is not one', 'Title: Value Beyond Price\nISBN: 12345\nPrice: CHF 18.90', 'an ISBN Shelf cannot read'],
+    ['an ISBN that is not one', 'Title: Value Beyond Price\nISBN: 12345\nPrice: CHF 18.90', 'an ISBN Philobiblos cannot read'],
     ['a block with no title', 'Author: Mira Okafor\nPrice: CHF 18.90', 'a book without a title'],
-    ['a bullet with an amount it cannot read', '- Value Beyond Price CHF 18.90', 'a price Shelf cannot place'],
+    ['a bullet with an amount it cannot read', '- Value Beyond Price CHF 18.90', 'a price Philobiblos cannot place'],
     ['no books at all', 'Dear customer,\nwe will be in touch.', 'no books'],
   ])('fails closed on %s: unknown layout, with the parser\'s version', (_n, text, reason) => {
     expect(parseQuote(text, [])).toEqual({ kind: 'unknown_layout', parser: PARSERS.quote, expected: 'bookshop_quote', reason });
@@ -142,8 +142,8 @@ describe('the shop\'s order mails and invoices', () => {
     expect(parseShop('online_order', '4400123', 'Kalender Wall Calendar von Someone | Fr. 12.00', [])).toMatchObject({ kind: 'unknown_layout', reason: 'no articles' });
   });
 
-  it('an article of a kind Shelf does not know, or an amount it cannot place: fails closed', () => {
-    expect(parseShop('online_order', '1', 'Gutschein Gift card von Shop | Fr. 50.00', [])).toMatchObject({ kind: 'unknown_layout', parser: PARSERS.online, reason: 'a price Shelf cannot place' });
+  it('an article of a kind Philobiblos does not know, or an amount it cannot place: fails closed', () => {
+    expect(parseShop('online_order', '1', 'Gutschein Gift card von Shop | Fr. 50.00', [])).toMatchObject({ kind: 'unknown_layout', parser: PARSERS.online, reason: 'a price Philobiblos cannot place' });
     expect(parseShop('online_order', '1', 'Buch The Quiet Hedgehog von Lena Paulsen Fr. 16.90', [])).toMatchObject({ kind: 'unknown_layout' });
   });
 
@@ -165,7 +165,7 @@ describe('the shop\'s order mails and invoices', () => {
 
   it.each([
     ['a total that is not the rows\' sum', ROWS.map((r) => (r[0] === 'Total' ? ['Total', '99.99 CHF'] : r)), false, 'the stated total is not the sum of the rows'],
-    ['a book row it cannot read', [...ROWS.slice(0, 2), ['9780000000002', 'The Long Tide of Markets', '19.90']], false, 'a book row Shelf cannot read'],
+    ['a book row it cannot read', [...ROWS.slice(0, 2), ['9780000000002', 'The Long Tide of Markets', '19.90']], false, 'a book row Philobiblos cannot read'],
     ['a PDF cut short by the worker\'s limits', ROWS, true, 'the PDF was cut short'],
     ['no book rows', [['Rechnung'], ['Total', '0.00 CHF']], false, 'no book rows'],
   ])('fails closed on %s', (_n, rows, truncated, reason) => {
@@ -517,7 +517,7 @@ describe('the delivery address never reaches a kept field', () => {
   });
 });
 
-describe('shelf#15: the round-3 nits', () => {
+describe('philobiblos#15: the round-3 nits', () => {
   it('a shop line whose EAN is no ISBN is notBook, and never matches a book by its title', async () => {
     const text = 'Buch The Long Tide of Markets von Mira Okafor EAN: 4001234567890 | Fr. 19.90\nBuch The Quiet Hedgehog von Lena Paulsen EAN: 9780000000019 | Fr. 16.90';
     const p = parseShop('online_order', '4400123', text, []);

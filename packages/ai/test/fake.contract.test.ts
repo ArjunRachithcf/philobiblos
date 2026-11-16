@@ -1,6 +1,6 @@
 // The fake provider's outputs, and the fixture in contracts/ai/, validate against contracts/ai/*.schema.json.
 import { describe, expect, it } from 'vitest';
-import { validateAiOutput, AI_SCHEMAS } from '@shelf/contracts';
+import { validateAiOutput, AI_SCHEMAS } from '@philobiblos/contracts';
 import fixture from '../../../contracts/ai/fixture.extract_titles.json' with { type: 'json' };
 import { FakeProvider, EXPLAIN_MAX } from '../src';
 

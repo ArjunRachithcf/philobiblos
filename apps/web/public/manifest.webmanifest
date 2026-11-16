@@ -1,6 +1,6 @@
 {
-  "name": "Shelf",
-  "short_name": "Shelf",
+  "name": "Philobiblos: what to read next",
+  "short_name": "Philobiblos",
   "start_url": "/month",
   "scope": "/",
   "display": "standalone",

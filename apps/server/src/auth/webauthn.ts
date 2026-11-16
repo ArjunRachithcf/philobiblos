@@ -10,7 +10,7 @@ import type { Config } from '../config';
 export interface NewCredential { id: string; publicKey: Uint8Array; counter: number; transports: string[]; backedUp: boolean }
 export interface StoredCredential { id: string; publicKey: Uint8Array; counter: number; transports: string[] }
 
-/** The WebAuthn operations Shelf needs; tests swap in a fake, production uses @simplewebauthn/server. */
+/** The WebAuthn operations Philobiblos needs; tests swap in a fake, production uses @simplewebauthn/server. */
 export interface WebAuthn {
   registrationOptions(i: { userId: string; userName: string; exclude: StoredCredential[] }): Promise<{ challenge: string; options: object }>;
   verifyRegistration(i: { response: unknown; challenge: string }): Promise<NewCredential | null>;
@@ -22,11 +22,17 @@ export interface WebAuthn {
 
 const transports = (t: string[]) => t as AuthenticatorTransport[];
 
+/**
+ * The name a passkey prompt shows (it was "Shelf" before philobiblos#30). Only the name: the RP ID stays the origin's
+ * host (config.ts rpId), which is what a passkey is bound to, so the passkeys made under the old name keep signing in.
+ */
+export const RP_NAME = 'Philobiblos';
+
 export function simpleWebAuthn(cfg: Pick<Config, 'origin' | 'rpId'>): WebAuthn {
   return {
     async registrationOptions({ userId, userName, exclude }) {
       const options = await generateRegistrationOptions({
-        rpName: 'Shelf', rpID: cfg.rpId, userName, userDisplayName: userName,
+        rpName: RP_NAME, rpID: cfg.rpId, userName, userDisplayName: userName,
         userID: new TextEncoder().encode(userId),
         attestationType: 'none',
         authenticatorSelection: { residentKey: 'required', userVerification: 'required' },

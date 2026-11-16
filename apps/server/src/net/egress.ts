@@ -5,12 +5,12 @@
 // - Only allowlisted hosts, by name; https only, unless a rule says otherwise (Ollama on the home network).
 // - The name is resolved here and the connection goes to the address that was checked (no second lookup a DNS
 //   rebinding could change); a public host must resolve to public addresses only, so a poisoned or hostile DNS
-//   answer cannot point Shelf at the router, the HomersLab edge or a container next to it.
+//   answer cannot point Philobiblos at the router, the HomersLab edge or a container next to it.
 // - Redirects: at most 3, to the same host, or to a host the rule names as a redirect target (covers only); never to
 //   another scheme.
 // - No compression (a decompression bomb is not possible), a byte limit counted as the body arrives, one deadline for
 //   the whole exchange including redirects, and the content type checked against what the caller expects.
-// - No cookies, no credentials, a User-Agent that says what Shelf is and nothing about the household.
+// - No cookies, no credentials, a User-Agent that says what Philobiblos is and nothing about the household.
 import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
 import http from 'node:http';
 import https from 'node:https';
@@ -39,7 +39,7 @@ export const LIMITS: Record<Want, number> = { json: 1 << 20, html: 1 << 20, imag
 export const TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
 const TYPES: Record<Want, RegExp> = { json: /^application\/(?:[a-z.+-]*\+)?json$/, html: /^text\/html$/, image: /^image\/(?:jpeg|png|webp|gif)$/ };
-export const USER_AGENT = `Shelf/${VERSION} (self-hosted household reading app; https://github.com/ArjunRachithcf/shelf)`;
+export const USER_AGENT = `Philobiblos/${VERSION} (self-hosted household reading app; https://github.com/ArjunRachithcf/philobiblos)`;
 
 export interface Response { status: number; type: string; body: Buffer; url: string }
 
@@ -65,7 +65,7 @@ export interface Egress {
   push(url: string, body: Buffer, opts: { headers: Record<string, string> }): Promise<Response>;
 }
 
-/** The largest request body Shelf sends (an AI job's images, base64, with its prompt). */
+/** The largest request body Philobiblos sends (an AI job's images, base64, with its prompt). */
 export const POST_MAX = 32 << 20;
 
 /** What may be reached: the manifest's egress list (contracts/homerslab-app.yaml), Ollama if configured, Claude on opt-in. */
@@ -123,7 +123,7 @@ const systemResolve: Resolve = (host) => new Promise((ok, fail) => dnsLookup(hos
 
 export interface EgressOptions {
   rules: Rule[];
-  /** false: nothing leaves (SHELF_EGRESS=off). */
+  /** false: nothing leaves (PHILOBIBLOS_EGRESS=off). */
   enabled?: boolean;
   resolve?: Resolve;
   timeoutMs?: number;
@@ -180,7 +180,7 @@ export function createEgress(o: EgressOptions): Egress {
   }
 
   async function exchange(url: string, want: Want | 'push', headers: Record<string, string>, deadline: number, body?: Buffer): Promise<Response> {
-      if (o.enabled === false) throw new EgressError('off', 'outgoing requests are turned off (SHELF_EGRESS=off)');
+      if (o.enabled === false) throw new EgressError('off', 'outgoing requests are turned off (PHILOBIBLOS_EGRESS=off)');
       let u = new URL(url);
       const first = ruleFor(u);
       if (!first || u.username || u.password) throw new EgressError('not-allowed', `${u.protocol}//${u.host} is not on the egress allowlist`);

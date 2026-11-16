@@ -56,10 +56,10 @@ const worker = (answer: (b: Uint8Array) => MediaOutcome | 'unavailable' = () => 
 };
 
 async function app(o: { workDir?: boolean; media?: typeof runMediaJob; db?: Db } = {}) {
-  const data = mkdtempSync(join(tmpdir(), 'shelf-inbox-'));
+  const data = mkdtempSync(join(tmpdir(), 'philobiblos-inbox-'));
   dirs.push(data);
   const db = o.db ?? household();
-  const cfg = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: data, SHELF_SEALING_KEY: TEST_SEALING_KEY, ...(o.workDir === false ? {} : { SHELF_WORK_DIR: join(data, 'work') }) });
+  const cfg = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: data, PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, ...(o.workDir === false ? {} : { PHILOBIBLOS_WORK_DIR: join(data, 'work') }) });
   const built = await buildApp(cfg, db, { webauthn: undefined, media: o.media ?? worker().media, shareRetryMs: 60_000 });
   apps.push(built);
   return { ...built, db, data, alex: sessionCookie(db, 'p_alex'), sam: sessionCookie(db, 'p_sam') };
@@ -153,7 +153,7 @@ describe('share tokens: high-entropy, hashed, compared in constant time, scoped,
 });
 
 describe('POST /shares: CSRF, limits, types by their bytes, and the media worker', () => {
-  it('with a session, only from Shelf\'s Origin', async () => {
+  it('with a session, only from Philobiblos\'s Origin', async () => {
     const a = await app();
     for (const origin of ['https://evil.example', undefined]) {
       expect((await share(a, [{ name: 'url', value: 'https://example.org/p' }], { cookie: a.alex, ...(origin ? { origin } : {}) })).statusCode).toBe(403);
@@ -262,7 +262,7 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
     expect(row).toMatchObject({ caption: 'A caption with a book', url: 'https://example.org/p/9', mediaTotal: 2, mediaRefused: 1 });
   });
 
-  it('all refused: the share failed (Shelf\'s words), and nothing of it is kept', async () => {
+  it('all refused: the share failed (Philobiblos\'s words), and nothing of it is kept', async () => {
     const a = await app({ media: worker(() => ({ id: 'j', ok: false, error: 'unreadable' })).media });
     const { id } = (await share(a, [{ name: 'media', file: JPEG }])).json();
     await until(() => a.db.select().from(t.share).where(eq(t.share.id, id)).get()!.status === 'failed');
@@ -557,11 +557,11 @@ describe('the Inbox', () => {
     const a = await withMail();
     const now = new Date().toISOString();
     a.db.insert(t.mailSeen).values([
-      { messageId: '<f1@orellfuessli.ch>', kind: 'unknown_layout', parserVersion: 'm3d-1/quote-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ subject: 'Re: Book order, November 2026', expected: 'bookshop_quote', reason: 'a price Shelf cannot place' }) },
+      { messageId: '<f1@orellfuessli.ch>', kind: 'unknown_layout', parserVersion: 'm3d-1/quote-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ subject: 'Re: Book order, November 2026', expected: 'bookshop_quote', reason: 'a price Philobiblos cannot place' }) },
       { messageId: '<w1@orellfuessli.ch>', kind: 'pending_pdf', parserVersion: 'm3d-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ subject: 'Ihre Rechnung', tries: 2 }) },
     ]).run();
     const items = await list(a);
-    expect(items.find((i) => i.kind === 'mail_failed')).toMatchObject({ title: 'Re: Book order, November 2026', mail: { reason: 'a price Shelf cannot place', expected: 'bookshop_quote' } });
+    expect(items.find((i) => i.kind === 'mail_failed')).toMatchObject({ title: 'Re: Book order, November 2026', mail: { reason: 'a price Philobiblos cannot place', expected: 'bookshop_quote' } });
     expect(items.find((i) => i.kind === 'mail_waiting')).toMatchObject({ mail: { reason: 'its PDF waits for the media worker (tried 2 times)' } });
     const id = mailItemId('<f1@orellfuessli.ch>');
     expect((await post(a, `/api/inbox/${id}/dismiss`)).statusCode).toBe(204);

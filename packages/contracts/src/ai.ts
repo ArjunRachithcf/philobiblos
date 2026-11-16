@@ -52,7 +52,7 @@ export type Layer = 'intro' | 'core' | 'deep' | 'counterpoint';
 export type BookRef = components['schemas']['BookRef'];
 
 export interface Image {
-  /** Path under SHELF_DATA_DIR, or a data: URL in tests. */
+  /** Path under PHILOBIBLOS_DATA_DIR, or a data: URL in tests. */
   path: string;
   mimeType: string;
   /** Video frames: the offset in the video, in seconds. */

@@ -1,6 +1,6 @@
-// Shelf's web app: sign-in, the one-time links, the household, this month, the inbox and phone share, the brain and its proposals,
+// Philobiblos's web app: sign-in, the one-time links, the household, this month, the inbox and phone share, the brain and its proposals,
 // the library, the backlog and the budget. A screen never calls the network
-// beyond Shelf's own API (ADR 0003).
+// beyond Philobiblos's own API (ADR 0003).
 import { useCallback, useEffect, useState } from 'react';
 import { api, message, type AuthSession, type Me } from './api';
 import { Enrol, takeToken } from './pages/Enrol';
@@ -50,7 +50,7 @@ export function App() {
     go('/');
   };
 
-  if (error) return <main className="auth" id="main"><h1 className="large-title">Shelf</h1><Notice kind="error" title="Shelf did not answer.">{error}</Notice></main>;
+  if (error) return <main className="auth" id="main"><h1 className="large-title">Philobiblos</h1><Notice kind="error" title="Philobiblos did not answer.">{error}</Notice></main>;
   if (!session) return <main className="auth" id="main" aria-busy="true"><p className="sr-only">Loading</p></main>;
   if (route === '/setup' || route === '/enrol') return <Enrol kind={route === '/setup' ? 'setup' : 'enrol'} token={token} onSignedIn={signedIn} />;
   if (!session.signedIn) return <SignIn session={session} onSignedIn={signedIn} />;
@@ -60,8 +60,8 @@ export function App() {
       <a className="sr-only skip" href="#main">Skip to the page</a>
       <header className="bar glass">
         <div className="page bar-inner">
-          <a className="brand-name" href="/" onClick={(e) => { e.preventDefault(); go('/household'); }}>Shelf</a>
-          <nav aria-label="Shelf">
+          <a className="brand-name" href="/" onClick={(e) => { e.preventDefault(); go('/household'); }}>Philobiblos</a>
+          <nav aria-label="Philobiblos">
             <a className="nav-link" href="/household" aria-current={route === '/household' || route === '/' ? 'page' : undefined}
               onClick={(e) => { e.preventDefault(); go('/household'); }}>Household</a>
             {(me?.person?.role === 'kid' ? NAV_KID : NAV).map(([to, label]) => (

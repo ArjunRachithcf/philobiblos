@@ -1,9 +1,9 @@
 // The prompt of a job (contracts/ai-plugin.md): the system message is the job's versioned prompt file, the user message
 // the input, built here and nowhere else.
 //
-// - `<input>` holds what Shelf itself decides (numbers, enums, its fixed lists, its own settings) as JSON, never a
+// - `<input>` holds what Philobiblos itself decides (numbers, enums, its fixed lists, its own settings) as JSON, never a
 //   text a model or a person wrote: idea names are untrusted too (a model may have proposed one a person then confirmed).
-// - Every text that came from outside Shelf (a shared post's caption and link, a book's title and authors as a mail, a
+// - Every text that came from outside Philobiblos (a shared post's caption and link, a book's title and authors as a mail, a
 //   PDF row, a share or a web page gave them, a blurb from Open Library, takeaways) goes in its own
 //   `<untrusted source="…">` block, as JSON with `<` and `>` escaped: nothing inside can end the block or open another,
 //   whatever it says. The prompt file tells the model that both blocks are data, never instructions.

@@ -1,26 +1,26 @@
 # HomersLab catalog manifest (shape to align with HomersLab's feedstock format when it is final)
-id: shelf
-name: Shelf
+id: philobiblos
+name: Philobiblos
 tagline: Decide what to read next, and order it within your family's budget
 category: Books
 icon: icon.svg
 version: 0.1.0
-image: ghcr.io/<owner>/shelf:0.1.0@sha256:<digest>   # placeholders until the first release; scripts/check-release.sh refuses them
+image: ghcr.io/<owner>/philobiblos:0.1.0@sha256:<digest>   # placeholders until the first release; scripts/check-release.sh refuses them
 ports: [{ container: 8080, protocol: http, public: false }]
 volumes: [{ name: data, mount: /data, backup: true, description: SQLite database, covers, share media }]
 env:
-  SHELF_MODE: homerslab
-  SHELF_DATA_DIR: /data
+  PHILOBIBLOS_MODE: homerslab
+  PHILOBIBLOS_DATA_DIR: /data
   # The household's zone at the first start only; Settings holds it after (the one zone for "this month").
-  SHELF_TZ: Europe/Zurich
-  # Not set here: HomersLab gives SHELF_ORIGIN, SHELF_TRUSTED_PROXY (the edge's address on the app network; HomersLab
+  PHILOBIBLOS_TZ: Europe/Zurich
+  # Not set here: HomersLab gives PHILOBIBLOS_ORIGIN, PHILOBIBLOS_TRUSTED_PROXY (the edge's address on the app network; HomersLab
   # ADR 0020's per-app firewall makes it mean something) and, once its edge keeps identity.edge's promise,
-  # SHELF_EDGE_IDENTITY. Shelf refuses to start in homerslab mode without all three (ADR 0010).
+  # PHILOBIBLOS_EDGE_IDENTITY. Philobiblos refuses to start in homerslab mode without all three (ADR 0010).
 identity:
-  # Required of HomersLab, not set by Shelf: the edge deletes every X-HomersLab-* header a client sends and sets the
-  # three below itself (HomersLab #236). HomersLab answers by setting SHELF_EDGE_IDENTITY to this value.
+  # Required of HomersLab, not set by Philobiblos: the edge deletes every X-HomersLab-* header a client sends and sets the
+  # three below itself (HomersLab #236). HomersLab answers by setting PHILOBIBLOS_EDGE_IDENTITY to this value.
   edge: homerslab-v1
-  # All three are trusted only from SHELF_TRUSTED_PROXY; a person is added to Shelf the first time HomersLab sends
+  # All three are trusted only from PHILOBIBLOS_TRUSTED_PROXY; a person is added to Philobiblos the first time HomersLab sends
   # them, with exactly the role HomersLab sends (admin | adult | kid; anything else: 403), and their name and role
   # follow HomersLab on every request.
   forwarded_header: X-HomersLab-Person     # stable person id
@@ -29,30 +29,30 @@ identity:
   household_api: true                      # later: kids' birth years (not yet defined by HomersLab)
 audience: adults                           # adults full access; kids: no access (adults act for them)
 secrets:
-  - { key: SHELF_SEALING_KEY, file: true, description: Key that seals the delivery address (outside the database) }
-  - { key: SHELF_IMAP_PASSWORD, optional: true, description: App password of the Shelf-only mailbox (IMAP over TLS, read-only) }
+  - { key: PHILOBIBLOS_SEALING_KEY, file: true, description: Key that seals the delivery address (outside the database) }
+  - { key: PHILOBIBLOS_IMAP_PASSWORD, optional: true, description: App password of the Philobiblos-only mailbox (IMAP over TLS, read-only) }
   - { key: ANTHROPIC_API_KEY, optional: true, description: Claude provider, only after an explicit opt-in in Settings }
 config:
-  - { key: SHELF_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
-  - { key: SHELF_IMAP_HOST, optional: true, description: IMAP host of the Shelf-only mailbox (port 993, TLS only) }
-  - { key: SHELF_IMAP_USER, optional: true, description: Its user name }
-  - { key: SHELF_IMAP_FOLDER, optional: true, description: 'The folder the bookshop''s mail arrives in (default INBOX)' }
-  - { key: SHELF_MAIL_RECIPIENTS, optional: true, description: 'The household''s addresses the bookshop writes to, comma-separated; mail to anyone else is not taken' }
-  - { key: SHELF_MAIL_ARC_SEALERS, optional: true, description: 'Mail providers whose ARC seal vouches for a forward that broke the bookshop''s DKIM (default google.com)' }
+  - { key: PHILOBIBLOS_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
+  - { key: PHILOBIBLOS_IMAP_HOST, optional: true, description: IMAP host of the Philobiblos-only mailbox (port 993, TLS only) }
+  - { key: PHILOBIBLOS_IMAP_USER, optional: true, description: Its user name }
+  - { key: PHILOBIBLOS_IMAP_FOLDER, optional: true, description: 'The folder the bookshop''s mail arrives in (default INBOX)' }
+  - { key: PHILOBIBLOS_MAIL_RECIPIENTS, optional: true, description: 'The household''s addresses the bookshop writes to, comma-separated; mail to anyone else is not taken' }
+  - { key: PHILOBIBLOS_MAIL_ARC_SEALERS, optional: true, description: 'Mail providers whose ARC seal vouches for a forward that broke the bookshop''s DKIM (default google.com)' }
   - { key: OLLAMA_URL, optional: true, description: The local Ollama (the default AI provider) }
 network:
-  # Enforced by Shelf's own HTTP client as well (ADR 0009): nothing else is reachable from the app.
-  egress: [www.orellfuessli.ch, openlibrary.org, covers.openlibrary.org, '${SHELF_IMAP_HOST}:993', '${OLLAMA_URL}']
+  # Enforced by Philobiblos's own HTTP client as well (ADR 0009): nothing else is reachable from the app.
+  egress: [www.orellfuessli.ch, openlibrary.org, covers.openlibrary.org, '${PHILOBIBLOS_IMAP_HOST}:993', '${OLLAMA_URL}']
   # Only as redirect targets of covers.openlibrary.org (https, at most two hops, src/net/egress.ts): the Internet Archive
   # keeps Open Library's covers on archive.org and its data nodes ia<number>.us.archive.org.
   egress_redirects: [archive.org, 'ia<number>.us.archive.org']
   # Web Push (Settings → Notifications): the push services, https on 443, through the push client alone; only the
   # encrypted "plan ready" message, once a month, to the devices adults added. The default list (src/push/hosts.ts) is the
-  # browsers' services; SHELF_PUSH_HOSTS replaces it (host names or *.domain), so no vendor is built in.
+  # browsers' services; PHILOBIBLOS_PUSH_HOSTS replaces it (host names or *.domain), so no vendor is built in.
   push_egress: [fcm.googleapis.com, updates.push.services.mozilla.com, web.push.apple.com, '*.notify.windows.com']
   optional_egress: [api.anthropic.com]
   optional_egress_note: api.anthropic.com only when the household opts in to Claude in Settings; with Ollama nothing leaves for AI.
-# NEEDS HomersLab (shelf#8): the media worker is a second container from the same image, `node /app/worker/dist/main.js`,
+# NEEDS HomersLab (philobiblos#8): the media worker is a second container from the same image, `node /app/worker/dist/main.js`,
 # as its own user in the app's group, with no network, a read-only root, no capabilities, 768 MB and 64 processes,
 # sharing only the job volume with the app: its in/ read-only at /work/in, its out/ at /work/out (docker-compose.yml). Until HomersLab runs it, media jobs answer "unavailable"; the app never
 # decodes media itself.

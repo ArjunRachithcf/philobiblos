@@ -1,4 +1,4 @@
-// The Shelf-only mailbox over IMAP (ADR 0007, contracts/connectors.md): the only IMAP connection in Shelf, and only
+// The Philobiblos-only mailbox over IMAP (ADR 0007, contracts/connectors.md): the only IMAP connection in Philobiblos, and only
 // these operations. TLS from the first byte on port 993 (no STARTTLS, so nothing to downgrade), the certificate and
 // the host name verified, TLS 1.2 or newer. The folder is opened with EXAMINE (read-only), and the reader only lists
 // UIDs (UID SEARCH) and sizes and reads a message's bytes with BODY.PEEK: it never stores a flag, moves, copies, deletes, expunges

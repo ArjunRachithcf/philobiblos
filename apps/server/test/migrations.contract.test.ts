@@ -111,7 +111,7 @@ describe('upgrades', () => {
 
   it('a v1 database with rows migrates to the latest, keeping them', () => {
     // The migrations folder as it was at v1: only 0000 in the journal.
-    const v1Dir = join(mkdtempSync(join(tmpdir(), 'shelf-mig-')), 'drizzle');
+    const v1Dir = join(mkdtempSync(join(tmpdir(), 'philobiblos-mig-')), 'drizzle');
     cpSync(drizzleDir, v1Dir, { recursive: true });
     const journal = JSON.parse(readFileSync(join(v1Dir, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
     writeFileSync(join(v1Dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.slice(0, 1) }));

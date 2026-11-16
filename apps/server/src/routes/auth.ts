@@ -6,7 +6,8 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { findInvite, openRecovery, removeSetupLink, spendInvites, useInvite } from '../auth/invites';
-import { SESSION_COOKIE, SESSION_DAYS, cookieOptions, createSession, endSession, sessionPerson } from '../auth/sessions';
+import { clearSessionCookies, endRequestSessions, requestSession } from '../auth/cookie';
+import { LEGACY_SESSION_COOKIE, SESSION_COOKIE, SESSION_DAYS, cookieOptions, createSession } from '../auth/sessions';
 import type { Challenges, WebAuthn } from '../auth/webauthn';
 import { getPerson, setupNeeded, suggestHandle, view } from '../household/people';
 import { resolveIdentity } from '../identity';
@@ -21,16 +22,17 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
   };
   // A sign-in replaces this browser's earlier session, and remembers the passkey (removing it ends the session).
   const signIn = (req: FastifyRequest, reply: FastifyReply, personId: string, passkeyId: string) => {
-    endSession(db, req.cookies?.[SESSION_COOKIE]);
+    endRequestSessions(db, req);
     const { token } = createSession(db, personId, passkeyId);
     void reply.setCookie(SESSION_COOKIE, token, cookieOptions(SESSION_DAYS * 86_400));
+    if (req.cookies?.[LEGACY_SESSION_COOKIE] !== undefined) void reply.clearCookie(LEGACY_SESSION_COOKIE, { path: '/' });
     return { mode: cfg.mode, signedIn: true, setupNeeded: false, person: view(db, getPerson(db, personId)!) };
   };
 
-  app.get('/auth/session', { config: { auth: 'public' } }, async (req: FastifyRequest) => {
+  app.get('/auth/session', { config: { auth: 'public' } }, async (req: FastifyRequest, reply: FastifyReply) => {
     const id = cfg.mode === 'standalone' ? null : resolveIdentity(cfg, req.socket.remoteAddress, req.headers);
     const personId = cfg.mode === 'standalone'
-      ? sessionPerson(db, req.cookies?.[SESSION_COOKIE])
+      ? requestSession(db, req, reply)?.personId ?? null
       : id ? db.select().from(t.person).where(eq(t.person.externalId, id.externalId)).get()?.id ?? null : null;
     const p = personId ? getPerson(db, personId) : undefined;
     const ok = p && p.role !== 'kid';
@@ -130,7 +132,7 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
   });
 
   app.post('/auth/sign-out', { config: { auth: 'public' } }, async (req, reply) => {
-    endSession(db, req.cookies?.[SESSION_COOKIE]);
-    return reply.clearCookie(SESSION_COOKIE, { path: '/' }).code(204).send();
+    endRequestSessions(db, req);
+    return clearSessionCookies(reply).code(204).send();
   });
 }

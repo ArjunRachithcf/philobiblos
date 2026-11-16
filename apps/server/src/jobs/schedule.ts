@@ -49,12 +49,12 @@ export const DEFAULT_CYCLE: Cycle = { day: 1, time: '20:17', timezone: 'UTC' };
 export class CycleError extends Error {}
 
 /**
- * The household's settings row, made at the server's first start with SHELF_TZ as the household's zone. That is the only
- * time SHELF_TZ is read: from then on the household's zone (Settings, admins change it) is the one zone for the monthly
+ * The household's settings row, made at the server's first start with PHILOBIBLOS_TZ as the household's zone. That is the only
+ * time PHILOBIBLOS_TZ is read: from then on the household's zone (Settings, admins change it) is the one zone for the monthly
  * refresh, "this month", the plan and its window.
  */
 export function initHousehold(db: Db, timezone: string): void {
-  if (!validTimeZone(timezone)) throw new CycleError(`SHELF_TZ: a time zone such as Europe/Zurich`);
+  if (!validTimeZone(timezone)) throw new CycleError(`PHILOBIBLOS_TZ: a time zone such as Europe/Zurich`);
   db.insert(t.householdSettings).values({ id: 1, timezone }).onConflictDoNothing().run();
 }
 
@@ -201,7 +201,7 @@ export function finish(db: Db, c: Claim, o: Outcome, runId: string, now = new Da
 }
 
 /**
- * After a restart: a claim this server held did not finish. Free for its retry now (one Shelf server per database, as
+ * After a restart: a claim this server held did not finish. Free for its retry now (one Philobiblos server per database, as
  * jobs/run.ts closeInterrupted assumes); the attempt it used counts.
  */
 export function releaseInterrupted(db: Db, now = new Date()): void {

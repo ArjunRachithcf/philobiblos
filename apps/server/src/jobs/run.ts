@@ -1,5 +1,5 @@
 // Jobs run in the background, one of each kind at a time, each logged in job_run (started, finished, how it went).
-// The detail is Shelf's own words (counts and the egress client's reasons), never a secret or a page's text.
+// The detail is Philobiblos's own words (counts and the egress client's reasons), never a secret or a page's text.
 import { eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';

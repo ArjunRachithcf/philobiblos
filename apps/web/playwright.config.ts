@@ -1,5 +1,5 @@
 // End-to-end tests: the built server and web app, a fresh data folder each run, Chromium with a virtual
-// authenticator (real WebAuthn), and axe on every screen. Run: pnpm --filter @shelf/web e2e (after pnpm build).
+// authenticator (real WebAuthn), and axe on every screen. Run: pnpm --filter @philobiblos/web e2e (after pnpm build).
 import { defineConfig, devices } from '@playwright/test';
 import { PORT, SEEDED_PORT } from './e2e/env';
 

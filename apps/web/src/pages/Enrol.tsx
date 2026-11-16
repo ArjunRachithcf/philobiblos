@@ -37,12 +37,12 @@ export function Enrol({ kind, token, onSignedIn }: { kind: 'setup' | 'enrol'; to
     } catch (err) { setError(message(err)); } finally { setBusy(false); }
   };
 
-  const title = kind === 'setup' ? 'Set up Shelf' : invitee ? `Welcome, ${invitee}` : 'Make your passkey';
+  const title = kind === 'setup' ? 'Set up Philobiblos' : invitee ? `Welcome, ${invitee}` : 'Make your passkey';
   return (
     <main className="auth" id="main">
       <PageHead title={title} sub={kind === 'setup'
         ? 'You become the household’s admin. Your passkey signs you in; there is no password.'
-        : 'A passkey on this device signs you in to the household’s Shelf; there is no password.'} />
+        : 'A passkey on this device signs you in to the household’s Philobiblos; there is no password.'} />
       <form className="stack" onSubmit={go} noValidate>
         {kind === 'setup' && (
           <div className="field">

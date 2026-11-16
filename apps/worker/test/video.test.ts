@@ -1,22 +1,22 @@
 // Video frames in the media worker (ADR 0009, apps/worker/src/video.ts) against hostile files. Every video here is
 // made by the test from ffmpeg's own test sources (nothing real, nothing committed), with a full ffmpeg as the maker
-// (SHELF_FIXTURE_FFMPEG, default `ffmpeg` on PATH); what reads them is the worker's own build in apps/worker/bin
+// (PHILOBIBLOS_FIXTURE_FFMPEG, default `ffmpeg` on PATH); what reads them is the worker's own build in apps/worker/bin
 // (scripts/video-test.sh builds it and runs this file; CI's `video` job too). Without the build these tests are
-// skipped, unless SHELF_VIDEO_TESTS=required, which makes a missing build a failure.
+// skipped, unless PHILOBIBLOS_VIDEO_TESTS=required, which makes a missing build a failure.
 import { execFileSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { MEDIA_LIMITS, clampLimits, paths, prepareDirs, readResult, serverWaitMs, videoContainer, writeAtomic } from '@shelf/contracts/media';
+import { MEDIA_LIMITS, clampLimits, paths, prepareDirs, readResult, serverWaitMs, videoContainer, writeAtomic } from '@philobiblos/contracts/media';
 import { cleanJpeg } from '../../server/src/media/client';
 import { runChild, runPending, type WorkerOptions } from '../src/main';
 import { BIN, CODECS, PpmFrames, RLIMITS, checkDecode, checkProbe, decode, toJpegs, decodeArgs, inputArgs, openVideo, plan, probe, rlimitArgs } from '../src/video';
 
 const built = existsSync(join(BIN, 'ffmpeg')) && existsSync(join(BIN, 'ffprobe'));
-if (!built && process.env.SHELF_VIDEO_TESTS === 'required') throw new Error(`no ffmpeg build in ${BIN}: run scripts/video-test.sh`);
-const MAKER = process.env.SHELF_FIXTURE_FFMPEG ?? 'ffmpeg';
+if (!built && process.env.PHILOBIBLOS_VIDEO_TESTS === 'required') throw new Error(`no ffmpeg build in ${BIN}: run scripts/video-test.sh`);
+const MAKER = process.env.PHILOBIBLOS_FIXTURE_FFMPEG ?? 'ffmpeg';
 
 const child = { path: fileURLToPath(new URL('../src/child.ts', import.meta.url)), execArgv: ['--import', import.meta.resolve('tsx')] };
 let dir: string;
@@ -106,8 +106,8 @@ function lyingDuration(from: string): Buffer {
 
 beforeAll(() => {
   if (!built) return;
-  process.env.SHELF_WORKER_TEST = '1';
-  dir = mkdtempSync(join(tmpdir(), 'shelf-video-'));
+  process.env.PHILOBIBLOS_WORKER_TEST = '1';
+  dir = mkdtempSync(join(tmpdir(), 'philobiblos-video-'));
   prepareDirs(join(dir, 'work'));
   o = { root: join(dir, 'work'), child };
   fx.h264 = make('ok.mp4', [...src('320x240', 10, 9), '-f', 'lavfi', '-i', 'sine=d=9'], [...x264, '-c:a', 'aac', '-shortest']);

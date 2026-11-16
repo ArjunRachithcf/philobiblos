@@ -3,7 +3,7 @@
 // filters, labels that add their qualifier, a score that opens into its parts, grouping, and bulk actions.
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 // The query module only: the package's root also holds the AI schemas (Ajv), which the page must not load (CSP).
-import { parseQuery, withQualifier, type QualifierKey } from '@shelf/contracts/backlog-query';
+import { parseQuery, withQualifier, type QualifierKey } from '@philobiblos/contracts/backlog-query';
 import { api, message, type Candidate, type Me } from '../api';
 import { MenuButton, Notice, PageHead } from '../ui';
 

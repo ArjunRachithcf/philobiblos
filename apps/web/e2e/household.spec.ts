@@ -1,4 +1,4 @@
-// The first admin, the household, an invited adult, signing out and in, on one fresh Shelf. Names come from
+// The first admin, the household, an invited adult, signing out and in, on one fresh Philobiblos. Names come from
 // seed-sample/household.json (Alex, Sam, Kid 1), all invented.
 import { expect, test, type Browser } from '@playwright/test';
 import { PORT } from './env';
@@ -9,10 +9,10 @@ test.describe.configure({ mode: 'serial' });
 
 let invite = '';
 
-test('a new Shelf asks for its first admin', async ({ page }) => {
+test('a new Philobiblos asks for its first admin', async ({ page }) => {
   const done = noForeignRequests(page, ORIGIN);
   await page.goto('/');
-  await expect(page.getByText('Shelf needs its first admin.')).toBeVisible();
+  await expect(page.getByText('Philobiblos needs its first admin.')).toBeVisible();
   // the button stays: an admin whose passkey a restore lost still gets in once the setup is done
   await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
   await expectAccessible(page, 'sign-in, setup needed');
@@ -24,7 +24,7 @@ test('the setup link makes Alex the admin with a passkey, then the household is 
   await addAuthenticator(page);
   await page.goto(setupLink());
   await expect(page).toHaveURL(`${ORIGIN}/setup`); // the token left the address bar
-  await expect(page.getByRole('heading', { name: 'Set up Shelf' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Set up Philobiblos' })).toBeFocused();
   await expectAccessible(page, 'setup');
   await page.getByLabel('Your name').fill('Alex');
   await page.getByRole('button', { name: 'Create a passkey' }).click();

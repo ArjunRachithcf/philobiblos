@@ -1,9 +1,9 @@
-// What Shelf keeps of a verified bookshop mail (ADR 0007): never its text. A mail's free text always carries something
+// What Philobiblos keeps of a verified bookshop mail (ADR 0007): never its text. A mail's free text always carries something
 // of the household's (the delivery address, a name, a card number typed into a request the bookshop quotes back), in
 // more spellings than any filter can find (Zürich and Zurich, Str. and strasse, soft hyphens, split PDF cells, unusual
 // separators), so the store holds structured fields only. This slice keeps the headers that tie a mail to an order
 // (Message-ID, In-Reply-To, the date), its subject through `safeField`, how many PDFs it has, and where it is in the
-// mailbox (UIDVALIDITY and UID). The parsers of M3 (d) read the mail again from the mailbox (which Shelf never
+// mailbox (UIDVALIDITY and UID). The parsers of M3 (d) read the mail again from the mailbox (which Philobiblos never
 // changes), in memory, and keep only what they extract: order number, date, line items, totals and status, each
 // string field through `safeField` as a second line of defence.
 //
@@ -139,7 +139,7 @@ export async function readMail(raw: Buffer, headerBlock: Buffer, address: string
   const pdfs = (mail.attachments ?? []).map((a) => new Uint8Array(a.content as ArrayBuffer)).filter(isPdf);
   const text = typeof mail.text === 'string' && mail.text.trim() ? mail.text : typeof mail.html === 'string' ? htmlLines(mail.html.slice(0, 4 * TEXT_MAX)) : '';
   return {
-    // Every field kept passes safeField, the generated ids too (shelf#13).
+    // Every field kept passes safeField, the generated ids too (philobiblos#13).
     content: {
       subject: safeField(mail.subject, address),
       date: one(mail.date, 64), messageId: safeField(one(mail.messageId, 300), address), inReplyTo: safeField(one(mail.inReplyTo, 300), address),
@@ -160,7 +160,7 @@ export const isVerified = (m: unknown): m is VerifiedMail => typeof m === 'objec
 export type Opened = { ok: true; mail: VerifiedMail } | { ok: false; auth: MailAuth; unreadable?: string };
 
 /**
- * The one way Shelf reads a mail, the first time and every time again (the parsers re-read it from the mailbox):
+ * The one way Philobiblos reads a mail, the first time and every time again (the parsers re-read it from the mailbox):
  * the strict header block, who sent it (verify.ts: sender, recipients, DKIM or ARC and what they cover), then the
  * MIME parse within limits, whose headers must equal the verified block's. Only a mail through all of them is a
  * `VerifiedMail`.

@@ -9,7 +9,7 @@
 // may wait, and beyond that the answer is 'busy'.
 import { rmSync } from 'node:fs';
 import { ulid } from 'ulid';
-import { MEDIA_LIMITS, serverWaitMs, checkDirs, paths, prepareDirs, readResult, readUntrusted, workerAlive, writeAtomic, type MediaKind, type MediaResult } from '@shelf/contracts/media';
+import { MEDIA_LIMITS, serverWaitMs, checkDirs, paths, prepareDirs, readResult, readUntrusted, workerAlive, writeAtomic, type MediaKind, type MediaResult } from '@philobiblos/contracts/media';
 
 export class MediaUnavailable extends Error {
   constructor() { super('media processing is unavailable: the media worker is not running'); }
@@ -57,7 +57,7 @@ export function cleanJpeg(b: Buffer, width: number, height: number): boolean {
 }
 
 /**
- * Runs one job. `root` is SHELF_WORK_DIR (null: no worker here, e.g. HomersLab before it runs one: MediaUnavailable).
+ * Runs one job. `root` is PHILOBIBLOS_WORK_DIR (null: no worker here, e.g. HomersLab before it runs one: MediaUnavailable).
  * Waits a little longer than the worker's own time limit; a result that never comes is a timeout.
  */
 export async function runMediaJob(root: string | null, kind: MediaKind, input: Uint8Array, o: { pollMs?: number; waitMs?: number } = {}): Promise<MediaOutcome> {

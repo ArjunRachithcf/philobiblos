@@ -1,7 +1,7 @@
 // A person's own settings (Settings.person in contracts/openapi.yaml), kept in person.settings_json. Only the keys
 // below are stored; each has a default, so a new person needs nothing.
 import { eq } from 'drizzle-orm';
-import type { components } from '@shelf/contracts/openapi';
+import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import type { Person } from '../household/people';

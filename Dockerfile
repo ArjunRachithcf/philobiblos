@@ -1,4 +1,4 @@
-# Shelf: one image for HomersLab and standalone (ADR 0001).
+# Philobiblos: one image for HomersLab and standalone (ADR 0001).
 ARG NODE_IMAGE=node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 
 # The media worker's ffmpeg (apps/worker/ffmpeg/build.sh): FFmpeg's own release, pinned by its SHA-256, built with only
@@ -17,19 +17,19 @@ RUN corepack enable
 WORKDIR /src
 COPY . .
 RUN pnpm install --frozen-lockfile \
- && pnpm --filter @shelf/web build \
- && pnpm --filter @shelf/server build \
- && pnpm --filter @shelf/server deploy --prod --legacy /out \
+ && pnpm --filter @philobiblos/web build \
+ && pnpm --filter @philobiblos/server build \
+ && pnpm --filter @philobiblos/server deploy --prod --legacy /out \
  && cp -r apps/server/dist apps/server/drizzle /out/ \
  && cp -r apps/web/dist /out/web \
- && pnpm --filter @shelf/worker build \
- && pnpm --filter @shelf/worker deploy --prod --legacy /out-worker \
+ && pnpm --filter @philobiblos/worker build \
+ && pnpm --filter @philobiblos/worker deploy --prod --legacy /out-worker \
  && cp -r apps/worker/dist /out-worker/
 
 FROM ${NODE_IMAGE}
-ENV NODE_ENV=production \
-    SHELF_HOST=0.0.0.0 SHELF_PORT=8080 \
-    SHELF_DATA_DIR=/data SHELF_KEYS_DIR=/keys SHELF_WORK_DIR=/work SHELF_WEB_DIR=/app/web SHELF_MIGRATIONS_DIR=/app/drizzle
+# The image's defaults (0.0.0.0:8080, /data, /keys, /work, /app/web, /app/drizzle) are in packages/contracts/src/env.ts,
+# applied after the old SHELF_* names: an ENV PHILOBIBLOS_DATA_DIR here would win over a household's SHELF_DATA_DIR.
+ENV NODE_ENV=production PHILOBIBLOS_IN_IMAGE=1
 WORKDIR /app
 COPY --from=build /out/node_modules ./node_modules
 COPY --from=build /out/dist ./dist
@@ -40,8 +40,9 @@ COPY --from=build /out/web ./web
 COPY --from=build /out-worker ./worker
 COPY --from=ffmpeg /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe /app/worker/bin/
 COPY LICENSE NOTICE ./
-# `docker exec <container> shelf recover <admin handle>` (ADR 0010)
-RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/shelf && chmod 755 /usr/local/bin/shelf
+# `docker exec <container> philobiblos recover <admin handle>` (ADR 0010). `shelf` still works until 0.2.0, with a warning.
+RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/philobiblos && chmod 755 /usr/local/bin/philobiblos \
+ && printf '#!/bin/sh\necho "shelf is now philobiblos: run philobiblos $*" >&2\nexec /usr/local/bin/philobiblos "$@"\n' > /usr/local/bin/shelf && chmod 755 /usr/local/bin/shelf
 RUN mkdir -p /data /keys /work && chown node:node /data /keys /work && chmod 700 /keys && chmod 755 /work
 USER node
 VOLUME /data /keys /work

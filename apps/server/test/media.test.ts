@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { MEDIA_LIMITS, dirs, paths, prepareDirs, readResult, readUntrusted, writeAtomic } from '@shelf/contracts/media';
+import { MEDIA_LIMITS, dirs, paths, prepareDirs, readResult, readUntrusted, writeAtomic } from '@philobiblos/contracts/media';
 import { MAX_WAITING, MediaUnavailable, cleanJpeg, runMediaJob } from '../src/media/client';
 
 /** A JPEG of only the segments a fresh encode has (the payloads are filler: the check walks markers, never decodes). */
@@ -51,7 +51,7 @@ function fakeWorker(root: string, answer: (id: string, p: ReturnType<typeof path
   return () => clearInterval(timer);
 }
 
-const tmp = () => mkdtempSync(join(tmpdir(), 'shelf-media-'));
+const tmp = () => mkdtempSync(join(tmpdir(), 'philobiblos-media-'));
 async function withWorker<T>(answer: Parameters<typeof fakeWorker>[1], f: (root: string) => Promise<T>): Promise<T> {
   const root = tmp();
   const stop = fakeWorker(root, answer);
@@ -153,7 +153,7 @@ describe('the media client', () => {
     });
   });
 
-  it('the job\'s files are for Shelf\'s user and group only (the worker reads them as a member of the group)', async () => {
+  it('the job\'s files are for Philobiblos\'s user and group only (the worker reads them as a member of the group)', async () => {
     await withWorker((_id, p) => {
       for (const f of [p.input, p.job]) expect(statSync(f).mode & 0o027).toBe(0);
       return null;

@@ -1,5 +1,5 @@
 {
-  "name": "@shelf/contracts",
+  "name": "@philobiblos/contracts",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./backlog-query": "./src/backlog-query.ts",
     "./openapi": "./src/openapi.gen.ts",
-    "./media": "./src/media.ts"
+    "./media": "./src/media.ts",
+    "./env": "./src/env.ts"
   },
   "scripts": {
     "gen": "openapi-typescript ../../contracts/openapi.yaml -o src/openapi.gen.ts && node scripts/gen-ai-types.mjs",

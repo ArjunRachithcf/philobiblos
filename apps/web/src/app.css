@@ -1,4 +1,4 @@
-/* Shelf's own layout, on HomersLab's tokens (design/tokens.css). Never edit design/; add here. */
+/* Philobiblos's own layout, on HomersLab's tokens (design/tokens.css). Never edit design/; add here. */
 .auth { width: 100%; max-width: 440px; margin: 0 auto; padding: var(--space-16) var(--gutter) var(--space-10); display: grid; gap: var(--space-5); align-content: start; }
 .auth-sub { color: var(--text-2); font-size: var(--fs-headline); }
 .auth .page-head { padding: 0; }

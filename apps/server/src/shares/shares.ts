@@ -6,7 +6,7 @@
 // the media worker, which re-encodes an image to a fresh JPEG without metadata and turns a video into at most 30 such
 // JPEGs, a frame every ~2 s. Only those JPEGs are kept (data/shares/<share>: NN.jpg, or NN-MM.jpg for a video's frames);
 // the staged original is deleted as soon as the worker has answered, whatever it answered. A file the worker refuses
-// counts as refused; a share whose files were all refused failed. Without a worker here (SHELF_WORK_DIR unset, as under
+// counts as refused; a share whose files were all refused failed. Without a worker here (PHILOBIBLOS_WORK_DIR unset, as under
 // HomersLab until it runs one) a share with files is refused (503) and nothing is staged; with one that is down for a
 // while, the share waits, and gives up after a day.
 //
@@ -16,8 +16,8 @@ import { join } from 'node:path';
 import { and, eq, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { FastifyRequest } from 'fastify';
-import type { components } from '@shelf/contracts/openapi';
-import { videoContainer, writeAtomic } from '@shelf/contracts/media';
+import type { components } from '@philobiblos/contracts/openapi';
+import { videoContainer, writeAtomic } from '@philobiblos/contracts/media';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { MediaUnavailable, runMediaJob } from '../media/client';
@@ -78,7 +78,7 @@ export function imageType(b: Uint8Array): 'jpeg' | 'png' | 'webp' | 'gif' | null
 
 const UNTYPED = new ShareError(415, 'only images (JPEG, PNG, WebP or GIF) and videos (MP4, MOV or WebM) are taken; convert a photo to JPEG first');
 
-/** What a shared file is, from its first bytes: an image or a video Shelf takes (videoContainer), or null. */
+/** What a shared file is, from its first bytes: an image or a video Philobiblos takes (videoContainer), or null. */
 export function shareFileType(b: Uint8Array): 'image' | 'video' | null {
   return imageType(b) ? 'image' : videoContainer(b) ? 'video' : null;
 }
@@ -328,7 +328,7 @@ export function ownShare(db: Db, personId: string, id: string): ShareRow | undef
   return db.select().from(t.share).where(and(eq(t.share.id, id), eq(t.share.personId, personId))).get();
 }
 
-/** What the AI could read of a share, in Shelf's words for the Inbox; null when it read it all, or has not yet. */
+/** What the AI could read of a share, in Philobiblos's words for the Inbox; null when it read it all, or has not yet. */
 export function shareAiNote(r: Pick<ShareRow, 'foundJson' | 'mediaJson'>): string | null {
   let o: unknown;
   try { o = JSON.parse(r.foundJson ?? 'null'); } catch { return null; }

@@ -11,12 +11,12 @@
 //   validated again. Invalid or failed: tried once more, then the run is logged as failed.
 // - Every call is logged in ai_run (provider, model, prompt version, input hash, output or error, cost); an identical
 //   input under the same prompt version, provider, model and person reuses the stored output.
-// - Errors are Shelf's own words: never a key, the prompt or what the model answered.
+// - Errors are Philobiblos's own words: never a key, the prompt or what the model answered.
 import { createHash } from 'node:crypto';
 import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import { validateAiOutput } from '@shelf/contracts';
-import { JOBS, ModelError, buildPrompt, holdsTakeaways, wireSchema, type JobIO, type JobName, type Model } from '@shelf/ai';
+import { validateAiOutput } from '@philobiblos/contracts';
+import { JOBS, ModelError, buildPrompt, holdsTakeaways, wireSchema, type JobIO, type JobName, type Model } from '@philobiblos/ai';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { safeField } from '../mail/read';
@@ -104,7 +104,7 @@ function check<J extends JobName>(job: J, text: string, input: JobIO[J][0], imag
   const c = (JOBS[job].clean as (o: unknown, i: unknown, n: number) => Checked<J>)(o, input, images);
   if (!c.ok) return c;
   const s = scrub(c.out, address);
-  if (s === null) return { ok: false, error: 'an answer with a text Shelf does not keep (an address or a long number)' };
+  if (s === null) return { ok: false, error: 'an answer with a text Philobiblos does not keep (an address or a long number)' };
   const v2 = validateAiOutput(job, s);
   if (!v2.ok) return { ok: false, error: `an answer off the schema once cleaned: ${v2.errors.slice(0, 3).join('; ')}` };
   return { ok: true, out: s as Out<J> };
@@ -116,7 +116,7 @@ export async function runAi<J extends JobName>(db: Db, model: Model, job: J, inp
   const takeaways = holdsTakeaways(job, input as never);
   if (takeaways !== Boolean(ctx.takeawaysOf)) throw new AiError('takeaways', takeaways ? 'takeaways would be sent without saying whose' : 'takeawaysOf named for an input without takeaways');
   const address = ctx.address ?? [];
-  // Images only to a model that reads them; never anything but a JPEG Shelf re-encoded.
+  // Images only to a model that reads them; never anything but a JPEG Philobiblos re-encoded.
   const images = model.supportsVision ? (ctx.images ?? []) : [];
   if (images.length > AI_LIMITS.images || images.reduce((n, b) => n + b.length, 0) > AI_LIMITS.imageBytes || images.some((b) => !isJpeg(b))) {
     throw new AiError('too_large', `images: at most ${AI_LIMITS.images} JPEGs, ${AI_LIMITS.imageBytes >> 20} MB together`);

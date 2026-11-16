@@ -12,8 +12,8 @@
 import { lstatSync, openSync, readSync, closeSync, constants, fstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, count, desc, eq, gt, gte, inArray, isNull, notInArray, sql } from 'drizzle-orm';
-import type { Image } from '@shelf/contracts';
-import { holdsTakeaways, type Model } from '@shelf/ai';
+import type { Image } from '@philobiblos/contracts';
+import { holdsTakeaways, type Model } from '@philobiblos/ai';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -148,7 +148,7 @@ export class AiJobs {
       let found: Record<string, unknown>;
       try {
         const { output } = await runAi(this.db, s.model, 'extractTitles', input, { budget: s.budget, personId: r.personId, images, address: s.address, share: { personId: r.personId, tokenId: r.tokenId } });
-        // What the AI could look at, in Shelf's words, for the Inbox.
+        // What the AI could look at, in Philobiblos's words, for the Inbox.
         found = { ...output, readFrom: images.length && s.model.supportsVision ? 'images' : 'caption' };
       } catch (e) {
         // Only this sharer's (or token's) part is spent: their shares wait, everyone else's are read.
@@ -260,7 +260,7 @@ export class AiJobs {
 
   /**
    * explainPick for a month's kept plan (default: this month): each adult pick's one-line why. `until`: the monthly
-   * refresh's deadline; the picks left keep Shelf's words until its retry (a why is written once).
+   * refresh's deadline; the picks left keep Philobiblos's words until its retry (a why is written once).
    */
   async explain(o: { month?: string; until?: Date } = {}): Promise<Outcome> {
     const s = this.start('explain');

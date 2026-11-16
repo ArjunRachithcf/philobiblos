@@ -5,7 +5,7 @@
 //   or from a passkey session cookie (standalone).
 // A request with a share token is authenticated by that token and nothing else (no fallback to a cookie or a
 // header), and it is the only kind that may change something without Origin: an iOS Shortcut sends none, and a token
-// is not an ambient credential. Every other change must carry Shelf's own Origin, in both modes.
+// is not an ambient credential. Every other change must carry Philobiblos's own Origin, in both modes.
 // A share token is good for POST /shares and nothing else. Kids, and people HomersLab sends without a role, get 403.
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
@@ -14,7 +14,8 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson, syncHomersLabPerson } from '../household/people';
 import { resolveIdentity } from '../identity';
-import { SESSION_COOKIE, liveSession, type Session } from './sessions';
+import { requestSession } from './cookie';
+import type { Session } from './sessions';
 import { Limiter, findShareToken } from '../shares/tokens';
 
 export type AuthMode = 'public' | 'person' | 'person-or-share-token';
@@ -76,7 +77,7 @@ export function authHook(cfg: Config, db: Db) {
         return;
       }
     } else {
-      const s = liveSession(db, req.cookies?.[SESSION_COOKIE]);
+      const s = requestSession(db, req, reply);
       const p = s ? getPerson(db, s.personId) : undefined;
       if (s && p) {
         if (p.role === 'kid') return reply.code(403).send({ error: 'not allowed' });

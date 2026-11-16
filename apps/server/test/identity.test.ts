@@ -33,11 +33,11 @@ describe('config', () => {
   });
   it('the origin must be https, or http on localhost', () => {
     expect(loadConfig({}).origin).toBe('http://localhost:8080');
-    expect(loadConfig({ SHELF_ORIGIN: 'https://shelf.example.org' })).toMatchObject({ origin: 'https://shelf.example.org', rpId: 'shelf.example.org' });
-    expect(() => loadConfig({ SHELF_ORIGIN: 'http://192.168.1.5:8080' })).toThrow();
-    expect(() => loadConfig({ SHELF_ORIGIN: 'https://shelf.example.org/app' })).toThrow();
+    expect(loadConfig({ PHILOBIBLOS_ORIGIN: 'https://philobiblos.example.org' })).toMatchObject({ origin: 'https://philobiblos.example.org', rpId: 'philobiblos.example.org' });
+    expect(() => loadConfig({ PHILOBIBLOS_ORIGIN: 'http://192.168.1.5:8080' })).toThrow();
+    expect(() => loadConfig({ PHILOBIBLOS_ORIGIN: 'https://philobiblos.example.org/app' })).toThrow();
   });
   it('refuses an unknown mode', () => {
-    expect(() => loadConfig({ SHELF_MODE: 'public' })).toThrow();
+    expect(() => loadConfig({ PHILOBIBLOS_MODE: 'public' })).toThrow();
   });
 });

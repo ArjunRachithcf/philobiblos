@@ -8,7 +8,8 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { requireAdmin } from '../auth/hook';
 import { createInvite } from '../auth/invites';
-import { SESSION_COOKIE, endAllSessions, isFresh } from '../auth/sessions';
+import { clearSessionCookies } from '../auth/cookie';
+import { endAllSessions, isFresh } from '../auth/sessions';
 import { HouseholdError, addPerson, editPerson, getPerson, household, removePerson, view, type PersonInput } from '../household/people';
 
 const ROLES = new Set(['admin', 'adult', 'kid']);
@@ -51,7 +52,7 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     void reply.code(409).send({ error: 'people are managed in HomersLab' });
     return true;
   };
-  // Passkeys and sessions are Shelf's own only in standalone mode; under HomersLab these routes do not exist.
+  // Passkeys and sessions are Philobiblos's own only in standalone mode; under HomersLab these routes do not exist.
   const standaloneOnly = (reply: FastifyReply) => {
     if (cfg.mode === 'standalone') return true;
     void reply.code(404).send({ error: 'HomersLab holds the passkeys' });
@@ -121,7 +122,7 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.post('/me/sessions/end', async (req, reply) => {
     if (!standaloneOnly(reply)) return;
     endAllSessions(db, req.caller!.personId);
-    return reply.clearCookie(SESSION_COOKIE, { path: '/' }).code(204).send();
+    return clearSessionCookies(reply).code(204).send();
   });
 
   app.delete<{ Params: { id: string } }>('/me/passkeys/:id', async (req, reply) => {

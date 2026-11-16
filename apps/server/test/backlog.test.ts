@@ -3,7 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { scoreAdult } from '@shelf/scoring';
+import { scoreAdult } from '@philobiblos/scoring';
 import { buildApp, type BuiltApp } from '../src/app';
 import { allCandidates } from '../src/backlog/backlog';
 import { loadConfig } from '../src/config';
@@ -23,7 +23,7 @@ beforeAll(async () => {
   importSeed(db, SAMPLE, '2026-11-01T00:00:00.000Z');
   for (const p of db.select().from(t.person).all()) id[p.handle!] = p.id;
   for (const h of ['alex', 'partner', 'kid1']) cookie[h] = sessionCookie(db, id[h]!);
-  built = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent' }), db);
+  built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent' }), db);
   await built.app.ready();
 });
 afterAll(() => built.app.close());

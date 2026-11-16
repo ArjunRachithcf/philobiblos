@@ -158,7 +158,7 @@ export const bookIdea = sqliteTable('book_idea', {
   // Who decided (null: nobody yet, or the seed). Only a person moves a proposal to confirmed or rejected.
   reviewedBy: text('reviewed_by').references(() => person.id, { onDelete: 'set null' }),
   reviewedAt: text('reviewed_at'),
-  // Written from this person's takeaways (shelf#3): only they see its reason and decide it. Kept when the run is purged.
+  // Written from this person's takeaways (philobiblos#3): only they see its reason and decide it. Kept when the run is purged.
   privateTo: text('private_to').references(() => person.id, { onDelete: 'cascade' }),
 }, (t) => [
   primaryKey({ columns: [t.bookId, t.ideaId] }),
@@ -211,7 +211,7 @@ export const bookLink = sqliteTable('book_link', {
   // Who decided (null: nobody yet, or the seed). Only a person moves a proposal to confirmed or rejected.
   reviewedBy: text('reviewed_by').references(() => person.id, { onDelete: 'set null' }),
   reviewedAt: text('reviewed_at'),
-  // Written from this person's takeaways (shelf#3): only they see its reason and decide it. Kept when the run is purged.
+  // Written from this person's takeaways (philobiblos#3): only they see its reason and decide it. Kept when the run is purged.
   privateTo: text('private_to').references(() => person.id, { onDelete: 'cascade' }),
 }, (t) => [
   primaryKey({ columns: [t.fromBook, t.toBook] }),

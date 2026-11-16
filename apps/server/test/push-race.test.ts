@@ -24,7 +24,7 @@ vi.mock('../src/push/webpush', async (orig) => {
   };
 });
 
-const cfg = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY });
+const cfg = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY });
 
 describe('the application server key, made once', () => {
   it('two first calls at once: one key, and both callers get it', () => {

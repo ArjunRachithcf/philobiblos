@@ -212,13 +212,13 @@ importers:
       '@fastify/static':
         specifier: 10.1.11
         version: 10.1.11
-      '@shelf/ai':
+      '@philobiblos/ai':
         specifier: workspace:*
         version: link:../../packages/ai
-      '@shelf/contracts':
+      '@philobiblos/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@shelf/scoring':
+      '@philobiblos/scoring':
         specifier: workspace:*
         version: link:../../packages/scoring
       '@simplewebauthn/server':
@@ -270,7 +270,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@shelf/contracts':
+      '@philobiblos/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@simplewebauthn/browser':
@@ -310,7 +310,7 @@ importers:
 
   apps/worker:
     dependencies:
-      '@shelf/contracts':
+      '@philobiblos/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       pdfjs-dist:
@@ -329,7 +329,7 @@ importers:
 
   packages/ai:
     dependencies:
-      '@shelf/contracts':
+      '@philobiblos/contracts':
         specifier: workspace:*
         version: link:../contracts
 

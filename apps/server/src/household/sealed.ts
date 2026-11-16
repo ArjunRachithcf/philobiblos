@@ -17,17 +17,17 @@ function decode(text: string): Buffer {
   return k;
 }
 
-/** The key, or null when there is none (homerslab mode without SHELF_SEALING_KEY). Standalone makes its key once. */
+/** The key, or null when there is none (homerslab mode without PHILOBIBLOS_SEALING_KEY). Standalone makes its key once. */
 export function sealingKey(cfg: Pick<Config, 'sealingKey'>): Buffer | null {
   const src = cfg.sealingKey;
   if (!src) return null;
   // A row sealed under a key that is gone stays unreadable: unseal() says so (SealError), nothing is guessed.
   if ('value' in src) return decode(src.value);
   if (!existsSync(src.file)) {
-    if (!src.create) throw new SealError('SHELF_SEALING_KEY_FILE names no file');
+    if (!src.create) throw new SealError('PHILOBIBLOS_SEALING_KEY_FILE names no file');
     mkdirSync(dirname(src.file), { recursive: true });
     try {
-      // O_EXCL: two starts never write two keys; 0600: only Shelf's user reads it.
+      // O_EXCL: two starts never write two keys; 0600: only Philobiblos's user reads it.
       const fd = openSync(src.file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       writeSync(fd, randomBytes(32).toString('base64') + '\n');
       closeSync(fd);

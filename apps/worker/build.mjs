@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
-const external = Object.keys(pkg.dependencies).filter((d) => !d.startsWith('@shelf/'));
+const external = Object.keys(pkg.dependencies).filter((d) => !d.startsWith('@philobiblos/'));
 
 await build({
   entryPoints: ['src/main.ts', 'src/child.ts'],

@@ -6,7 +6,7 @@
 // validates and retries. A Model never opens a connection itself: it is handed a Transport, the server's egress client.
 import type {
   BookRef, BrainSummary, CheckRedundantOut, ExplainPickOut, ExtractTitlesOut, IdeaTag, Image, Move, ProposeLinksOut, SuggestNextOut, TagBookOut,
-} from '@shelf/contracts';
+} from '@philobiblos/contracts';
 
 export type ProviderId = 'claude' | 'ollama' | 'fake';
 
@@ -79,7 +79,7 @@ export interface Model {
   complete(r: ModelRequest): Promise<ModelReply>;
 }
 
-/** Why a call gave no usable answer. Messages are Shelf's own words: never a key, a prompt or the provider's body. */
+/** Why a call gave no usable answer. Messages are Philobiblos's own words: never a key, a prompt or the provider's body. */
 export class ModelError extends Error {
   constructor(readonly reason: 'transport' | 'refused' | 'truncated' | 'bad_answer', message: string) {
     super(message);

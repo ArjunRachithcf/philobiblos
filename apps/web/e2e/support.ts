@@ -28,7 +28,7 @@ export async function expectAccessible(page: Page, name: string) {
   await page.emulateMedia({ colorScheme: 'light' });
 }
 
-/** Nothing on the page asked the network for anything but Shelf itself. */
+/** Nothing on the page asked the network for anything but Philobiblos itself. */
 export function noForeignRequests(page: Page, origin: string) {
   const foreign: string[] = [];
   page.on('request', (r) => { if (!r.url().startsWith(origin) && !r.url().startsWith('data:')) foreign.push(r.url()); });

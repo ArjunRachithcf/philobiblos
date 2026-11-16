@@ -1,15 +1,19 @@
-# Shelf: product spec (v0.1, 2026-11-15)
+# Philobiblos: product spec (v0.1, 2026-11-15)
+
+**Philobiblos** (Greek: lover of books), *what to read next*. A HomersLab app (HomersLab is the maker; its manager is
+Homeward), standalone first. It was called Shelf until 2026-11-16 (philobiblos#30); the word "shelf" in this spec means a
+shelf of books.
 
 ## 1. Purpose
 
 Security comes first, then polish, then features (ADR 0009, `docs/security.md`).
 
 
-Shelf is a family's reading brain. For each adult it keeps a **map of ideas** they have read about, shows where to focus next
+Philobiblos is a family's reading brain. For each adult it keeps a **map of ideas** they have read about, shows where to focus next
 so knowledge grows in **breadth** (new ideas) and **depth** (each idea getting denser), and turns that into a **monthly
 order** within a shared budget. For each child it keeps an **emotional map** of themes and picks varied picture books.
 
-Shelf plans and buys. It is not an ebook reader or a daily reading log; Kavita, BookLore, Calibre-Web and Jelu do those.
+Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Kavita, BookLore, Calibre-Web and Jelu do those.
 
 ## 2. People
 
@@ -50,12 +54,12 @@ Shelf plans and buys. It is not an ebook reader or a daily reading log; Kavita, 
 - **Inbox**: shares and AI suggestions; for each, the slides read and the books found with proposed idea/layer or
   kids' theme; add or skip per book.
 - **Settings**: budget and split; how your brain grows (mix, unread limit, counterpoints, takeaways); AI plugin
-  (provider, jobs on/off, wildcards); score weights; kids' themes; sources; family; where Shelf runs.
+  (provider, jobs on/off, wildcards); score weights; kids' themes; sources; family; where Philobiblos runs.
 - **Phone share**: share target (Android PWA, iOS Shortcut). Shows progress while the AI reads.
 
 ## 5. Monthly cycle
 
-1. On the 1st (configurable) Shelf refreshes: new invoices → copies; new shares processed; prices refreshed for the top
+1. On the 1st (configurable) Philobiblos refreshes: new invoices → copies; new shares processed; prices refreshed for the top
    candidates; scores recomputed.
 2. **Adult picks** per adult: `picks = 2` by default, `1` if their unread pile exceeds their limit, `0` if over twice it.
    Mix by setting: **Deepen + Connect** (default; one pick becomes **Broaden** every third month), Deepen + Broaden, or AI.
@@ -65,7 +69,7 @@ Shelf plans and buys. It is not an ebook reader or a daily reading log; Kavita, 
 4. The order total must be ≤ max; if it is < min, add the next best kids' book that fits.
    Each month starts at the set budget (or its one-month override): unspent money does not roll over.
 5. A push notification goes to adults. They adjust, then **Compose**: their own mail app opens with the order filled in.
-6. Shelf reads the bookshop's reply (quote with prices and delivery), updates the total and marks missing books;
+6. Philobiblos reads the bookshop's reply (quote with prices and delivery), updates the total and marks missing books;
    they roll over to next month's order. The invoice turns order lines into copies.
 
 ## 6. Scoring (pure, deterministic; the AI never sets scores)
@@ -126,7 +130,7 @@ Providers: Ollama (local, the default) or Claude (API key, an explicit opt-in th
 
 ## 9. Sources (see `contracts/connectors.md`)
 
-Mail (the bookshop's mail forwarded to a Shelf-only mailbox, read over IMAP; Compose links instead of drafts), price lookup (Orell Füssli search, read-only, best effort), metadata (Open Library,
+Mail (the bookshop's mail forwarded to a Philobiblos-only mailbox, read over IMAP; Compose links instead of drafts), price lookup (Orell Füssli search, read-only, best effort), metadata (Open Library,
 cached), phone share, manual add. Every book can be ordered through the Orell Füssli English Bookshop by email, so web
 availability never blocks a pick.
 

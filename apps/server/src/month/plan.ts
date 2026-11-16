@@ -5,8 +5,8 @@
 import { UNKNOWN_PRICE_C } from '../books/prices';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import type { components } from '@shelf/contracts/openapi';
-import { adultPickCount, pickAdults, pickKids, type Mix } from '@shelf/scoring';
+import type { components } from '@philobiblos/contracts/openapi';
+import { adultPickCount, pickAdults, pickKids, type Mix } from '@philobiblos/scoring';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { allCandidates, publicView, type Row } from '../backlog/backlog';
@@ -159,8 +159,8 @@ export function getMonth(db: Db, month: string, viewer: string): S['MonthPlan'] 
   const picks = (p: Person) => lines.filter((l) => l.forPerson === p.id).flatMap((l) => {
     const r = rows.get(`${l.forPerson}.${l.bookId}`);
     if (!r) return [];
-    // A kept line's why is the AI's one line when it wrote one (explainPick, ai/jobs.ts), else Shelf's own words. One
-    // built on something private to the pick's person (why_audience) is theirs to read; everyone else gets Shelf's.
+    // A kept line's why is the AI's one line when it wrote one (explainPick, ai/jobs.ts), else Philobiblos's own words. One
+    // built on something private to the pick's person (why_audience) is theirs to read; everyone else gets Philobiblos's.
     const mayRead = !('whyAudience' in l) || !l.whyAudience || l.whyAudience === viewer;
     const said = 'why' in l && typeof l.why === 'string' && l.why && mayRead ? l.why : null;
     return [{ candidate: publicView(r), ...(l.move ? { move: l.move as S['Move'] } : {}), why: said ?? why(r), idea: p.role === 'kid' ? r.theme ?? undefined : r.ideas?.[0]?.name }];
@@ -281,7 +281,7 @@ export function setMonthBudget(db: Db, month: string, me: string, body: unknown)
 
 export interface OrderPlaces { bookshopEmail: string | null; deliveryAddress: string | null }
 
-/** POST /orders: the month's picks as an order, and its Compose link (never sent by Shelf). */
+/** POST /orders: the month's picks as an order, and its Compose link (never sent by Philobiblos). */
 export function composeOrder(db: Db, month: string, me: string, places: OrderPlaces): S['Order'] {
   checkMonth(month);
   if (!places.bookshopEmail) throw new MonthError(409, 'an admin adds the bookshop’s address in Settings first');

@@ -27,7 +27,7 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
     <>
       <PageHead title="Household" sub={me.mode === 'homerslab'
         ? 'People come from HomersLab: add, remove or change them there.'
-        : 'Everyone who uses Shelf, and the kids it picks books for. Kids never sign in; adults act for them.'} />
+        : 'Everyone who uses Philobiblos, and the kids it picks books for. Kids never sign in; adults act for them.'} />
       <div className="stack">
         {error && <Notice kind="error">{error}</Notice>}
         <section className="group-block" aria-labelledby="people-h">
@@ -79,7 +79,7 @@ function InviteLink({ name, url, expiresAt, onDone, self = false }: { name: stri
           {self ? `Open it on the other device; it works once, until ${until}.` : `Send it to ${name} yourself; it works once, until ${until}.`}
         </label>
         <input className="input mono" id={id} readOnly value={url} onFocus={(e) => e.target.select()} />
-        <span className="hint">Shelf shows it only now. Anyone with the link can make a passkey as {self ? 'you' : name}.</span>
+        <span className="hint">Philobiblos shows it only now. Anyone with the link can make a passkey as {self ? 'you' : name}.</span>
       </div>
       <div className="btn-row">
         <button type="button" className="btn btn-primary" onClick={() => navigator.clipboard?.writeText(url).then(() => setCopied(true))}>
@@ -131,7 +131,7 @@ function AddPerson({ onAdded }: { onAdded: () => Promise<void> }) {
               <label className="field-label" htmlFor={`${id}-year`}>Birth year</label>
               <input className="input" id={`${id}-year`} inputMode="numeric" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 aria-describedby={`${id}-year-hint`} placeholder={String(year - 4)} />
-              <span className="hint" id={`${id}-year-hint`}>Shelf picks books for the kid’s age band and moves them up as the kid grows.</span>
+              <span className="hint" id={`${id}-year-hint`}>Philobiblos picks books for the kid’s age band and moves them up as the kid grows.</span>
             </div>
           )}
         </div>
@@ -188,7 +188,7 @@ function Passkeys({ name }: { name: string }) {
       </div>
       <p className="group-foot">
         Your last passkey stays. Removing a passkey signs out the browsers it signed in. Adding a passkey, or inviting
-        someone, needs a sign-in in the last 10 minutes: if Shelf asks, sign out and in again.
+        someone, needs a sign-in in the last 10 minutes: if Philobiblos asks, sign out and in again.
       </p>
     </section>
   );

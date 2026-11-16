@@ -1,5 +1,5 @@
 {
-  "name": "shelf",
+  "name": "philobiblos",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -14,9 +14,9 @@
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:contract": "vitest run --project contract",
-    "gen:api": "pnpm --filter @shelf/contracts run gen",
-    "seed": "pnpm --filter @shelf/server run seed",
-    "dev": "pnpm --filter @shelf/server run dev"
+    "gen:api": "pnpm --filter @philobiblos/contracts run gen",
+    "seed": "pnpm --filter @philobiblos/server run seed",
+    "dev": "pnpm --filter @philobiblos/server run dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -1,12 +1,12 @@
 // The AI's jobs (M3 g): what each sends, for whom, and where its output lands (docs/security.md). Every model is a fake
-// that keeps the requests it was sent, so each test sees exactly what would have left Shelf. Every caption, mail line and
+// that keeps the requests it was sent, so each test sees exactly what would have left Philobiblos. Every caption, mail line and
 // PDF row here is invented; the injection fixtures are text a hostile post or mail could carry.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
-import { fakeModel, type Model, type ModelRequest } from '@shelf/ai';
+import { fakeModel, type Model, type ModelRequest } from '@philobiblos/ai';
 import { AiJobs } from '../src/ai/jobs';
 import { AiBudget } from '../src/ai/run';
 import { loadConfig } from '../src/config';
@@ -39,9 +39,9 @@ const INJECT = {
 
 function setup(o: { provider?: 'ollama' | 'claude' } = {}) {
   const db = household();
-  const data = mkdtempSync(join(tmpdir(), 'shelf-aijobs-'));
+  const data = mkdtempSync(join(tmpdir(), 'philobiblos-aijobs-'));
   dirs.push(data);
-  const cfg = loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: data, SHELF_SEALING_KEY: TEST_SEALING_KEY, OLLAMA_URL: 'http://ollama.test:11434' });
+  const cfg = loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: data, PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, OLLAMA_URL: 'http://ollama.test:11434' });
   seal(db, Buffer.from(TEST_SEALING_KEY, 'base64'), SEALED.deliveryAddress, ADDRESS);
   db.insert(t.householdSettings).values({ id: 1 }).onConflictDoNothing().run();
   if (o.provider) db.update(t.householdSettings).set({ aiProvider: o.provider }).run();
@@ -263,7 +263,7 @@ describe('explainPick', () => {
     expect(m.requests.filter((r) => r.job === 'explainPick')).toHaveLength(1);
     expect(db.select().from(t.orderLine).where(eq(t.orderLine.bookId, 'b_mail')).get()!.why).toBe('Deepens Markets and value.');
     expect(db.select().from(t.orderLine).where(eq(t.orderLine.bookId, 'b_pdf')).get()!.why).toBeNull();
-    // This month shows it in place of Shelf's own words.
+    // This month shows it in place of Philobiblos's own words.
     const { getMonth } = await import('../src/month/plan');
     const alex = getMonth(db, currentMonth(cfg.timezone), 'p_alex').adults?.find((x) => x.person?.id === 'p_alex');
     expect(alex?.picks?.find((x) => x.candidate?.book?.id === 'b_mail')?.why).toBe('Deepens Markets and value.');
@@ -429,7 +429,7 @@ describe('private_to never reaches another person\'s run, nor another person\'s 
     expect(sent(m)).not.toContain('Sams Secret Idea');
   });
 
-  it('a why built on a link private to its person is shown to them only; everyone else gets Shelf\'s own', async () => {
+  it('a why built on a link private to its person is shown to them only; everyone else gets Philobiblos\'s own', async () => {
     const { db, cfg } = setup();
     db.insert(t.aiRun).values({ id: 'run_alex', job: 'proposeLinks', provider: 'fake', model: 'm', promptVersion: 'v1', inputHash: 'h', startedAt: NOW, takeawaysOf: 'p_alex' }).run();
     db.insert(t.bookLink).values({ fromBook: 'b_mail', toBook: 'b_read_a', reason: 'from Alex\'s takeaway', confidence: 1, state: 'confirmed', aiRunId: 'run_alex', privateTo: 'p_alex', reviewedBy: 'p_alex' }).run();
@@ -442,7 +442,7 @@ describe('private_to never reaches another person\'s run, nor another person\'s 
     const { getMonth } = await import('../src/month/plan');
     const whyFor = (viewer: string) => getMonth(db, currentMonth(cfg.timezone), viewer).adults?.find((x) => x.person?.id === 'p_alex')?.picks?.find((x) => x.candidate?.book?.id === 'b_mail')?.why;
     expect(whyFor('p_alex')).toBe('What your takeaway on Value and Price said leads here.');
-    // Sam gets Shelf's own words, as Shelf shows that pick to Sam.
+    // Sam gets Philobiblos's own words, as Philobiblos shows that pick to Sam.
     expect(whyFor('p_sam')).toBeTruthy();
     expect(whyFor('p_sam')).not.toMatch(/takeaway/);
     // Without anything private, the why is everyone's.

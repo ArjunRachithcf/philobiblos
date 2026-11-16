@@ -109,7 +109,7 @@ function OrderPlaces({ admin }: { admin: boolean }) {
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <div>
         <h2 className="card-title" id={`${id}-h`}>Where orders go</h2>
-        <p className="footnote">Compose on This month opens your mail app with the order to this address. Shelf never sends mail and never asks for a card number.</p>
+        <p className="footnote">Compose on This month opens your mail app with the order to this address. Philobiblos never sends mail and never asks for a card number.</p>
       </div>
       {!order ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : admin ? (
         <form className="stack" onSubmit={save} noValidate>
@@ -122,8 +122,8 @@ function OrderPlaces({ admin }: { admin: boolean }) {
             <textarea className="input textarea" id={`${id}-a`} maxLength={300} autoComplete="off" value={address} onChange={(e) => setAddress(e.target.value)} aria-describedby={`${id}-ah`} />
             <span className="hint" id={`${id}-ah`}>It goes into the order text only. It is sealed on the server and never shown here again.</span>
           </div>
-          {order.needsReentry && <Notice kind="warn" title="Enter both addresses again.">They were sealed with a key that has since changed, so Shelf cannot read them. Compose waits until they are saved again.</Notice>}
-          {order.canSeal === false && <Notice kind="warn" title={`The sealing key is ${order.keyProblem ?? 'missing'}.`}>The server’s configuration needs fixing (SHELF_SEALING_KEY). The saved addresses are kept; nothing needs entering again.</Notice>}
+          {order.needsReentry && <Notice kind="warn" title="Enter both addresses again.">They were sealed with a key that has since changed, so Philobiblos cannot read them. Compose waits until they are saved again.</Notice>}
+          {order.canSeal === false && <Notice kind="warn" title={`The sealing key is ${order.keyProblem ?? 'missing'}.`}>The server’s configuration needs fixing (PHILOBIBLOS_SEALING_KEY). The saved addresses are kept; nothing needs entering again.</Notice>}
           {error && <Notice kind="error">{error}</Notice>}
           {ok && <Notice kind="ok">{ok}</Notice>}
           <div className="btn-row"><button type="submit" className="btn btn-primary">Save where orders go</button></div>
@@ -172,7 +172,7 @@ function MonthlyRefresh({ admin }: { admin: boolean }) {
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <div>
         <h2 className="card-title" id={`${id}-h`}>Monthly refresh</h2>
-        <p className="footnote">Once a month Shelf reads the bookshop’s mail, refreshes prices, keeps the month’s picks and tells the adults. A month the server was off for is not made up.</p>
+        <p className="footnote">Once a month Philobiblos reads the bookshop’s mail, refreshes prices, keeps the month’s picks and tells the adults. A month the server was off for is not made up.</p>
       </div>
       {!cycle ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : (
         <>

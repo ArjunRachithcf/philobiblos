@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MEDIA_LIMITS } from '@shelf/contracts/media';
+import { MEDIA_LIMITS } from '@philobiblos/contracts/media';
 import { JobError, loadSharp } from './jobs';
 import { sniff } from './sniff';
 

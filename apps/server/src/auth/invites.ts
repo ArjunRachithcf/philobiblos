@@ -23,7 +23,7 @@ const HOURS: Record<InviteKind, number> = { setup: SETUP_HOURS, admin: INVITE_DA
 
 /**
  * A new one-time link: 'setup', the first admin's (24 h); 'admin', an admin's invite for someone without a passkey
- * (7 days); 'self', your own for another device (24 h); 'recovery', `shelf recover`'s for an admin (24 h).
+ * (7 days); 'self', your own for another device (24 h); 'recovery', `philobiblos recover`'s for an admin (24 h).
  */
 export function createInvite(db: Db, cfg: Pick<Config, 'origin'>, o: { kind: InviteKind; personId?: string; createdBy?: string; now?: Date }) {
   const now = o.now ?? new Date();
@@ -53,7 +53,7 @@ export function useInvite(db: Db, id: string, now = new Date()): boolean {
   return db.update(t.invite).set({ usedAt: now.toISOString() }).where(and(eq(t.invite.id, id), isNull(t.invite.usedAt))).run().changes === 1;
 }
 
-/** An open recovery link (`shelf recover`). */
+/** An open recovery link (`philobiblos recover`). */
 export function openRecovery(db: Db, now = new Date()): boolean {
   return Boolean(db.select({ id: t.invite.id }).from(t.invite)
     .where(and(eq(t.invite.kind, 'recovery'), isNull(t.invite.usedAt), gt(t.invite.expiresAt, now.toISOString()))).get());
@@ -61,7 +61,7 @@ export function openRecovery(db: Db, now = new Date()): boolean {
 
 /**
  * Standalone start-up: while no admin can sign in, a fresh setup link (older ones stop working) is written to
- * SHELF_DATA_DIR/setup-link.txt, readable by Shelf's user only. The log says where the file is, never the link.
+ * PHILOBIBLOS_DATA_DIR/setup-link.txt, readable by Philobiblos's user only. The log says where the file is, never the link.
  * Once an admin can sign in, the file goes, unless it holds an open recovery link.
  */
 export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir'>): string | null {
@@ -75,8 +75,8 @@ export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'd
 }
 
 /**
- * `shelf recover <handle>`: a one-time link (24 hours) for an existing admin to enrol a new passkey, written to the
- * same file as the setup link. For the person who runs Shelf's container (they hold the data folder anyway).
+ * `philobiblos recover <handle>`: a one-time link (24 hours) for an existing admin to enrol a new passkey, written to the
+ * same file as the setup link. For the person who runs Philobiblos's container (they hold the data folder anyway).
  */
 export function createRecoveryLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir'>, handle: string): string {
   if (cfg.mode !== 'standalone') throw new Error('under HomersLab, HomersLab signs people in');

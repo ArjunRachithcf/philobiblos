@@ -6,7 +6,7 @@
 // takeaway leaves the server only in its own person's library. Adults change their own readings and act for kids;
 // nobody changes another adult's.
 import { and, eq, inArray } from 'drizzle-orm';
-import type { components } from '@shelf/contracts/openapi';
+import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson, view, type Person } from '../household/people';
