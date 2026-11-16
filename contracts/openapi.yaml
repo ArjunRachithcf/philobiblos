@@ -438,9 +438,10 @@ components:
             ollamaConfigured: { type: boolean, readOnly: true }
             claudeApiKey: { type: [string, 'null'], writeOnly: true, description: 'sealed like the delivery address (a key outside the database); never sent back. null removes it (and turns Claude off)' }
             hasClaudeKey: { type: boolean, readOnly: true }
-            acceptLeaves: { type: boolean, writeOnly: true, description: 'true: the admin read leavesWithClaude; needed to turn Claude on, or to turn on a job that sends more while it is on' }
+            acceptLeaves: { type: boolean, writeOnly: true, description: 'true: the admin read leavesWithClaude and accepts it as it is; needed to turn Claude on, to turn on a job that sends more while it is on, and again whenever the list holds a line not accepted (leavesAccepted false)' }
             leaves: { type: array, readOnly: true, items: {type: string}, description: 'what leaves the server with this provider (empty for Ollama and none)' }
-            leavesWithClaude: { type: array, readOnly: true, items: {type: string}, description: 'what would leave with Claude and these jobs, shown before opting in' }
+            leavesWithClaude: { type: array, readOnly: true, items: {type: string}, description: 'what would leave with Claude and these jobs, shown before opting in: built from the fields each job''s requests may hold' }
+            leavesAccepted: { type: boolean, readOnly: true, description: 'Claude is on and an admin accepted every line of leaves; while false Claude is not called' }
             jobs: { type: object, properties: { read: {type: boolean}, link: {type: boolean}, suggest: {type: boolean}, explain: {type: boolean}, wildcards: {type: boolean} } }
         person: { type: object, description: settings of the current person, properties: { mix: { enum: [deepen_connect, deepen_broaden, ai] }, unreadLimit: {type: integer}, counterpoints: {type: boolean}, takeaways: {type: boolean}, takeawaysToAi: { type: boolean, description: 'whether any AI (local or not) may read your takeaways; off unless you turn it on' }, fiction: {type: boolean}, weights: { type: object, additionalProperties: {type: number} } } }
         kidsThemes: { type: array, items: { type: object, properties: { theme: {type: string}, enabled: {type: boolean} } } }

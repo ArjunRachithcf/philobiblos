@@ -5,14 +5,14 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import { SealError, sealingKey, unseal } from '../household/sealed';
 import { aiEgressRules, createEgress, type Egress, type Rule } from '../net/egress';
-import { CLAUDE_KEY, getAi } from './settings';
+import { CLAUDE_KEY, getAi, leavesAccepted } from './settings';
 
 export type ModelFor = { model: Model; why?: undefined } | { model: null; why: string };
 export interface ModelDeps { egress?: (rules: Rule[]) => Egress }
 
 const transport = (e: Egress): Transport => async (url, body, o) => (await e.post(url, body, o)).body;
 
-/** The model the AI jobs use now, or why there is none (the AI off, Ollama not configured, no Claude key). */
+/** The model the AI jobs use now, or why there is none (the AI off, Ollama not configured, no Claude key, Claude's list not accepted). */
 export function modelFor(db: Db, cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sealingKey'>, deps: ModelDeps = {}): ModelFor {
   const s = getAi(db);
   if (s.provider === 'none') return { model: null, why: 'the AI is off (Settings)' };
@@ -22,6 +22,8 @@ export function modelFor(db: Db, cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sea
     if (!cfg.ollamaUrl) return { model: null, why: 'no Ollama is configured (OLLAMA_URL)' };
     return { model: createOllamaModel({ url: cfg.ollamaUrl, model: s.models.ollama.model, visionModel: s.models.ollama.visionModel, transport: transport(egress(aiEgressRules('ollama', cfg.ollamaUrl))) }) };
   }
+  // Claude only while an admin's acceptance covers everything that leaves now (a newer Shelf may send more).
+  if (!leavesAccepted(s)) return { model: null, why: 'what goes to Anthropic changed since an admin accepted it: an admin reads it again and accepts it (Settings)' };
   let apiKey: string | null = null;
   try { apiKey = unseal(db, sealingKey(cfg), CLAUDE_KEY); } catch (e) { if (!(e instanceof SealError)) throw e; }
   if (!apiKey) return { model: null, why: 'the Claude API key is missing or sealed under another key: an admin enters it again' };

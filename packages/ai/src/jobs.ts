@@ -18,6 +18,31 @@ export function line(v: unknown, max: number): string | null {
 const norm = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const books = (b: { id: string; title: string; authors?: string[] }) => ({ id: b.id, title: line(b.title, 300) ?? '', authors: (b.authors ?? []).slice(0, 5).map((a) => line(a, 200)).filter(Boolean) });
 
+/**
+ * What can leave Shelf, field by field, in the words Settings shows (Settings.ai.leaves, the list an admin accepts before
+ * Claude is on). Each job's `sends` names the field of every key its request holds, and buildPrompt refuses a request
+ * holding a key its job does not name: the list and the requests are built from the same table, so they cannot drift.
+ * The order here is the order of Settings' lines.
+ */
+export const FIELDS = {
+  share: "A shared post's images (as Shelf re-encoded them), caption and link, for the person who shared it, one share per request",
+  backlogBook: "Each book in an adult's backlog, one book per request: its title, authors and description",
+  bookIdeas: 'The ideas proposed for that book',
+  ideaNames: "The names of the household's ideas",
+  kidsThemes: "Shelf's list of kids' themes",
+  readBooks: "One adult's read books, up to 60 (titles, authors and ideas), one person per request, without their name",
+  takeaways: 'With them, the takeaways of an adult who turned on "Takeaways to the AI" (nobody else\'s)',
+  readingMap: "One adult's reading map (the names of their ideas, how many books they read in each, which layers are empty), one person per request, without their name",
+  backlogTitles: "With it, the titles in that adult's backlog, up to 300",
+  ownedTitles: "The titles of the household's owned books, up to 200",
+  ownedBooks: "The household's owned books in the same ideas as a backlog book (titles and authors), up to 200",
+  pick: "Each adult's pick for this month, one pick per request: its title, authors, its idea and what it does there (intro, deepen, …), without their name",
+  buildsOn: "With it, the titles of that adult's read books the pick builds on, up to 10",
+  ids: "Shelf's own ids of those books (they mean nothing outside Shelf)",
+  jobSettings: "A job's own settings (how many suggestions, whether a wildcard may be one)",
+} as const;
+export type Field = keyof typeof FIELDS;
+
 /** How much of a list a job sends at most. */
 export const SEND = { readBooks: 60, owned: 200, backlog: 300, ideas: 60, vocabulary: 200, blurb: 2000, caption: 5000, takeaway: 300, images: 30 } as const;
 
@@ -26,12 +51,15 @@ interface Spec<I, O> {
   prompt: string;
   version: number;
   maxTokens: number;
+  /** The field (FIELDS) of every key path the request may hold: `a.b` is key b in a's objects (or its array's items). */
+  sends: Record<string, Field>;
   split(i: I): { data: Record<string, unknown>; untrusted: [string, unknown][] };
   clean(o: O, i: I, images: number): Clean<O>;
 }
 
 const extractTitles: Spec<ExtractTitlesIn, ExtractTitlesOut> = {
   prompt: 'extract_titles', version: 1, maxTokens: 4096,
+  sends: { images: 'share', caption: 'share', link: 'share' },
   split: (i) => ({ data: { images: Math.min(i.images.length, SEND.images) }, untrusted: [['caption', line(i.caption, SEND.caption)], ['link', line(i.url, 2000)]] }),
   clean(o, _i, images) {
     const out = o.books.slice(0, 50).flatMap((b) => {
@@ -50,7 +78,8 @@ const extractTitles: Spec<ExtractTitlesIn, ExtractTitlesOut> = {
 };
 
 const tagBook: Spec<TagBookIn, TagBookOut> = {
-  prompt: 'tag_book', version: 1, maxTokens: 1024,
+  prompt: 'tag_book', version: 1, maxTokens: 2048,
+  sends: { ideaVocabulary: 'ideaNames', kidsThemes: 'kidsThemes', book: 'backlogBook', 'book.id': 'ids', 'book.title': 'backlogBook', 'book.authors': 'backlogBook', blurb: 'backlogBook' },
   split: (i) => ({
     data: { ideaVocabulary: i.ideaVocabulary.slice(0, SEND.vocabulary), kidsThemes: i.kidsThemes },
     untrusted: [['book', books(i.book)], ['blurb', line(i.blurb, SEND.blurb)]],
@@ -73,6 +102,11 @@ const tagBook: Spec<TagBookIn, TagBookOut> = {
 
 const proposeLinks: Spec<ProposeLinksIn, ProposeLinksOut> = {
   prompt: 'propose_links', version: 1, maxTokens: 2048,
+  sends: {
+    book: 'backlogBook', 'book.id': 'ids', 'book.title': 'backlogBook', 'book.authors': 'backlogBook', 'book.ideas': 'bookIdeas', 'book.ideas.name': 'bookIdeas', 'book.ideas.layer': 'bookIdeas',
+    readBooks: 'readBooks', 'readBooks.id': 'ids', 'readBooks.title': 'readBooks', 'readBooks.authors': 'readBooks', 'readBooks.ideas': 'readBooks', 'readBooks.ideas.name': 'readBooks', 'readBooks.ideas.layer': 'readBooks',
+    'readBooks.takeaway': 'takeaways',
+  },
   split: (i) => ({
     data: {},
     untrusted: [
@@ -96,6 +130,10 @@ const proposeLinks: Spec<ProposeLinksIn, ProposeLinksOut> = {
 
 const suggestNext: Spec<SuggestNextIn, SuggestNextOut> = {
   prompt: 'suggest_next', version: 1, maxTokens: 2048,
+  sends: {
+    wildcards: 'jobSettings', max: 'jobSettings', brain: 'readingMap', 'brain.ideas': 'readingMap', 'brain.ideas.name': 'readingMap', 'brain.ideas.readCount': 'readingMap', 'brain.ideas.layersFilled': 'readingMap', 'brain.ideas.gaps': 'readingMap',
+    backlogTitles: 'backlogTitles', owned: 'ownedTitles',
+  },
   split: (i) => ({
     data: { wildcards: i.wildcards, max: Math.min(i.max, 3), brain: { ideas: i.brain.ideas.slice(0, SEND.ideas).map((x) => ({ name: line(x.name, 60), readCount: x.readCount, layersFilled: x.layersFilled, gaps: x.gaps })) } },
     untrusted: [['owned', i.owned.slice(0, SEND.owned).map((t) => line(t, 300))], ['backlogTitles', i.backlogTitles.slice(0, SEND.backlog).map((t) => line(t, 300))]],
@@ -116,7 +154,8 @@ const suggestNext: Spec<SuggestNextIn, SuggestNextOut> = {
 };
 
 const explainPick: Spec<ExplainPickIn, ExplainPickOut> = {
-  prompt: 'explain_pick', version: 1, maxTokens: 512,
+  prompt: 'explain_pick', version: 1, maxTokens: 2048,
+  sends: { move: 'pick', idea: 'pick', book: 'pick', 'book.id': 'ids', 'book.title': 'pick', 'book.authors': 'pick', buildsOn: 'buildsOn' },
   split: (i) => ({ data: { move: i.move, idea: line(i.idea, 60) }, untrusted: [['book', books(i.pick)], ['buildsOn', i.buildsOn.slice(0, 10).map((t) => line(t, 300))]] }),
   clean(o) {
     const why = line(o.why, EXPLAIN_MAX);
@@ -125,7 +164,8 @@ const explainPick: Spec<ExplainPickIn, ExplainPickOut> = {
 };
 
 const checkRedundant: Spec<CheckRedundantIn, CheckRedundantOut> = {
-  prompt: 'check_redundant', version: 1, maxTokens: 512,
+  prompt: 'check_redundant', version: 1, maxTokens: 2048,
+  sends: { book: 'backlogBook', 'book.id': 'ids', 'book.title': 'backlogBook', 'book.authors': 'backlogBook', owned: 'ownedBooks', 'owned.id': 'ids', 'owned.title': 'ownedBooks', 'owned.authors': 'ownedBooks' },
   split: (i) => ({ data: {}, untrusted: [['book', books(i.candidate)], ['owned', i.owned.slice(0, SEND.owned).map(books)]] }),
   clean(o, i) {
     const ids = new Set(i.owned.slice(0, SEND.owned).map((b) => b.id));
@@ -135,6 +175,21 @@ const checkRedundant: Spec<CheckRedundantIn, CheckRedundantOut> = {
     return { ok: true, out: o.repeats && ids.has(o.repeats) ? { repeats: o.repeats, ...(reason ? { reason } : {}) } : {} };
   },
 };
+
+/** Every key path of a value (`a.b`: key b of a's objects, or of its array's items), the root's own name first. */
+export function keyPaths(root: string, v: unknown, out = new Set<string>()): Set<string> {
+  if (root) out.add(root);
+  if (Array.isArray(v)) { for (const x of v) keyPaths(root, x, out); return out; }
+  if (v && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) if (x !== undefined && x !== null) keyPaths(root ? `${root}.${k}` : k, x, out);
+  }
+  return out;
+}
+
+/** The fields (FIELDS) a job may send: what Settings lists for it. */
+export function fieldsOf(job: JobName): Set<Field> {
+  return new Set(Object.values(JOBS[job].sends));
+}
 
 /** True when the input carries a person's takeaway (only proposeLinks sends them, from library/ai-context.ts). */
 export function holdsTakeaways<J extends JobName>(job: J, input: JobIO[J][0]): boolean {

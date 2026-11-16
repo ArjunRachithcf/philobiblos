@@ -6,10 +6,10 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createClaudeModel, createOllamaModel, fakeModel } from '@shelf/ai';
+import { FIELDS, JOBS, JOB_NAMES, buildPrompt, createClaudeModel, createOllamaModel, fakeModel, keyPaths, type Field, type JobName } from '@shelf/ai';
 import { AI_LIMITS, AiBudget, AiError, runAi, scrub } from '../src/ai/run';
 import { modelFor } from '../src/ai/model';
-import { CLAUDE_KEY, SealKeyMissing, checkAi, leaves } from '../src/ai/settings';
+import { CLAUDE_KEY, DEFAULT_JOBS, JOBS_OF, SealKeyMissing, checkAi, leaves } from '../src/ai/settings';
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
@@ -75,7 +75,7 @@ describe('runAi', () => {
   it('every call gets its provider\'s deadline, and the job\'s token limit', async () => {
     const m = fakeModel(() => tag);
     await runAi(household(), m, 'tagBook', tagIn, { budget: new AiBudget() });
-    expect(m.requests[0]).toMatchObject({ timeoutMs: AI_LIMITS.timeoutMs.fake, maxTokens: 1024 });
+    expect(m.requests[0]).toMatchObject({ timeoutMs: AI_LIMITS.timeoutMs.fake, maxTokens: 2048 });
     expect(AI_LIMITS.timeoutMs).toMatchObject({ ollama: 180_000, claude: 90_000 });
   });
 
@@ -242,6 +242,58 @@ describe('the providers over the egress client (mock servers)', () => {
   });
 });
 
+/** Each job's request with every field it can hold (a takeaway too), as the jobs build them. */
+const FULL: { [J in JobName]: Parameters<typeof buildPrompt<J>>[1] } = {
+  extractTitles: { images: [{ path: 'shares/x/00.jpg', mimeType: 'image/jpeg' }], caption: 'Three books', url: 'https://example.test/p' },
+  tagBook: tagIn,
+  proposeLinks: { candidate: { id: 'b1', title: 'A Ledger', authors: ['A. Writer'], ideas: [{ name: 'Markets', layer: 'core', confidence: 1 }] }, readBooks: [{ id: 'b2', title: 'Old Coins', authors: ['B'], ideas: [{ name: 'Markets', layer: 'intro', confidence: 1 }], takeaway: 'coins were trust' }] },
+  suggestNext: { brain: { ideas: [{ name: 'Markets', readCount: 2, layersFilled: ['intro'], gaps: ['core'] }] }, backlogTitles: ['A Ledger'], owned: ['Old Coins'], wildcards: true, max: 3 },
+  explainPick: { pick: { id: 'b1', title: 'A Ledger', authors: ['A. Writer'] }, move: 'deepen', buildsOn: ['Old Coins'], idea: 'Markets' },
+  checkRedundant: { candidate: { id: 'b1', title: 'A Ledger', authors: ['A. Writer'] }, owned: [{ id: 'b2', title: 'Old Coins', authors: ['B'] }] },
+};
+/** The key paths a request really holds: its <input> block and each <untrusted> block, read back from the bytes. */
+function requestPaths(user: string): Set<string> {
+  const out = new Set<string>();
+  keyPaths('', JSON.parse(/<input>\n(.*)\n<\/input>/.exec(user)![1]!), out);
+  for (const m of user.matchAll(/<untrusted source="(\w+)">\n(.*)\n<\/untrusted>/g)) keyPaths(m[1]!, JSON.parse(m[2]!), out);
+  return out;
+}
+
+describe("Settings' list of what leaves is what the requests hold", () => {
+  it('every field of every job\'s request is a line of leaves while its job is on, and no line while it is off', () => {
+    const all = leaves('claude', DEFAULT_JOBS);
+    for (const job of JOB_NAMES) {
+      const paths = requestPaths(buildPrompt(job, FULL[job] as never, 1).user);
+      expect(paths.size, job).toBeGreaterThan(0);
+      for (const p of paths) {
+        const f = JOBS[job].sends[p] as Field | undefined;
+        expect(f, `${job}: ${p} is not listed`).toBeDefined();
+        expect(all, `${job}: ${p}`).toContain(FIELDS[f!]);
+      }
+      // Its switch off and every other on: a field only it sends is gone from the list.
+      const sw = (Object.keys(JOBS_OF) as (keyof typeof JOBS_OF)[]).find((k) => JOBS_OF[k].includes(job))!;
+      const without = leaves('claude', { ...DEFAULT_JOBS, [sw]: false });
+      const others = new Set((Object.keys(JOBS_OF) as (keyof typeof JOBS_OF)[]).filter((k) => k !== sw).flatMap((k) => JOBS_OF[k]).flatMap((j) => Object.values(JOBS[j].sends)));
+      for (const p of paths) { const f = JOBS[job].sends[p]!; if (!others.has(f)) expect(without, `${job}: ${p}`).not.toContain(FIELDS[f]); }
+    }
+    // The reading of one person, the household's shelf and this month's picks are on the list.
+    expect(all).toEqual(expect.arrayContaining([FIELDS.readBooks, FIELDS.takeaways, FIELDS.readingMap, FIELDS.backlogTitles, FIELDS.ownedTitles, FIELDS.pick, FIELDS.buildsOn]));
+    expect(leaves('claude', { ...DEFAULT_JOBS, link: false }).join(' ')).not.toMatch(/takeaways|read books, up to 60/i);
+    expect(leaves('claude', { ...DEFAULT_JOBS, suggest: false })).not.toContain(FIELDS.readingMap);
+    expect(leaves('claude', { ...DEFAULT_JOBS, explain: false })).not.toContain(FIELDS.pick);
+  });
+
+  it('a request holding a key its job does not list is refused before it is built', () => {
+    const sends = JOBS.tagBook.sends as Record<string, Field>;
+    const was = sends.blurb!;
+    delete sends.blurb;
+    try {
+      expect(() => buildPrompt('tagBook', tagIn)).toThrow(/blurb.*Settings does not list/);
+      expect(() => buildPrompt('tagBook', { ...tagIn, blurb: undefined })).not.toThrow();
+    } finally { sends.blurb = was; }
+  });
+});
+
 describe('Settings.ai and the opt-in', () => {
   const built: BuiltApp[] = [];
   afterEach(async () => { for (const b of built.splice(0)) await b.app.close(); });
@@ -261,7 +313,9 @@ describe('Settings.ai and the opt-in', () => {
     const s = (await a.get()).ai;
     expect(s).toMatchObject({ provider: 'ollama', model: 'llama3.2', visionModel: null, claudeModel: 'claude-opus-5-5', ollamaUrl: 'http://ollama.lan:11434', ollamaConfigured: true, hasClaudeKey: false, leaves: [] });
     expect((s.leavesWithClaude as string[]).join(' ')).toMatch(/api\.anthropic\.com/);
-    expect((s.leavesWithClaude as string[]).join(' ')).toMatch(/Never: names of people or kids, the delivery address/);
+    expect((s.leavesWithClaude as string[]).join(' ')).toMatch(/Never: anyone's name, the delivery address/);
+    // Each request is one person's reading: the list never says otherwise.
+    expect((s.leavesWithClaude as string[]).join(' ')).not.toMatch(/who reads what/);
     expect(leaves('ollama', { read: true, link: true, suggest: true, explain: true, wildcards: true })).toEqual([]);
     expect(leaves('claude', { read: false, link: false, suggest: true, explain: true, wildcards: true }).join(' ')).not.toMatch(/images|takeaways/i);
   });
@@ -333,5 +387,29 @@ describe('Settings.ai and the opt-in', () => {
     await a.patch(a.alex, { provider: 'none' });
     expect(modelFor(a.db, a.cfg, deps).model).toBeNull();
   });
-});
 
+  it('an acceptance covers the list it was given: a line it does not hold pauses Claude until an admin accepts again', async () => {
+    const a = await app();
+    const deps = { egress: (rules: Rule[]) => createEgress({ rules }) };
+    expect((await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: true })).statusCode).toBe(200);
+    expect((await a.get()).ai).toMatchObject({ provider: 'claude', leavesAccepted: true });
+    expect(modelFor(a.db, a.cfg, deps).model).toMatchObject({ provider: 'claude' });
+    // A job off keeps it accepted (it sends less).
+    expect((await a.patch(a.alex, { jobs: { explain: false } })).statusCode).toBe(200);
+    expect((await a.get()).ai.leavesAccepted).toBe(true);
+    // A newer Shelf whose list holds a line the admin never saw (here: the stored acceptance lacks one).
+    const stored = JSON.parse(a.db.select().from(t.householdSettings).get()!.aiLeavesAccepted!) as string[];
+    a.db.update(t.householdSettings).set({ aiLeavesAccepted: JSON.stringify(stored.filter((l) => l !== FIELDS.readBooks)) }).run();
+    expect((await a.get()).ai).toMatchObject({ provider: 'claude', leavesAccepted: false });
+    expect(modelFor(a.db, a.cfg, deps)).toMatchObject({ model: null, why: expect.stringMatching(/accept/) });
+    // Changing anything else keeps it paused; accepting the list as it is now resumes it.
+    expect((await a.patch(a.alex, { claudeModel: 'claude-sonnet-5-5' })).statusCode).toBe(200);
+    expect(modelFor(a.db, a.cfg, deps).model).toBeNull();
+    expect((await a.patch(a.alex, { acceptLeaves: true })).statusCode).toBe(200);
+    expect((await a.get()).ai.leavesAccepted).toBe(true);
+    expect(modelFor(a.db, a.cfg, deps).model).toMatchObject({ provider: 'claude', model: 'claude-sonnet-5-5' });
+    // Nothing accepted at all (a household from before this list was stored): paused.
+    a.db.update(t.householdSettings).set({ aiLeavesAccepted: null }).run();
+    expect(modelFor(a.db, a.cfg, deps).model).toBeNull();
+  });
+});

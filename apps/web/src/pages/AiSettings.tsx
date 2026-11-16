@@ -27,7 +27,8 @@ export function AiSettings({ admin }: { admin: boolean }) {
   // A new choice of provider asks again: the tick is for the list shown with it.
   useEffect(() => { setAccept(false); }, [provider]);
 
-  const optingIn = provider === 'claude' && ai?.provider !== 'claude';
+  // Turning Claude on, or Claude on with a list an admin has not accepted as it is now (a newer Shelf sends more).
+  const optingIn = provider === 'claude' && (ai?.provider !== 'claude' || ai?.leavesAccepted !== true);
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null); setOk('');
@@ -57,7 +58,9 @@ export function AiSettings({ admin }: { admin: boolean }) {
       {!ai ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : (
         <>
           {ai.provider === 'claude'
-            ? <Notice kind="info" title="Claude is on. This leaves the server:">{list(ai.leaves)}</Notice>
+            ? ai.leavesAccepted
+              ? <Notice kind="info" title="Claude is on. This leaves the server:">{list(ai.leaves)}</Notice>
+              : <Notice kind="warn" title="Claude is paused.">What goes to Anthropic changed since an admin accepted it. Nothing is sent until an admin reads the list again and accepts it.</Notice>
             : ai.provider === 'ollama'
               ? <p>Ollama{ai.ollamaUrl ? <> at <b>{ai.ollamaUrl}</b></> : ''}: nothing leaves your home network.{!ai.ollamaConfigured && ' It is not set up on the server yet (OLLAMA_URL).'}</p>
               : <p>The AI is off.</p>}

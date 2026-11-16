@@ -61,6 +61,8 @@ export const householdSettings = sqliteTable('household_settings', {
   timezone: text('timezone').notNull().default('Europe/Zurich'),
   // The AI's models (M3 g): {"ollama": {"model", "visionModel"}, "claude": {"model"}}; the Claude key is sealed, never here.
   aiModelsJson: text('ai_models_json').notNull().default('{}'),
+  // The lines of Settings' "what leaves" an admin accepted with Claude (JSON array; ai/settings.ts leavesAccepted).
+  aiLeavesAccepted: text('ai_leaves_accepted'),
 }, (t) => [
   check('household_settings_one', sql`${t.id} = 1`),
   check('household_settings_ai_provider', sql`${t.aiProvider} IN ('claude','ollama','none')`),

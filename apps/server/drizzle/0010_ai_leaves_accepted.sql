@@ -1,0 +1,1 @@
+ALTER TABLE `household_settings` ADD `ai_leaves_accepted` text;

@@ -57,12 +57,18 @@ household's idea names and themes, settings) as JSON in an `<input>` block, and 
 caption and link, a book's title and authors, a blurb, a takeaway) in an `<untrusted source="…">` block, JSON with `<`,
 `>` and `&` escaped, so that nothing inside can end the block.
 
-Privacy: with Ollama nothing leaves the home network. With Claude (opt-in), only book metadata, idea names and the
-reading map's counts, and shared images with their captions and links leave it (and the takeaways of those who turned
-them on, below), to `api.anthropic.com` only. Turning Claude on is an admin's request with `acceptLeaves: true`; the API
-key is sealed like the delivery address and never answered back. A person's takeaways reach no AI, Ollama included, unless that person turns on `takeawaysToAi` (off by
-default; `apps/server/src/library/ai-context.ts` is the one place that hands them out). Settings shows
-this list (`Settings.ai.leaves`) before the opt-in and while Claude is on. Names of people and kids never leave.
+Privacy: with Ollama nothing leaves the home network. With Claude (opt-in), what leaves is exactly what Settings lists
+(`Settings.ai.leaves`), to `api.anthropic.com` only. The list is built from the fields each turned-on job's requests may
+hold (`FIELDS` and each job's `sends` in `packages/ai/src/jobs.ts`), and `buildPrompt` refuses a request holding a key
+its job does not list, so the two cannot drift. It says what that means: each request is one person's (one adult's
+read books, up to 60, with their takeaways if they turned them on; one adult's reading map with their backlog's titles;
+one adult's pick with the read books it builds on), without their name, plus the books themselves, the household's idea
+names, owned titles and shared posts. Turning Claude on is an admin's request with `acceptLeaves: true`; the accepted
+lines are stored, and while the list holds a line they do not (a job turned on, a newer Shelf that sends more), Claude
+is not called until an admin accepts again. The API key is sealed like the delivery address and never answered back. A
+person's takeaways reach no AI, Ollama included, unless that person turns on `takeawaysToAi` (off by default;
+`apps/server/src/library/ai-context.ts` is the one place that hands them out). Names of people and kids and the delivery
+address never leave.
 
 **Where the output goes** (`apps/server/src/ai/jobs.ts`): `extractTitles` → the share's found books (the Inbox offers
 them; without a vision model, the caption only, and the Inbox says so); `tagBook` → proposed book ideas (adults' books;

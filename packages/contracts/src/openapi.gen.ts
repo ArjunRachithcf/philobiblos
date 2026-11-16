@@ -1156,12 +1156,14 @@ export interface components {
                 /** @description sealed like the delivery address (a key outside the database); never sent back. null removes it (and turns Claude off) */
                 claudeApiKey?: string | null;
                 readonly hasClaudeKey?: boolean;
-                /** @description true: the admin read leavesWithClaude; needed to turn Claude on, or to turn on a job that sends more while it is on */
+                /** @description true: the admin read leavesWithClaude and accepts it as it is; needed to turn Claude on, to turn on a job that sends more while it is on, and again whenever the list holds a line not accepted (leavesAccepted false) */
                 acceptLeaves?: boolean;
                 /** @description what leaves the server with this provider (empty for Ollama and none) */
                 readonly leaves?: string[];
-                /** @description what would leave with Claude and these jobs, shown before opting in */
+                /** @description what would leave with Claude and these jobs, shown before opting in: built from the fields each job's requests may hold */
                 readonly leavesWithClaude?: string[];
+                /** @description Claude is on and an admin accepted every line of leaves; while false Claude is not called */
+                readonly leavesAccepted?: boolean;
                 jobs?: {
                     read?: boolean;
                     link?: boolean;
