@@ -13,10 +13,16 @@ as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), rea
 
 **Every mail is hostile input.** Forwarded mail can be spoofed, so before a mail has any effect:
 
-- the original sender (the forwarded `From`, and `Return-Path`/`Sender` where present) must be the bookshop's domain;
+- the original sender (the forwarded `From`, exactly one address, and `Sender` where present) must be the bookshop's
+  domain; `Return-Path` is not checked, because a forwarding filter rewrites it to the forwarder (SRS) (M3 c);
 - the DKIM signature of the bookshop's domain must pass, or, for a forward that broke it, the `ARC-Authentication-Results`
   of the forwarding provider must show `dkim=pass` for that domain; a mail that fails, or has neither, is stored with
-  `accepted = 0` and shown in the Inbox as "not verified", and changes nothing;
+  `accepted = 0` and shown in the Inbox as "not verified", and changes nothing (and none of its content is kept). The
+  forwarding providers whose ARC seal counts are `SHELF_MAIL_ARC_SEALERS` (default `google.com`); DNS is asked only for
+  DKIM key records (`<selector>._domainkey.<domain>`, a few per mail), never SPF, DMARC or anything a mail names;
+- what is kept of a verified mail is the bookshop's own words: quoted lines and everything below a reply header are
+  dropped (the household's request, with its delivery address and card number, is quoted in the replies), and runs of
+  12 or more digits that are not an ISBN/EAN are masked;
 - links in mail are never followed, fetched or shown as clickable; images are not loaded;
 - bodies are parsed as text with size limits (1 MB per mail, 10 MB per attachment, only `application/pdf` attachments
   are read); PDFs are parsed in the media worker (ADR 0009), never in the server process;

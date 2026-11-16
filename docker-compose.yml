@@ -24,6 +24,9 @@ services:
       SHELF_IMAP_HOST: ${SHELF_IMAP_HOST:-}
       SHELF_IMAP_USER: ${SHELF_IMAP_USER:-}
       SHELF_IMAP_PASSWORD: ${SHELF_IMAP_PASSWORD:-}
+      SHELF_IMAP_FOLDER: ${SHELF_IMAP_FOLDER:-INBOX}
+      # Whose ARC seal vouches for a forward that broke the bookshop's DKIM: your mail provider's (Gmail: google.com).
+      SHELF_MAIL_ARC_SEALERS: ${SHELF_MAIL_ARC_SEALERS:-google.com}
     # work/ is shared with the media worker (:z, shared label): in/ the server's, out/ the worker's; only jobs in flight.
     volumes: [ "./data:/data:Z", "./keys:/keys:Z", "./work:/work:z" ]
     ports: [ "127.0.0.1:${SHELF_PORT:-8080}:8080" ]

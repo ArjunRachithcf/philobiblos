@@ -278,6 +278,14 @@ export const mailSeen = sqliteTable('mail_seen', {
   accepted: integer('accepted').notNull().default(0),
 });
 
+// Where the mail reader stopped, per folder (ADR 0007): new messages are those after last_uid while uid_validity holds.
+export const mailCursor = sqliteTable('mail_cursor', {
+  folder: text('folder').primaryKey(),
+  uidValidity: integer('uid_validity').notNull(),
+  lastUid: integer('last_uid').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 export const shareToken = sqliteTable('share_token', {
   id: text('id').primaryKey(),
   personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),

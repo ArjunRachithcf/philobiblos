@@ -8,3 +8,7 @@ allowBuilds:
 # pdfjs-dist renders with @napi-rs/canvas; the worker only reads text, so that native module is never installed.
 ignoredOptionalDependencies:
   - '@napi-rs/canvas'
+# mailauth 8.0.4 (DKIM and ARC checks, M3 c) pins versions with known advisories; the patched ones instead.
+overrides:
+  joi: 18.3.1
+  fast-xml-parser: 5.12.0

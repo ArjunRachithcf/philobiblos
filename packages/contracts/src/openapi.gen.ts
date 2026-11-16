@@ -736,7 +736,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Admins only. prices, metadata and covers run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
+        /** @description Admins only. prices, metadata, covers and mail run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
         post: operations["runJob"];
         delete?: never;
         options?: never;

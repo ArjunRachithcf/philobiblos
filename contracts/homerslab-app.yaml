@@ -35,6 +35,8 @@ config:
   - { key: SHELF_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
   - { key: SHELF_IMAP_HOST, optional: true, description: IMAP host of the Shelf-only mailbox (port 993, TLS only) }
   - { key: SHELF_IMAP_USER, optional: true, description: Its user name }
+  - { key: SHELF_IMAP_FOLDER, optional: true, description: 'The folder the bookshop''s mail arrives in (default INBOX)' }
+  - { key: SHELF_MAIL_ARC_SEALERS, optional: true, description: 'Mail providers whose ARC seal vouches for a forward that broke the bookshop''s DKIM (default google.com)' }
   - { key: OLLAMA_URL, optional: true, description: The local Ollama (the default AI provider) }
 network:
   # Enforced by Shelf's own HTTP client as well (ADR 0009): nothing else is reachable from the app.
