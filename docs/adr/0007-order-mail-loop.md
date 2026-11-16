@@ -6,6 +6,10 @@
 
 Status: **Accepted** · 2026-11-15 (revised the same day: no Gmail API, see "Changed")
 
+> **Superseded in part** (2026-11-16, ADR 0011): "never sends mail" now has one exception. Standalone Philobiblos
+> may send a 6-digit code for a join rule's mail domain, through an optional outgoing SMTP server that is off by default.
+> Orders still go out only through Compose, and nothing else is ever sent.
+
 **Decision**: Shelf reads the bookshop's mail from a **Shelf-only mailbox over IMAP** and never sends mail. Orders go
 out through a **Compose** action: a `mailto:` link with the text filled in, opened in the person's own mail app.
 

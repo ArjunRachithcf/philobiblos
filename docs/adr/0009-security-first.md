@@ -6,6 +6,10 @@
 
 Status: **Accepted** · 2026-11-15
 
+> **Superseded in part** (2026-11-16, ADR 0011): the egress allowlist also holds the optional outgoing SMTP host, only
+> when it is set (TLS, certificate verified), for join codes alone. Its client is the one outgoing mail connection, and
+> the architecture test that keeps every other connection out covers it.
+
 **Decision**: Shelf ranks security above polish, and polish above features, as HomersLab does. The threat model is in
 `docs/security.md`; these rules follow from it and bind every milestone.
 
