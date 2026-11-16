@@ -542,6 +542,8 @@ describe('shelf#15: the round-3 nits', () => {
         { ean: null, title: 'The Long Tide of Markets', totalC: 1990, eanUnreadable: true }, { ean: '9780000000019' },
       ] });
     }
+    // A whole row with no leading digits (a gift card, say) is no book row: not a line, not in the sum (PR #16 review).
+    expect(parseInvoice('1', [ok, ['Gutschein Geschenkkarte', '1 ST', '50.00', '50.00 CHF', '0 %']], false, [])).toMatchObject({ kind: 'invoice', totalC: 1690, lines: [{ ean: '9780000000019' }] });
     // A row that is not a book row (no ST, no CHF, no VAT) is still left alone.
     expect(parseInvoice('1', [['Kundennummer', '5550001'], ok], false, [])).toMatchObject({ kind: 'invoice', lines: [{ ean: '9780000000019' }] });
     const db = world();

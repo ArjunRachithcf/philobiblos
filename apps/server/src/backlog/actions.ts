@@ -29,11 +29,8 @@ const text = (v: unknown, name: string, max: number, required: boolean): string 
   return v.trim() || null;
 };
 
-/**
- * POST /backlog: a book by hand, for yourself or a kid (`for`: a handle, `me` or nothing). The Inbox adds through here
- * too, with the share it came from.
- */
-export function addToBacklog(db: Db, me: string, body: unknown, now = new Date(), from: { origin: 'manual' | 'share'; shareId: string | null } = { origin: 'manual', shareId: null }): string {
+/** POST /backlog: a book by hand, for yourself or a kid (`for`: a handle, `me` or nothing). */
+export function addToBacklog(db: Db, me: string, body: unknown, now = new Date()): string {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BacklogError(400, 'a JSON object is needed');
   const b = body as Record<string, unknown>;
   for (const k of Object.keys(b)) if (!['title', 'author', 'isbn13', 'for'].includes(k)) throw new BacklogError(400, `unknown field ${k}`);
@@ -57,7 +54,7 @@ export function addToBacklog(db: Db, me: string, body: unknown, now = new Date()
         audience: target.role === 'kid' ? 'kids' : 'adult', normKey: `${norm(title)}|${norm(author ?? '')}`, createdAt: iso,
       }).run();
     }
-    const r = tx.insert(t.candidate).values({ personId: target.id, bookId, origin: from.origin, shareId: from.shareId, addedAt: iso, touchedAt: iso }).onConflictDoNothing().run();
+    const r = tx.insert(t.candidate).values({ personId: target.id, bookId, origin: 'manual', addedAt: iso, touchedAt: iso }).onConflictDoNothing().run();
     if (r.changes === 0) throw new BacklogError(409, 'already in that backlog');
   });
   return candidateId(target.id, bookId!);

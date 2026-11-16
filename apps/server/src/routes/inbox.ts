@@ -3,7 +3,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { FILTERS, InboxError, decide, dismiss, listInbox, type Filter } from '../inbox/inbox';
+import { FILTERS, InboxError, PAGE, decide, dismiss, listInbox, parseCursor, type Filter } from '../inbox/inbox';
 import { SHARE_RATE, ShareError, ownShare, receiveShare, shareView, type ShareProcessor } from '../shares/shares';
 import { Limiter, TokenError, createShareToken, revokeShareToken, tokenView } from '../shares/tokens';
 import * as t from '../db/schema';
@@ -15,10 +15,14 @@ export async function inboxRoutes(app: FastifyInstance, cfg: Config, db: Db, sha
     throw e;
   };
 
-  app.get<{ Querystring: { filter?: string } }>('/inbox', async (req, reply) => {
+  app.get<{ Querystring: { filter?: string; cursor?: string; limit?: string } }>('/inbox', async (req, reply) => {
     const f = req.query.filter ?? 'all';
     if (!FILTERS.includes(f as Filter)) return reply.code(400).send({ error: `filter: ${FILTERS.join(', ')}` });
-    return listInbox(db, req.caller!.personId, f as Filter);
+    const cursor = req.query.cursor === undefined ? null : parseCursor(req.query.cursor);
+    if (req.query.cursor !== undefined && !cursor) return reply.code(400).send({ error: 'cursor: the nextCursor of the page before' });
+    const limit = req.query.limit === undefined ? undefined : Number(req.query.limit);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > PAGE.max)) return reply.code(400).send({ error: `limit: 1 to ${PAGE.max}` });
+    return listInbox(db, req.caller!.personId, f as Filter, { cursor, limit });
   });
   app.post<{ Params: { itemId: string; index: string } }>('/inbox/:itemId/books/:index', async (req, reply) => {
     const index = /^\d{1,4}$/.test(req.params.index) ? Number(req.params.index) : -1;

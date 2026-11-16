@@ -31,6 +31,8 @@ export const SHARE_FIELDS = { url: 2000, text: 5000, title: 300, note: 2000 } as
 export const SHARE_RATE = { max: 30, windowMs: 10 * 60_000 };
 /** A share waits this long for a media worker that is down, then fails. */
 export const SHARE_PATIENCE_MS = 24 * 3600_000;
+/** Staged files that belong to no waiting share are deleted after this. */
+export const STAGED_MAX_AGE_MS = 3600_000;
 
 export class ShareError extends Error {
   constructor(readonly status: 400 | 413 | 415 | 503, message: string) { super(message); }
@@ -143,6 +145,7 @@ export class ShareProcessor {
   private async runOnce(): Promise<Outcome> {
     const now = this.o.now ?? (() => new Date());
     const waiting = this.db.select().from(t.share).where(inArray(t.share.status, ['received', 'reading'])).orderBy(t.share.createdAt).all();
+    this.sweep(now(), new Set(waiting.map((s) => s.id)));
     let done = 0, waitingNow = 0;
     for (const s of waiting) {
       const r = await this.one(s, now());
@@ -156,6 +159,20 @@ export class ShareProcessor {
     return waitingNow
       ? { status: 'blocked', detail: `${done} shares read; ${waitingNow} wait for the media worker` }
       : { status: 'done', detail: `${done} shares read` };
+  }
+
+  /**
+   * Staged files no waiting share owns (the server stopped between staging them and recording the share, say) are
+   * deleted once they are an hour old: an upload in progress is younger.
+   */
+  private sweep(now: Date, waiting: Set<string>) {
+    const root = join(this.o.dataDir, 'incoming');
+    let names: string[];
+    try { names = readdirSync(root); } catch { return; }
+    for (const n of names) {
+      if (waiting.has(n)) continue;
+      try { if (now.getTime() - lstatSync(join(root, n)).mtimeMs > STAGED_MAX_AGE_MS) rmSync(join(root, n), { recursive: true, force: true }); } catch { /* gone already */ }
+    }
   }
 
   private update(id: string, v: Partial<ShareRow>) { this.db.update(t.share).set(v).where(eq(t.share.id, id)).run(); }

@@ -582,7 +582,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What waits for a person: their own shares (and AI suggestions, M3 g), and the household's mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (its reason only, nothing of its content). Decided and dismissed items drop out. */
+        /** What waits for a person: their own shares (and AI suggestions, M3 g), and the household's mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (one item for all of it: a count and the commonest reasons, nothing of any content). Decided and dismissed items drop out. Paged. */
         get: operations["getInbox"];
         put?: never;
         post?: never;
@@ -604,7 +604,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Add or skip one book of an item (its found[].index). Add: a share's or a quote's or shop line's book goes to the backlog of `for` (a handle or `me`: yourself or a kid, never another adult); an invoice line's book becomes a copy (owned). A notBook line, or one without a title, can only be skipped. Once decided, decided. */
+        /** Add or skip one book of an item (its found[].index). Add, for `for` (a handle or `me`: yourself or a kid, never another adult): a share's or a quote's or shop line's book goes to their backlog; an invoice line's book becomes copies (owned; at most 20; its order line delivered) and, for someone named, goes on their to-read pile. The book is the one the line names (EAN, then title and author) or a new one. A notBook line, an eanUnreadable one, or one without a title can only be skipped. Once decided, decided. */
         post: operations["decideFound"];
         delete?: never;
         options?: never;
@@ -1045,6 +1045,14 @@ export interface components {
                 url?: string | null;
                 note?: string | null;
             };
+            /** @description kind mail_unverified: every unverified mail since the item was last dismissed */
+            unverified?: {
+                count?: number;
+                reasons?: {
+                    reason?: string;
+                    count?: number;
+                }[];
+            };
             /** @description mail kinds: what Shelf knows of it. An unverified mail has its reason only. */
             mail?: {
                 reason?: string | null;
@@ -1062,7 +1070,7 @@ export interface components {
                 ean?: string | null;
                 /** @description an EAN that is no ISBN (a toy, a game): skip only */
                 notBook?: boolean;
-                /** @description an invoice row read whole but for its EAN */
+                /** @description an invoice row read whole but for its EAN: skip only */
                 eanUnreadable?: boolean;
                 qty?: number;
                 priceC?: number | null;
@@ -2740,6 +2748,9 @@ export interface operations {
         parameters: {
             query?: {
                 filter?: "all" | "ai" | "shared" | "mail";
+                /** @description nextCursor of the page before */
+                cursor?: string;
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -2747,16 +2758,19 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description OK */
+            /** @description A page, newest first; unverified mail is one item (m_unverified) on the first page */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InboxItem"][];
+                    "application/json": {
+                        items: components["schemas"]["InboxItem"][];
+                        nextCursor: string | null;
+                    };
                 };
             };
-            /** @description Unknown filter */
+            /** @description Unknown filter, a cursor that is not one, or a limit out of range */
             400: {
                 headers: {
                     [name: string]: unknown;

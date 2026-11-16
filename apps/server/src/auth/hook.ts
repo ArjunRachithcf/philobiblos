@@ -28,7 +28,11 @@ declare module 'fastify' {
 
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/** Wrong share tokens: 10 in 10 minutes from one address, then every token from it waits out the window (429). */
+/**
+ * Wrong share tokens: counted per address and per the token id they name, 10 in 10 minutes, after which a wrong one is
+ * answered 429 instead of 401. A valid token is never refused: the token is looked up first (by its id, one indexed
+ * read), so a stranger behind the same proxy cannot hold the household's Shortcuts back.
+ */
 export const TOKEN_FAILURES = { max: 10, windowMs: 10 * 60_000 };
 
 function bearer(req: FastifyRequest): string | null {
@@ -45,13 +49,12 @@ export function authHook(cfg: Config, db: Db) {
 
     if (mode === 'person-or-share-token' && req.headers.authorization !== undefined) {
       // A share token, and only that.
-      const from = req.socket.remoteAddress ?? '';
-      if (failures.blocked(from)) return reply.code(429).send({ error: 'too many wrong share tokens: wait a few minutes' });
       const row = token ? findShareToken(db, token) : null;
       const p = row ? getPerson(db, row.personId) : undefined;
       if (!row || !p || p.role === 'kid') {
-        failures.hit(from);
-        return reply.code(401).send({ error: 'sign in required' });
+        const byAddress = failures.hit(`a:${req.socket.remoteAddress ?? ''}`);
+        const byId = failures.hit(`t:${(token ?? '').slice(0, 26)}`);
+        return byAddress && byId ? reply.code(401).send({ error: 'sign in required' }) : reply.code(429).send({ error: 'too many wrong share tokens: wait a few minutes' });
       }
       db.update(t.shareToken).set({ lastUsedAt: new Date().toISOString() }).where(eq(t.shareToken.id, row.id)).run();
       req.caller = { personId: p.id, role: p.role, via: 'share-token' };

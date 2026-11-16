@@ -59,10 +59,6 @@ export function revokeShareToken(db: Db, personId: string, id: string, now = new
 export class Limiter {
   private readonly seen = new Map<string, { n: number; until: number }>();
   constructor(readonly max: number, readonly windowMs: number, readonly maxKeys = 10_000) {}
-  blocked(key: string, now = Date.now()): boolean {
-    const w = this.seen.get(key);
-    return Boolean(w && w.until > now && w.n >= this.max);
-  }
   hit(key: string, now = Date.now()): boolean {
     let w = this.seen.get(key);
     if (!w || w.until <= now) {

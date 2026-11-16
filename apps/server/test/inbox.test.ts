@@ -1,6 +1,6 @@
 // The Inbox, phone shares and share tokens (M3 e, docs/security.md). Every share, caption and mail here is invented.
 // Each rule has a test that fails when the rule is changed.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -9,10 +9,10 @@ import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import type { Db } from '../src/db/open';
-import { mailItemId, shareItemId } from '../src/inbox/inbox';
+import { MAX_COPIES, PAGE, UNVERIFIED_ID, mailItemId, shareItemId } from '../src/inbox/inbox';
 import { MediaUnavailable, type MediaOutcome, type runMediaJob } from '../src/media/client';
 import { refreshMail } from '../src/mail/job';
-import { SHARE_PATIENCE_MS, SHARE_RATE, ShareProcessor, imageType } from '../src/shares/shares';
+import { SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, ShareProcessor, imageType } from '../src/shares/shares';
 import { MAX_LIVE_TOKENS, findShareToken } from '../src/shares/tokens';
 import { TOKEN_FAILURES } from '../src/auth/hook';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
@@ -105,13 +105,19 @@ describe('share tokens: high-entropy, hashed, compared in constant time, scoped,
     expect((await share(a, [{ name: 'url', value: 'https://example.org/p/5' }], auth)).statusCode).toBe(401);
   });
 
-  it('wrong tokens from one address: after 10, every token from it waits (429), the right one too', async () => {
+  it('wrong tokens: after 10 from one address, or naming one token id, a wrong one gets 429; a valid token always passes (PR #16 review)', async () => {
     const a = await app();
-    const { token } = await newToken(a);
-    const wrong = { authorization: `Bearer 01JC0000000000000000000000${'A'.repeat(43)}` };
-    for (let i = 0; i < TOKEN_FAILURES.max; i++) expect((await share(a, [{ name: 'url', value: 'https://example.org/p' }], wrong)).statusCode).toBe(401);
-    expect((await share(a, [{ name: 'url', value: 'https://example.org/p' }], wrong)).statusCode).toBe(429);
-    expect((await share(a, [{ name: 'url', value: 'https://example.org/p' }], { authorization: `Bearer ${token}` })).statusCode).toBe(429);
+    const { id, token } = await newToken(a);
+    const junk = (i: number) => ({ authorization: `Bearer ${String(i).padStart(26, '0').replace(/[ILOU]/g, '0')}${'A'.repeat(43)}` });
+    for (let i = 0; i < TOKEN_FAILURES.max; i++) expect((await share(a, [{ name: 'url', value: 'https://example.org/p' }], junk(i))).statusCode).toBe(401);
+    // Behind a proxy every request has its address: a stranger's junk never holds a valid token back.
+    expect((await share(a, [{ name: 'url', value: 'https://example.org/p' }], { authorization: `Bearer ${token}` })).statusCode).toBe(202);
+    expect((await share(a, [{ name: 'url', value: 'https://example.org/p' }], junk(99))).statusCode).toBe(429);
+    // Counted per token id too: guesses at one id from many addresses are throttled.
+    const guess = { authorization: `Bearer ${id}${'B'.repeat(43)}` };
+    for (let i = 0; i < TOKEN_FAILURES.max; i++) await a.app.inject({ method: 'POST', url: '/api/shares', headers: guess, remoteAddress: `10.0.0.${i + 1}` });
+    expect((await a.app.inject({ method: 'POST', url: '/api/shares', headers: guess, remoteAddress: '10.0.1.1' })).statusCode).toBe(429);
+    expect((await share(a, [{ name: 'url', value: 'https://example.org/q' }], { authorization: `Bearer ${token}` })).statusCode).toBe(202);
   });
 
   it(`at most ${MAX_LIVE_TOKENS} live tokens a person; a revoked one makes room`, async () => {
@@ -197,6 +203,11 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
     expect((await p.kick()).status).toBe('blocked');
     p.close();
     expect(readdirSync(join(a.data, 'incoming', id))).toEqual(['00.bin']);
+    // Hours later, still waiting: its staged file is its own, never swept as an orphan.
+    const hoursLater = new ShareProcessor(a.db, { dataDir: a.data, workDir: 'w', media: w.media, now: () => new Date(Date.now() + 2 * STAGED_MAX_AGE_MS) });
+    await hoursLater.kick();
+    hoursLater.close();
+    expect(readdirSync(join(a.data, 'incoming', id))).toEqual(['00.bin']);
     up = true;
     expect(await p.kick()).toEqual({ status: 'done', detail: '1 shares read' });
     expect(a.db.select().from(t.share).where(eq(t.share.id, id)).get()!.status).toBe('done');
@@ -240,10 +251,10 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
     const { id } = (await share(a, [{ name: 'url', value: 'https://example.org/p/1' }, { name: 'note', value: 'for my brain only' }])).json();
     a.db.update(t.share).set({ foundJson: JSON.stringify({ books: [{ title: 'Care at the Centre', author: 'Ruth Adeyemi', confidence: 0.9 }] }) }).where(eq(t.share.id, id)).run();
     expect((await a.app.inject({ url: `/api/shares/${id}`, headers: { cookie: a.sam } })).statusCode).toBe(404);
-    expect(JSON.stringify((await a.app.inject({ url: '/api/inbox', headers: { cookie: a.sam } })).json())).not.toContain(id);
+    expect(JSON.stringify((await a.app.inject({ url: '/api/inbox', headers: { cookie: a.sam } })).json().items)).not.toContain(id);
     expect((await a.app.inject({ method: 'POST', url: `/api/inbox/${shareItemId(id)}/books/0`, headers: { cookie: a.sam, origin: ORIGIN }, payload: { action: 'add' } })).statusCode).toBe(404);
     expect((await a.app.inject({ method: 'POST', url: `/api/inbox/${shareItemId(id)}/dismiss`, headers: { cookie: a.sam, origin: ORIGIN } })).statusCode).toBe(404);
-    expect((await a.app.inject({ url: '/api/inbox', headers: { cookie: a.alex } })).json()).toMatchObject([{ id: shareItemId(id), kind: 'share', found: [{ index: 0, title: 'Care at the Centre', verdict: 'add', decided: null }] }]);
+    expect((await a.app.inject({ url: '/api/inbox', headers: { cookie: a.alex } })).json().items).toMatchObject([{ id: shareItemId(id), kind: 'share', found: [{ index: 0, title: 'Care at the Centre', verdict: 'add', decided: null }] }]);
   });
 });
 
@@ -264,7 +275,7 @@ describe('the Inbox', () => {
     ]) });
     return app({ db });
   }
-  const list = async (a: Awaited<ReturnType<typeof app>>, cookie = a.alex, filter = 'all') => (await a.app.inject({ url: `/api/inbox?filter=${filter}`, headers: { cookie } })).json() as { id: string; kind: string; found: { index: number; title: string | null; notBook?: boolean; eanUnreadable?: boolean }[]; mail?: Record<string, unknown> }[];
+  const list = async (a: Awaited<ReturnType<typeof app>>, cookie = a.alex, filter = 'all') => (await a.app.inject({ url: `/api/inbox?filter=${filter}`, headers: { cookie } })).json().items as { id: string; kind: string; title: string; found: { index: number; title: string | null; notBook?: boolean; eanUnreadable?: boolean }[]; mail?: Record<string, unknown>; unverified?: { count: number; reasons: { reason: string; count: number }[] } }[];
   const post = (a: Awaited<ReturnType<typeof app>>, url: string, payload?: object, cookie = a.alex) => a.app.inject({ method: 'POST', url, headers: { cookie, origin: ORIGIN }, ...(payload ? { payload } : {}) });
 
   it('the household\'s mail for every adult: unmatched lines (notBook and unreadable EANs too), and unverified mail by its reason only', async () => {
@@ -279,6 +290,7 @@ describe('the Inbox', () => {
       { index: 2, title: 'The Patient River', ean: null, eanUnreadable: true },
     ] });
     const forged = items.find((i) => i.kind === 'mail_unverified')!;
+    expect(forged).toMatchObject({ id: UNVERIFIED_ID, title: '1 mail not verified', unverified: { count: 1, reasons: [{ count: 1 }] } });
     expect(Object.keys(forged.mail!)).toEqual(['reason']);
     expect(JSON.stringify(forged)).not.toMatch(/evil|zahlen|99001123|rechnung@/i);
     expect((await list(a, a.alex, 'mail')).length).toBe(3);
@@ -295,9 +307,10 @@ describe('the Inbox', () => {
     const book = a.db.select().from(t.book).where(eq(t.book.isbn13, '9780000000033')).get()!;
     expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, book.id)).all().map((c) => [c.source, c.priceC])).toEqual([['invoice', 1500], ['invoice', 1500]]);
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'skip' })).statusCode).toBe(409);
-    // A toy can only be skipped; a row without a readable EAN is added by its title.
+    // A toy, or a row whose EAN could not be read (a position number as much as a book), can only be skipped.
     expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'add' })).statusCode).toBe(400);
     expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'skip' })).statusCode).toBe(200);
+    expect((await post(a, `/api/inbox/${id}/books/2`, { action: 'add' })).statusCode).toBe(400);
     expect((await post(a, `/api/inbox/${id}/books/2`, { action: 'skip' })).json()).toMatchObject({ found: [] });
     expect((await list(a)).map((i) => i.id)).not.toContain(id);
     expect((await post(a, `/api/inbox/${id}/books/7`, { action: 'skip' })).statusCode).toBe(404);
@@ -340,5 +353,102 @@ describe('the Inbox', () => {
     expect((await post(a, `/api/inbox/${id}/dismiss`)).statusCode).toBe(204);
     expect((await list(a, a.sam)).map((i) => i.id)).not.toContain(id);
     expect((await post(a, `/api/inbox/m_${'0'.repeat(32)}/dismiss`)).statusCode).toBe(404);
+  });
+
+  it('an invoice line added: the library\'s own book (by title and author, not a duplicate), its order line delivered, at most 20 copies, on the to-read pile of whoever it is for (PR #16 review)', async () => {
+    const a = await app();
+    const now = new Date().toISOString();
+    a.db.insert(t.order).values({ id: 'o_q', month: '2026-11', status: 'quoted', createdAt: now }).run();
+    a.db.insert(t.orderLine).values({ orderId: 'o_q', bookId: 'b_tide', forPerson: 'p_alex', state: 'quoted' }).run();
+    a.db.insert(t.mailSeen).values({ messageId: '<big@orellfuessli.ch>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1234', lines: [
+      { ean: null, title: 'The Long Tide of Markets', qty: 2, priceC: 1000, totalC: 2000, vatPct: 2.6, bookId: null },
+      { ean: '9780000000057', title: 'Box of Many', qty: 99, priceC: 100, totalC: 9900, vatPct: 2.6, bookId: null },
+    ] }) }).run();
+    const id = mailItemId('<big@orellfuessli.ch>');
+    const books = a.db.select().from(t.book).all().length;
+    expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'add', for: 'partner' })).statusCode).toBe(403);
+    expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'add', for: 'me' })).statusCode).toBe(200);
+    expect(a.db.select().from(t.book).all().length).toBe(books);
+    expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all().map((c) => c.orderId)).toEqual(['o_q', 'o_q']);
+    expect(a.db.select().from(t.orderLine).where(eq(t.orderLine.orderId, 'o_q')).get()!.state).toBe('delivered');
+    expect(a.db.select().from(t.order).where(eq(t.order.id, 'o_q')).get()).toMatchObject({ status: 'invoiced', invoicedC: 2000 });
+    expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'add', for: 'kid1' })).statusCode).toBe(200);
+    const box = a.db.select().from(t.book).where(eq(t.book.isbn13, '9780000000057')).get()!;
+    expect(box.audience).toBe('kids');
+    expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, box.id)).all().length).toBe(MAX_COPIES);
+    expect(a.db.select().from(t.reading).where(eq(t.reading.bookId, box.id)).all().map((r) => [r.personId, r.status])).toEqual([['p_kid1', 'to_read']]);
+  });
+
+  it('matched lines never show; a dismissed item takes no decisions; an unverified mail is no item of its own (PR #16 review)', async () => {
+    const a = await app();
+    const now = new Date().toISOString();
+    const lines = JSON.stringify({ invoiceNumber: '1', lines: [{ ean: null, title: 'The Long Tide of Markets', qty: 1, priceC: 1, totalC: 1, vatPct: 2.6, bookId: 'b_tide' }, { ean: null, title: 'Unknown', qty: 1, priceC: 1, totalC: 1, vatPct: 2.6, bookId: null }] });
+    a.db.insert(t.mailSeen).values([
+      { messageId: '<mixed@orellfuessli.ch>', kind: 'invoice', parserVersion: 'x', seenAt: now, accepted: 1, authJson: '{}', parsedJson: lines },
+      { messageId: 'unverified:lines', kind: 'invoice', parserVersion: 'x', seenAt: now, accepted: 0, authJson: '{}', parsedJson: lines },
+    ]).run();
+    const items = await list(a);
+    expect(items.find((i) => i.id === mailItemId('<mixed@orellfuessli.ch>'))!.found.map((f) => f.index)).toEqual([1]);
+    expect(items.map((i) => i.id)).not.toContain(mailItemId('unverified:lines'));
+    expect((await post(a, `/api/inbox/${mailItemId('unverified:lines')}/books/1`, { action: 'add' })).statusCode).toBe(404);
+    const id = mailItemId('<mixed@orellfuessli.ch>');
+    expect((await post(a, `/api/inbox/${id}/dismiss`)).statusCode).toBe(204);
+    expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'skip' })).statusCode).toBe(409);
+    expect(a.db.select().from(t.copy).all()).toEqual([]);
+  });
+
+  it('40,000 unverified mails are one item, the reasons counted; the Inbox stays a page; dismissed, the item comes back only with new ones (PR #16 review)', async () => {
+    const a = await app();
+    const old = '2026-11-01T00:00:00.000Z';
+    const ins = a.db.$client.prepare('INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, ?, NULL, ?, ?, ?, 0)');
+    a.db.$client.transaction(() => {
+      for (let i = 0; i < 40_000; i++) ins.run(`unverified:${i}`, 'not_verified', 'm3d-1', old, JSON.stringify({ accepted: false, reason: i % 4 ? 'not from the bookshop' : 'no valid signature of the bookshop' }));
+    })();
+    const r = await a.app.inject({ url: '/api/inbox', headers: { cookie: a.alex } });
+    expect(r.statusCode).toBe(200);
+    const items = r.json().items as { id: string; unverified?: { count: number; reasons: unknown[] } }[];
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ id: UNVERIFIED_ID, unverified: { count: 40_000, reasons: [{ reason: 'not from the bookshop', count: 30_000 }, { reason: 'no valid signature of the bookshop', count: 10_000 }] } });
+    expect((await post(a, `/api/inbox/${UNVERIFIED_ID}/dismiss`)).statusCode).toBe(204);
+    expect(await list(a)).toEqual([]);
+    ins.run('unverified:new', 'not_verified', 'm3d-1', new Date(Date.now() + 1000).toISOString(), JSON.stringify({ reason: 'not addressed to the household' }));
+    expect(await list(a)).toMatchObject([{ id: UNVERIFIED_ID, unverified: { count: 1 } }]);
+  }, 30_000);
+
+  it('pages: every item once, newest first, through nextCursor; a limit and a cursor out of range are refused', async () => {
+    const a = await app();
+    const ins = a.db.$client.prepare("INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, 'unknown_layout', '{\"reason\":\"x\"}', 'v', ?, '{}', 1)");
+    // 260 failed mails, many on the same second (the cursor breaks ties), 40 of them dismissed; and 70 shares.
+    for (let i = 0; i < 260; i++) ins.run(`<f${i}@orellfuessli.ch>`, `2026-11-0${1 + (i % 5)}T00:00:00.000Z`);
+    for (let i = 0; i < 40; i++) a.db.insert(t.inboxDecision).values({ item: mailItemId(`<f${i}@orellfuessli.ch>`), idx: -1, decision: 'dismissed', decidedAt: 'x' }).run();
+    for (let i = 0; i < 70; i++) a.db.insert(t.share).values({ id: `01JC${String(i).padStart(22, '0')}`, personId: 'p_alex', note: 'n', status: 'done', createdAt: `2026-11-0${1 + (i % 7)}T00:00:00.000Z` }).run();
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      // A small page, so that pages end on shares and on mails that share a second with each other.
+      const r = await a.app.inject({ url: `/api/inbox?limit=${pages % 2 ? 7 : 3}${cursor ? `&cursor=${cursor}` : ''}`, headers: { cookie: a.alex } });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as { items: { id: string; createdAt: string }[]; nextCursor: string | null };
+      expect(body.items.length).toBeLessThanOrEqual(PAGE.max);
+      seen.push(...body.items.map((i) => `${i.createdAt} ${i.id}`));
+      cursor = body.nextCursor;
+      pages++;
+    } while (cursor && pages < 200);
+    expect(seen).toHaveLength(220 + 70);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect([...seen].sort().reverse().map((x) => x.slice(0, 24))).toEqual(seen.map((x) => x.slice(0, 24)));
+    for (const q of ['limit=0', 'limit=101', 'cursor=nonsense']) expect((await a.app.inject({ url: `/api/inbox?${q}`, headers: { cookie: a.alex } })).statusCode, q).toBe(400);
+  });
+
+  it('staged files that no waiting share owns are swept after an hour; a fresh upload is left alone', async () => {
+    const a = await app({ media: worker(() => 'unavailable').media });
+    for (const n of ['orphan', 'fresh']) { mkdirSync(join(a.data, 'incoming', n), { recursive: true }); writeFileSync(join(a.data, 'incoming', n, '00.bin'), JPEG); }
+    const p = new ShareProcessor(a.db, { dataDir: a.data, workDir: 'w', now: () => new Date(Date.now() + STAGED_MAX_AGE_MS / 2) });
+    await p.kick();
+    expect(readdirSync(join(a.data, 'incoming')).sort()).toEqual(['fresh', 'orphan']);
+    const later = new ShareProcessor(a.db, { dataDir: a.data, workDir: 'w', now: () => new Date(Date.now() + STAGED_MAX_AGE_MS + 1000) });
+    await later.kick();
+    expect(readdirSync(join(a.data, 'incoming'))).toEqual([]);
   });
 });

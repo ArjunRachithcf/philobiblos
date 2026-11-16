@@ -230,15 +230,15 @@ paths:
     get:
       tags: [inbox]
       operationId: getInbox
-      summary: 'What waits for a person: their own shares (and AI suggestions, M3 g), and the household''s mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (its reason only, nothing of its content). Decided and dismissed items drop out.'
-      parameters: [{ name: filter, in: query, schema: { enum: [all, ai, shared, mail] } }]
-      responses: { '400': { description: Unknown filter, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InboxItem' } } } } } }
+      summary: 'What waits for a person: their own shares (and AI suggestions, M3 g), and the household''s mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (one item for all of it: a count and the commonest reasons, nothing of any content). Decided and dismissed items drop out. Paged.'
+      parameters: [{ name: filter, in: query, schema: { enum: [all, ai, shared, mail] } }, { name: cursor, in: query, schema: { type: string, maxLength: 600 }, description: 'nextCursor of the page before' }, { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }]
+      responses: { '400': { description: 'Unknown filter, a cursor that is not one, or a limit out of range', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'A page, newest first; unverified mail is one item (m_unverified) on the first page', content: { application/json: { schema: { type: object, required: [items, nextCursor], properties: { items: { type: array, items: { $ref: '#/components/schemas/InboxItem' } }, nextCursor: { type: [string, 'null'] } } } } } } }
   /inbox/{itemId}/books/{index}:
     parameters: [{ name: itemId, in: path, required: true, schema: {type: string} }, { name: index, in: path, required: true, schema: {type: integer} }]
     post:
       tags: [inbox]
       operationId: decideFound
-      summary: 'Add or skip one book of an item (its found[].index). Add: a share''s or a quote''s or shop line''s book goes to the backlog of `for` (a handle or `me`: yourself or a kid, never another adult); an invoice line''s book becomes a copy (owned). A notBook line, or one without a title, can only be skipped. Once decided, decided.'
+      summary: 'Add or skip one book of an item (its found[].index). Add, for `for` (a handle or `me`: yourself or a kid, never another adult): a share''s or a quote''s or shop line''s book goes to their backlog; an invoice line''s book becomes copies (owned; at most 20; its order line delivered) and, for someone named, goes on their to-read pile. The book is the one the line names (EAN, then title and author) or a new one. A notBook line, an eanUnreadable one, or one without a title can only be skipped. Once decided, decided.'
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [action], additionalProperties: false, properties: { action: { enum: [add, skip] }, for: { type: string, maxLength: 40 } } } } } }
       responses: { '400': { description: 'Bad request: not a book, no title, or an invalid body', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: 'No such item or book (or another adult''s share)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: Decided already, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'The item as it is now', content: { application/json: { schema: { $ref: '#/components/schemas/InboxItem' } } } } }
   /inbox/{itemId}/dismiss:
@@ -380,6 +380,7 @@ components:
         createdAt: {type: string}
         mediaCount: {type: integer}
         share: { type: object, description: 'kind share', properties: { status: { enum: [received, reading, done, failed] }, progress: { type: object, properties: { done: {type: integer}, total: {type: integer} } }, refused: {type: integer}, url: { type: [string, 'null'] }, note: { type: [string, 'null'] } } }
+        unverified: { type: object, description: 'kind mail_unverified: every unverified mail since the item was last dismissed', properties: { count: {type: integer}, reasons: { type: array, maxItems: 5, items: { type: object, properties: { reason: {type: string}, count: {type: integer} } } } } }
         mail: { type: object, description: 'mail kinds: what Shelf knows of it. An unverified mail has its reason only.', properties: { reason: { type: [string, 'null'] }, expected: { type: [string, 'null'], description: 'the kind the mail looked like (failed closed)' }, date: { type: [string, 'null'] }, number: { type: [string, 'null'], description: 'order or invoice number' } } }
         found:
           type: array
@@ -392,7 +393,7 @@ components:
               author: { type: [string, 'null'] }
               ean: { type: [string, 'null'] }
               notBook: { type: boolean, description: 'an EAN that is no ISBN (a toy, a game): skip only' }
-              eanUnreadable: { type: boolean, description: 'an invoice row read whole but for its EAN' }
+              eanUnreadable: { type: boolean, description: 'an invoice row read whole but for its EAN: skip only' }
               qty: {type: integer}
               priceC: { type: [integer, 'null'] }
               verdict: { enum: [add, skip_off_theme, skip_owned, fiction] }

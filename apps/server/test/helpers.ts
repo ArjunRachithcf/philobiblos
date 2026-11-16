@@ -10,7 +10,7 @@ import type { WebAuthn } from '../src/auth/webauthn';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { currentMonth } from '../src/month/plan';
-import { mailItemId } from '../src/inbox/inbox';
+import { UNVERIFIED_ID, mailItemId } from '../src/inbox/inbox';
 
 /** Plans are made for this month and the next only: the tests use the server's this month (SHELF_TZ default). */
 export const THIS_MONTH = currentMonth('Europe/Zurich');
@@ -82,7 +82,7 @@ const PARAMS: Record<string, Record<string, string>> = {
   undoMerge: { mergeId: 'm_old' },
   getOrder: { id: 'o_old' }, getMonth: { month: THIS_MONTH }, setMonthBudget: { month: THIS_MONTH }, changePicks: { month: THIS_MONTH },
   renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
-  getShare: { id: SHARE_ID }, decideFound: { itemId: mailItemId('<inv-1@bookshop.example>'), index: '0' }, dismissInboxItem: { itemId: mailItemId('unverified:abc') },
+  getShare: { id: SHARE_ID }, decideFound: { itemId: mailItemId('<inv-1@bookshop.example>'), index: '0' }, dismissInboxItem: { itemId: UNVERIFIED_ID },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
 };

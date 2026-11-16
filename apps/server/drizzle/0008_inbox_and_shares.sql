@@ -15,4 +15,7 @@ ALTER TABLE `share` ADD `title` text;--> statement-breakpoint
 ALTER TABLE `share` ADD `caption` text;--> statement-breakpoint
 ALTER TABLE `share` ADD `media_total` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE `share` ADD `media_refused` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
-ALTER TABLE `share` ADD `error` text;
+ALTER TABLE `share` ADD `error` text;--> statement-breakpoint
+-- Share tokens made before this migration have no id in front (M0's shape) and can never sign in again: revoked, so
+-- they neither show as live nor count toward the ten a person may hold.
+UPDATE `share_token` SET `revoked_at` = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE `revoked_at` IS NULL;

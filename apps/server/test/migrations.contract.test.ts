@@ -132,7 +132,8 @@ describe('upgrades', () => {
       { id: 'p_alex', name: 'Alex', role: 'admin', handle: null }, { id: 'p_kid1', name: 'Kid 1', role: 'kid', handle: null },
     ]);
     expect(client.prepare('SELECT person_id, book_id, status FROM reading').all()).toEqual([{ person_id: 'p_alex', book_id: 'b_tide', status: 'reading' }]);
-    expect(client.prepare('SELECT id FROM share_token').all()).toEqual([{ id: 'st1' }]);
+    // M0's token shape can never sign in again: 0008 revokes it (it is neither live nor counted).
+    expect(client.prepare('SELECT id, revoked_at IS NOT NULL AS revoked FROM share_token').all()).toEqual([{ id: 'st1', revoked: 1 }]);
     expect(client.pragma('foreign_key_check')).toEqual([]);
   });
 });
