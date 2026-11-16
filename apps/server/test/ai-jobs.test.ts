@@ -456,7 +456,7 @@ describe('private_to never reaches another person\'s run, nor another person\'s 
 
 describe('the household\'s AI allowance and the share limits', () => {
   const shares = (db: Db, n: number, o: { from?: number; person?: string; token?: string | null } = {}) => {
-    for (let i = 0; i < n; i++) db.insert(t.share).values({ id: ULID((o.from ?? 100) + i), personId: o.person ?? 'p_alex', caption: `share ${i}`, status: 'done', createdAt: NOW, tokenId: o.token ?? null }).run();
+    for (let i = 0; i < n; i++) db.insert(t.share).values({ id: ULID((o.from ?? 100) + i), personId: o.person ?? 'p_alex', caption: `share ${(o.from ?? 100) + i}`, status: 'done', createdAt: NOW, tokenId: o.token ?? null }).run();
   };
   const spent = (db: Db) => db.select().from(t.aiRun).all().filter((r) => r.provider === 'claude').reduce((n, r) => n + r.tokens, 0);
 
@@ -483,7 +483,7 @@ describe('the household\'s AI allowance and the share limits', () => {
 
   it('the allowance counts the last 24 hours only, and a failed call counts its bound', async () => {
     const { db, cfg } = setup();
-    db.update(t.householdSettings).set({ aiDailyTokens: 10_000 }).run();
+    db.update(t.householdSettings).set({ aiDailyTokens: 20_000 }).run();
     db.insert(t.aiRun).values({ id: 'old', job: 'tagBook', provider: 'claude', model: 'm', promptVersion: 'v1', inputHash: 'h', startedAt: new Date(Date.now() - 25 * 3600_000).toISOString(), tokens: 1_000_000 }).run();
     shares(db, 3);
     const failing: Model & { requests: ModelRequest[] } = { ...model(), provider: 'claude', async complete(r) { failing.requests.push(r); throw new Error('timeout'); } };
@@ -492,7 +492,7 @@ describe('the household\'s AI allowance and the share limits', () => {
     const runs = db.select().from(t.aiRun).all().filter((r) => r.id !== 'old');
     expect(runs.length).toBeGreaterThan(0);
     expect(runs.every((r) => r.tokens > 4_096)).toBe(true);
-    expect(spent(db) - 1_000_000).toBeLessThanOrEqual(10_000);
+    expect(spent(db) - 1_000_000).toBeLessThanOrEqual(20_000);
   });
 
   it('shares the AI reads in a day: at most 20 per share token and 40 per person; the rest wait', async () => {
@@ -510,6 +510,49 @@ describe('the household\'s AI allowance and the share limits', () => {
     // Another person's shares are not held back by Alex's.
     shares(db, 2, { from: 300, person: 'p_sam' });
     expect((await j.readShares()).detail).toMatch(/^2 shares read/);
+  });
+
+  it('one person\'s pile of waiting shares never hides anyone else\'s: chosen fairly, round-robin by oldest', async () => {
+    const { db, cfg } = setup();
+    const hourAgo = new Date(Date.now() - 3600_000).toISOString();
+    for (let i = 0; i < 250; i++) db.insert(t.share).values({ id: ULID(1000 + i), personId: 'p_alex', caption: `pile ${i}`, status: 'done', createdAt: hourAgo }).run();
+    db.insert(t.share).values({ id: ULID(5000), personId: 'p_sam', caption: 'Sam', status: 'done', createdAt: NOW }).run();
+    const j = jobs(db, cfg, model());
+    expect((await j.readShares()).detail).toMatch(/^20 shares read/);
+    expect(db.select().from(t.share).where(eq(t.share.id, ULID(5000))).get()!.aiReadAt).not.toBeNull();
+    // Alex's day used up (40), his pile still waiting: a new share of Sam's is read in the next run.
+    await j.readShares(); await j.readShares();
+    expect(db.select().from(t.share).where(eq(t.share.personId, 'p_alex')).all().filter((x) => x.aiReadAt)).toHaveLength(40);
+    db.insert(t.share).values({ id: ULID(5001), personId: 'p_sam', caption: 'Sam again', status: 'done', createdAt: new Date().toISOString() }).run();
+    expect((await j.readShares()).detail).toMatch(/^1 shares read/);
+    expect(db.select().from(t.share).where(eq(t.share.id, ULID(5001))).get()!.aiReadAt).not.toBeNull();
+  });
+
+  it('a share token, and a sharer, spend only their part of the allowance: the household\'s AI goes on', async () => {
+    const { db, cfg } = setup();
+    db.update(t.householdSettings).set({ aiDailyTokens: 100_000 }).run();
+    db.insert(t.shareToken).values({ id: 'tok1', personId: 'p_alex', label: 'leaked', tokenHash: 'h1', createdAt: NOW }).run();
+    shares(db, 19, { token: 'tok1' });
+    const m = asClaude(model(), 8_000);
+    const j = new AiJobs(db, cfg, { model: () => m });
+    await j.readShares();
+    const byToken = db.select().from(t.aiRun).all().filter((r) => r.shareTokenId === 'tok1').reduce((n, r) => n + r.tokens, 0);
+    expect(byToken).toBeGreaterThan(0);
+    expect(byToken).toBeLessThanOrEqual(40_000);
+    // Alex's other shares (no token) may use the rest of his part, up to half the allowance.
+    shares(db, 15, { from: 200 });
+    await j.readShares();
+    const byAlex = db.select().from(t.aiRun).all().filter((r) => r.job === 'extractTitles' && r.personId === 'p_alex').reduce((n, r) => n + r.tokens, 0);
+    // His session shares were read once the token's part was spent, up to his own part.
+    expect(byAlex).toBeGreaterThan(byToken);
+    expect(byAlex).toBeLessThanOrEqual(50_000);
+    // Sam's shares, and the household's jobs, still run.
+    // Sam's share is newer than Alex's waiting ones: Alex's turn comes first in the run, finds his part spent, and the run
+    // goes on to Sam's.
+    db.insert(t.share).values({ id: ULID(400), personId: 'p_sam', caption: 'Sam', status: 'done', createdAt: new Date(Date.now() + 60_000).toISOString() }).run();
+    await j.readShares();
+    expect(db.select().from(t.share).where(eq(t.share.id, ULID(400))).get()!.aiReadAt).not.toBeNull();
+    expect(await j.suggest()).toMatchObject({ status: 'done' });
   });
 
   it('dailyLimit: admins set it, within bounds', async () => {

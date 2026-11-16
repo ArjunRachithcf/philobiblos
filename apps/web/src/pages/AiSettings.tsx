@@ -37,7 +37,8 @@ export function AiSettings({ admin }: { admin: boolean }) {
     const body: Record<string, unknown> = { provider, model: model.trim() || undefined, visionModel: vision.trim() || null };
     if (key.trim()) body.claudeApiKey = key.trim();
     if (provider === 'claude' && limit.trim() && Number(limit) !== ai?.dailyLimit) body.dailyLimit = Number(limit);
-    if (optingIn) body.acceptLeaves = true;
+    // The version of the list this page showed: the server refuses it if the list is another by now.
+    if (optingIn) body.acceptLeaves = ai?.leavesVersion;
     try {
       await api('/settings', { method: 'PATCH', body: { ai: body } });
       setKey('');

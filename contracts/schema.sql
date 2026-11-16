@@ -308,7 +308,8 @@ CREATE TABLE ai_run (
   started_at TEXT NOT NULL, finished_at TEXT, error TEXT,
   takeaways_of TEXT REFERENCES person(id) ON DELETE CASCADE, -- whose takeaways the input held; purged when they opt out
   person_id    TEXT REFERENCES person(id) ON DELETE CASCADE, -- whose request it served (a share's sharer, a suggestion's person); NULL: the household's
-  tokens       INTEGER NOT NULL DEFAULT 0  -- tokens the provider counted (input and output, every attempt): the daily allowance sums them
+  tokens       INTEGER NOT NULL DEFAULT 0, -- tokens the provider counted (input and output, every attempt): the daily allowance sums them
+  share_token_id TEXT REFERENCES share_token(id) ON DELETE SET NULL -- a share's run: the token it came with (its part of the allowance)
 );
 CREATE INDEX ai_run_cache ON ai_run (job, prompt_version, input_hash); -- identical input + prompt version reuses the output
 CREATE INDEX ai_run_spend ON ai_run (provider, started_at);

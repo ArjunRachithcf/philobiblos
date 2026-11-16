@@ -376,6 +376,8 @@ export const aiRun = sqliteTable('ai_run', {
   personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
   // Tokens the provider counted (input and output, every attempt): the household's daily allowance sums them.
   tokens: integer('tokens').notNull().default(0),
+  // A share's run: the share token the share came with (its part of the allowance is counted by it).
+  shareTokenId: text('share_token_id').references(() => shareToken.id, { onDelete: 'set null' }),
 }, (t) => [index('ai_run_cache').on(t.job, t.promptVersion, t.inputHash), index('ai_run_spend').on(t.provider, t.startedAt)]);
 
 export const jobRun = sqliteTable('job_run', {

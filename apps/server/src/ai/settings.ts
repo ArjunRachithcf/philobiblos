@@ -1,12 +1,14 @@
 // The household's AI settings (Settings.ai, contracts/ai-plugin.md): which provider, its models, which jobs run.
 //
 // - Ollama is the default and nothing leaves the home network with it. Claude is an explicit opt-in by an admin: the
-//   request that turns it on must carry `acceptLeaves: true`, the answer to the list Settings shows (`leavesWithClaude`)
+//   request that turns it on must carry `acceptLeaves`: the version of the list Settings showed (`leavesVersion` of
+//   `leavesWithClaude`), refused when it is not the list as it is now
 //   before it is on and (`leaves`) while it is. The accepted list is stored; once what leaves holds a line it does not
 //   (a job turned on, a newer Shelf), Claude is not called until an admin accepts again.
 // - The Claude API key is sealed like the delivery address (household/sealed.ts: AES-256-GCM, the key outside the
 //   database, the row's name bound to it). It is write-only: no answer of any route holds it, only `hasClaudeKey`.
 // - Removing the key while Claude is on turns the AI off ('none'), never over to another provider.
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { CLAUDE_DEFAULT_MODEL, CLAUDE_MODEL, FIELDS, fieldsOf, type Field, type JobName } from '@shelf/ai';
 import type { Config } from '../config';
@@ -78,6 +80,11 @@ export function leaves(provider: Provider, jobs: AiJobs): string[] {
   ];
 }
 
+/** The version of a list of what leaves: what `acceptLeaves` must carry (SHA-256 of its lines). */
+export function leavesVersion(lines: string[]): string {
+  return createHash('sha256').update(JSON.stringify(lines)).digest('hex');
+}
+
 /**
  * Whether an admin accepted everything that leaves now: each line of `leaves` must be one they accepted. Turning a job
  * off keeps it accepted; a job turned on, or a line that changed (a new Shelf that sends something new), needs them to
@@ -94,7 +101,7 @@ export function aiView(db: Db, cfg: Pick<Config, 'ollamaUrl'>) {
   return {
     provider: s.provider, model: s.models.ollama.model, visionModel: s.models.ollama.visionModel, claudeModel: s.models.claude.model,
     ollamaUrl: cfg.ollamaUrl ?? '', ollamaConfigured: cfg.ollamaUrl != null, hasClaudeKey: s.hasClaudeKey,
-    leaves: leaves(s.provider, s.jobs), leavesWithClaude: leaves('claude', s.jobs), leavesAccepted: s.provider === 'claude' && leavesAccepted(s), jobs: s.jobs,
+    leaves: leaves(s.provider, s.jobs), leavesWithClaude: leaves('claude', s.jobs), leavesVersion: leavesVersion(leaves('claude', s.jobs)), leavesAccepted: s.provider === 'claude' && leavesAccepted(s), jobs: s.jobs,
     dailyLimit: s.dailyTokens, usedToday: spentToday(db),
   };
 }
@@ -123,7 +130,7 @@ export function checkAi(db: Db, cfg: Pick<Config, 'sealingKey'>, v: unknown): (t
   if (p.dailyLimit !== undefined && (!Number.isInteger(p.dailyLimit) || (p.dailyLimit as number) < DAILY_TOKENS.min || (p.dailyLimit as number) > DAILY_TOKENS.max)) {
     throw new SettingsError(`ai.dailyLimit: a whole number of tokens from ${DAILY_TOKENS.min} to ${DAILY_TOKENS.max}`);
   }
-  if (p.acceptLeaves !== undefined && typeof p.acceptLeaves !== 'boolean') throw new SettingsError('ai.acceptLeaves: true or false');
+  if (p.acceptLeaves !== undefined && (typeof p.acceptLeaves !== 'string' || !/^[0-9a-f]{64}$/.test(p.acceptLeaves))) throw new SettingsError('ai.acceptLeaves: the leavesVersion of the list you read');
   let jobs = now.jobs;
   if (p.jobs !== undefined) {
     if (!p.jobs || typeof p.jobs !== 'object' || Array.isArray(p.jobs)) throw new SettingsError('ai.jobs: a JSON object is needed');
@@ -138,20 +145,25 @@ export function checkAi(db: Db, cfg: Pick<Config, 'sealingKey'>, v: unknown): (t
   let provider = (p.provider as Provider | undefined) ?? now.provider;
   if (provider === 'claude' && now.provider !== 'claude') {
     // The opt-in: an admin who saw the list, and a key to send with.
-    if (p.acceptLeaves !== true) throw new SettingsError('ai.provider claude: turning Claude on needs acceptLeaves: true, after reading what leaves (leavesWithClaude)');
+    if (p.acceptLeaves === undefined) throw new SettingsError('ai.provider claude: turning Claude on needs acceptLeaves, the leavesVersion of what leaves (leavesWithClaude) once read');
     if (!keyAfter) throw new SettingsError('ai.provider claude: an API key is needed first (claudeApiKey)');
   }
   if (provider === 'claude' && !keyAfter) provider = 'none';
   // While Claude is on, a job turned on that sends what was not accepted needs the same acceptance, for the list as it is
   // then. Anything else is saved; Claude still waits for an acceptance that covers what leaves (leavesAccepted).
+  // An acceptance is of one list: the one this request leaves sending. A page that showed another (an older Shelf, or
+  // other jobs) is refused, and reads the list again.
+  if (p.acceptLeaves !== undefined && p.acceptLeaves !== leavesVersion(leaves('claude', jobs))) {
+    throw new SettingsError('ai.acceptLeaves: what leaves is not the list you accepted (it changed): read leavesWithClaude again');
+  }
   const more = leaves('claude', jobs).some((l) => !leaves('claude', now.jobs).includes(l));
-  if (provider === 'claude' && now.provider === 'claude' && more && !leavesAccepted({ ...now, jobs }) && p.acceptLeaves !== true) {
-    throw new SettingsError('ai: with Claude on, this sends what was not accepted (see leavesWithClaude): it needs acceptLeaves: true');
+  if (provider === 'claude' && now.provider === 'claude' && more && !leavesAccepted({ ...now, jobs }) && p.acceptLeaves === undefined) {
+    throw new SettingsError('ai: with Claude on, this sends what was not accepted (see leavesWithClaude): it needs acceptLeaves, the version of that list');
   }
   // What the admin accepted: the list as Settings showed it for these jobs. A list that shrank (a job off) is what stays
   // accepted, so turning that job on again asks again.
   const after = leaves('claude', jobs);
-  const accepted = provider === 'claude' && (p.acceptLeaves === true || leavesAccepted({ ...now, jobs })) ? JSON.stringify(after) : undefined;
+  const accepted = provider === 'claude' && (p.acceptLeaves !== undefined || leavesAccepted({ ...now, jobs })) ? JSON.stringify(after) : undefined;
   if (typeof p.claudeApiKey === 'string' && keyProblem(cfg)) throw new SealKeyMissing();
   const key = typeof p.claudeApiKey === 'string' ? sealingKey(cfg) : null;
   return (tx) => {

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "b63a469b-3ec6-4dd7-ba48-1a7a8e32fffd",
+  "id": "7bf5b7d7-9b0b-4d3d-889e-2562adbd9bfd",
   "prevId": "13146116-7704-49aa-a72a-549c9886aff0",
   "tables": {
     "ai_run": {
@@ -105,6 +105,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "share_token_id": {
+          "name": "share_token_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -151,6 +158,19 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ai_run_share_token_id_share_token_id_fk": {
+          "name": "ai_run_share_token_id_share_token_id_fk",
+          "tableFrom": "ai_run",
+          "tableTo": "share_token",
+          "columnsFrom": [
+            "share_token_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -1992,13 +2012,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "why_audience": {
-          "name": "why_audience",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "estimate_c": {
           "name": "estimate_c",
           "type": "integer",
@@ -2027,6 +2040,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'planned'"
+        },
+        "why_audience": {
+          "name": "why_audience",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},

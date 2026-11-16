@@ -11,7 +11,7 @@
 // - explain: a kept plan's adult picks → the one-line why the plan shows.
 import { lstatSync, openSync, readSync, closeSync, constants, fstatSync } from 'node:fs';
 import { join } from 'node:path';
-import { and, count, desc, eq, gt, gte, inArray, isNull, notInArray } from 'drizzle-orm';
+import { and, count, desc, eq, gt, gte, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import type { Image } from '@shelf/contracts';
 import { holdsTakeaways, type Model } from '@shelf/ai';
 import type { Config } from '../config';
@@ -74,6 +74,30 @@ function readKept(dataDir: string, path: string): Buffer | null {
   } catch { return null; }
 }
 
+/**
+ * The shares to read in one run, fairly: unread ones within their sharer's and their token's reads left for the day
+ * (SHARE_AI), taken round-robin (each person's oldest first, then each one's next), at most PER_RUN.shares. One person's
+ * pile, or a leaked token's, never hides anyone else's shares.
+ */
+function fairShares(db: Db, since: string, day: string): (typeof t.share.$inferSelect)[] {
+  const ids = db.all<{ id: string }>(sql`
+    WITH used_p AS (SELECT person_id, count(*) AS n FROM share WHERE ai_read_at >= ${day} GROUP BY person_id),
+         used_t AS (SELECT token_id, count(*) AS n FROM share WHERE ai_read_at >= ${day} AND token_id IS NOT NULL GROUP BY token_id),
+         unread AS (SELECT id, person_id, token_id, created_at,
+                 row_number() OVER (PARTITION BY token_id ORDER BY created_at, id) AS rt
+               FROM share WHERE status = 'done' AND found_json IS NULL AND created_at > ${since}),
+         -- Within its token's reads left first, then ranked per person among those.
+         by_token AS (SELECT unread.* FROM unread LEFT JOIN used_t ON used_t.token_id = unread.token_id
+               WHERE unread.token_id IS NULL OR unread.rt <= ${SHARE_AI.perToken} - coalesce(used_t.n, 0)),
+         q AS (SELECT by_token.*, row_number() OVER (PARTITION BY person_id ORDER BY created_at, id) AS rp FROM by_token)
+    SELECT q.id FROM q LEFT JOIN used_p ON used_p.person_id = q.person_id
+    WHERE q.rp <= ${SHARE_AI.perPerson} - coalesce(used_p.n, 0)
+    ORDER BY q.rp, q.created_at, q.id LIMIT ${PER_RUN.shares}`).map((r) => r.id);
+  if (!ids.length) return [];
+  const rows = new Map(db.select().from(t.share).where(inArray(t.share.id, ids)).all().map((r) => [r.id, r]));
+  return ids.map((id) => rows.get(id)!);
+}
+
 const done = (detail: string): Outcome => ({ status: 'done', detail });
 const stopped = (e: unknown, did: string): Outcome | null => (e instanceof AiError && e.reason === 'budget' ? { status: 'blocked', detail: `${did}; stopped: ${e.message}` } : null);
 
@@ -108,23 +132,28 @@ export class AiJobs {
     const s = this.start('read');
     if (s.why !== undefined) return done(`shares not read: ${s.why}`);
     const since = new Date(this.now().getTime() - SHARE_AI_DAYS * 86_400_000).toISOString();
-    const rows = this.db.select().from(t.share).where(and(eq(t.share.status, 'done'), isNull(t.share.foundJson), gt(t.share.createdAt, since))).orderBy(t.share.createdAt).limit(PER_RUN.shares * 10).all();
     const day = new Date(this.now().getTime() - SHARE_AI.windowMs).toISOString();
+    const rows = fairShares(this.db, since, day);
     const readToday = (c: ReturnType<typeof eq>) => this.db.select({ n: count() }).from(t.share).where(and(c, gte(t.share.aiReadAt, day))).get()!.n;
-    let n = 0, waiting = 0;
+    // A sharer or a token whose part of the allowance ran out in this run: the rest of theirs wait.
+    const spent = new Set<string>();
+    let n = 0;
     for (const r of rows) {
-      if (n >= PER_RUN.shares) break;
-      // A person's, or a token's, reads for the day used up: this share waits.
-      if (readToday(eq(t.share.personId, r.personId)) >= SHARE_AI.perPerson || (r.tokenId && readToday(eq(t.share.tokenId, r.tokenId)) >= SHARE_AI.perToken)) { waiting++; continue; }
+      if (spent.has(`p:${r.personId}`) || (r.tokenId && spent.has(`t:${r.tokenId}`))) continue;
+      // Checked again here (fairShares chose within the caps; this is the guard).
+      if (readToday(eq(t.share.personId, r.personId)) >= SHARE_AI.perPerson || (r.tokenId && readToday(eq(t.share.tokenId, r.tokenId)) >= SHARE_AI.perToken)) continue;
       const kept = (JSON.parse(r.mediaJson) as { path: string; at?: number }[]).slice(0, 30);
       const images = kept.map((k) => readKept(this.cfg.dataDir, k.path)).filter((b): b is Buffer => b !== null);
       const input = { images: kept.map((k): Image => ({ path: k.path, mimeType: 'image/jpeg', ...(k.at != null ? { atSeconds: k.at } : {}) })), ...(r.caption ? { caption: r.caption } : {}), ...(r.url ? { url: r.url } : {}) };
       let found: Record<string, unknown>;
       try {
-        const { output } = await runAi(this.db, s.model, 'extractTitles', input, { budget: s.budget, personId: r.personId, images, address: s.address });
+        const { output } = await runAi(this.db, s.model, 'extractTitles', input, { budget: s.budget, personId: r.personId, images, address: s.address, share: { personId: r.personId, tokenId: r.tokenId } });
         // What the AI could look at, in Shelf's words, for the Inbox.
         found = { ...output, readFrom: images.length && s.model.supportsVision ? 'images' : 'caption' };
       } catch (e) {
+        // Only this sharer's (or token's) part is spent: their shares wait, everyone else's are read.
+        if (e instanceof AiError && e.scope === 'person') { spent.add(`p:${r.personId}`); continue; }
+        if (e instanceof AiError && e.scope === 'token' && r.tokenId) { spent.add(`t:${r.tokenId}`); continue; }
         const stop = stopped(e, `${n} shares read`);
         if (stop) return stop;
         if (!(e instanceof AiError)) throw e;
@@ -133,7 +162,8 @@ export class AiJobs {
       this.db.update(t.share).set({ foundJson: JSON.stringify(found), aiReadAt: this.now().toISOString() }).where(eq(t.share.id, r.id)).run();
       n++;
     }
-    return done(`${n} shares read${waiting ? `; ${waiting} wait (a person's or a share token's reads for the day are used up)` : ''}`);
+    const waiting = this.db.select({ n: count() }).from(t.share).where(and(eq(t.share.status, 'done'), isNull(t.share.foundJson), gt(t.share.createdAt, since))).get()!.n;
+    return done(`${n} shares read${waiting ? `; ${waiting} wait (a person's or a share token's part of the day is used up)` : ''}`);
   }
 
   /** tagBook, then proposeLinks and checkRedundant, on adults' backlog books with no ideas yet. */

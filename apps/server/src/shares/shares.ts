@@ -108,7 +108,7 @@ const kept = (dataDir: string, id: string) => join(dataDir, 'shares', id);
  * and records the share. Every part is read to its end, so a refusal never leaves a request half read; on any refusal
  * nothing is kept.
  */
-export async function receiveShare(req: FastifyRequest, db: Db, o: Receive & { tokenId?: string | null }): Promise<ShareRow> {
+export async function receiveShare(req: FastifyRequest, db: Db, o: Receive): Promise<ShareRow> {
   if (!req.isMultipart()) throw new ShareError(400, 'a share is multipart/form-data');
   let mine = 0;
   for (const u of open) if (u.personId === o.personId) mine++;
@@ -130,7 +130,7 @@ export async function receiveShare(req: FastifyRequest, db: Db, o: Receive & { t
   }
 }
 
-interface Receive { dataDir: string; workDir: string | null; personId: string; now?: Date }
+interface Receive { dataDir: string; workDir: string | null; personId: string; tokenId?: string | null; now?: Date }
 
 /** A part's chunks, each one telling the upload's idle timer that bytes came. */
 async function* chunks(file: AsyncIterable<unknown>, touch: () => void): AsyncGenerator<Buffer> {

@@ -21,6 +21,7 @@ CREATE TABLE `idea_proposal` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `idea_proposal_book_name` ON `idea_proposal` (`book_id`,`name`);--> statement-breakpoint
 ALTER TABLE `ai_run` ADD `tokens` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `ai_run` ADD `share_token_id` text REFERENCES share_token(id) ON DELETE SET NULL;--> statement-breakpoint
 CREATE INDEX `ai_run_spend` ON `ai_run` (`provider`,`started_at`);--> statement-breakpoint
 ALTER TABLE `household_settings` ADD `ai_daily_tokens` integer DEFAULT 200000 NOT NULL;--> statement-breakpoint
 ALTER TABLE `order_line` ADD `why_audience` text;--> statement-breakpoint

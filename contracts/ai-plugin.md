@@ -63,7 +63,8 @@ hold (`FIELDS` and each job's `sends` in `packages/ai/src/jobs.ts`), and `buildP
 its job does not list, so the two cannot drift. It says what that means: each request is one person's (one adult's
 read books, up to 60, with their takeaways if they turned them on; one adult's reading map with their backlog's titles;
 one adult's pick with the read books it builds on), without their name, plus the books themselves, the household's idea
-names, owned titles and shared posts. Turning Claude on is an admin's request with `acceptLeaves: true`; the accepted
+names, owned titles and shared posts. Turning Claude on is an admin's request with `acceptLeaves`, the `leavesVersion` of the list their page showed
+(refused when the list is another by then); the accepted
 lines are stored, and while the list holds a line they do not (a job turned on, a newer Shelf that sends more), Claude
 is not called until an admin accepts again. The API key is sealed like the delivery address and never answered back. A
 person's takeaways reach no AI, Ollama included, unless that person turns on `takeawaysToAi` (off by default;
@@ -84,6 +85,7 @@ reads only what its person may: book ideas private to someone else are left out,
 private to the pick's person is shown only to them (`order_line.why_audience`).
 
 Spend: with Claude, every run together stays within the household's daily allowance (`Settings.ai.dailyLimit`, tokens in
-any 24 hours, 200,000 by default; `usedToday` shows the use); a call that could go past it is not made. Shares are read
-at most 20 a day per share token and 40 per person.
+any 24 hours, 200,000 by default; `usedToday` shows the use); a call that could go past it is not made. A share's runs
+spend at most half of it per sharer and 40% per share token. Shares are read at most 20 a day per share token and 40 per
+person, chosen round-robin by each person's oldest, so one person's pile never hides another's.
 

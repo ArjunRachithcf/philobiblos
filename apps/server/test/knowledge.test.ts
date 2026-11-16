@@ -126,6 +126,11 @@ describe('proposals and reviews', () => {
     const r = await send('alex', 'PUT', `/api/links/${from}/${to}`, { state: 'confirmed' });
     expect(r.statusCode).toBe(404);
     expect(r.json()).toEqual((await send('alex', 'PUT', '/api/links/x/y', { state: 'confirmed' })).json());
+    // Confirmed by Sam, it counts for Alex's scores too, with a neutral reason in place of Sam's.
+    expect((await send('partner', 'PUT', `/api/links/${from}/${to}`, { state: 'confirmed' })).statusCode).toBe(200);
+    const after = (await get('alex', '/api/backlog?q=%22before%20the%20first%20cities%22')).json();
+    expect(JSON.stringify(after)).not.toContain('what Sam wrote');
+    expect(after.items[0].buildsOn).toContainEqual(expect.objectContaining({ reason: PRIVATE_REASON }));
   });
 
   it('the repro: Sam confirms, then turns the AI gate off; the reason never reaches Alex', async () => {

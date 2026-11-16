@@ -9,7 +9,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { FIELDS, JOBS, JOB_NAMES, buildPrompt, createClaudeModel, createOllamaModel, fakeModel, keyPaths, type Field, type JobName } from '@shelf/ai';
 import { AI_LIMITS, AiBudget, AiError, runAi, scrub } from '../src/ai/run';
 import { modelFor } from '../src/ai/model';
-import { CLAUDE_KEY, DEFAULT_JOBS, JOBS_OF, SealKeyMissing, checkAi, leaves } from '../src/ai/settings';
+import { CLAUDE_KEY, DEFAULT_JOBS, JOBS_OF, SealKeyMissing, checkAi, leaves, leavesVersion, type AiJobs } from '../src/ai/settings';
+/** The version of the list an admin's page shows for these jobs: what acceptLeaves carries. */
+const V = (j: Partial<AiJobs> = {}) => leavesVersion(leaves('claude', { ...DEFAULT_JOBS, ...j }));
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
@@ -293,6 +295,16 @@ describe("Settings' list of what leaves is what the requests hold", () => {
       expect(() => buildPrompt('tagBook', { ...tagIn, blurb: undefined })).not.toThrow();
     } finally { sends.blurb = was; }
   });
+
+  it('a key sent as null is checked against the job\'s list too', () => {
+    expect([...keyPaths('', { a: null, b: { c: null }, d: undefined })]).toEqual(['a', 'b', 'b.c']);
+    const spec = JOBS.explainPick as unknown as { split: (i: unknown) => { data: Record<string, unknown>; untrusted: [string, unknown][] } };
+    const was = spec.split;
+    spec.split = (i) => { const r = was(i); return { ...r, data: { ...r.data, unlisted: null } }; };
+    try {
+      expect(() => buildPrompt('explainPick', FULL.explainPick)).toThrow(/unlisted.*Settings does not list/);
+    } finally { spec.split = was; }
+  });
 });
 
 describe('Settings.ai and the opt-in', () => {
@@ -323,13 +335,13 @@ describe('Settings.ai and the opt-in', () => {
 
   it('opting in to Claude: admins only, with a key, and only with acceptLeaves', async () => {
     const a = await app();
-    expect((await a.patch(a.sam, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: true })).statusCode).toBe(403);
+    expect((await a.patch(a.sam, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: V() })).statusCode).toBe(403);
     const noAccept = await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY });
     expect(noAccept.statusCode).toBe(400);
     expect(noAccept.json().error).toMatch(/acceptLeaves/);
-    expect((await a.patch(a.alex, { provider: 'claude', acceptLeaves: true })).statusCode).toBe(400);
+    expect((await a.patch(a.alex, { provider: 'claude', acceptLeaves: V() })).statusCode).toBe(400);
     expect((await a.get()).ai).toMatchObject({ provider: 'ollama', hasClaudeKey: false });
-    const ok = await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: true });
+    const ok = await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: V() });
     expect(ok.statusCode).toBe(200);
     const s = (await a.get()).ai;
     expect(s).toMatchObject({ provider: 'claude', hasClaudeKey: true });
@@ -337,7 +349,13 @@ describe('Settings.ai and the opt-in', () => {
     // While on, a job that sends more needs the acceptance again.
     expect((await a.patch(a.alex, { jobs: { read: false } })).statusCode).toBe(200);
     expect((await a.patch(a.alex, { jobs: { read: true } })).statusCode).toBe(400);
-    expect((await a.patch(a.alex, { jobs: { read: true }, acceptLeaves: true })).statusCode).toBe(200);
+    // The acceptance carries the version of the list the page showed: true, or a stale one, is refused.
+    expect((await a.patch(a.alex, { jobs: { read: true }, acceptLeaves: true })).statusCode).toBe(400);
+    const stale = await a.patch(a.alex, { jobs: { read: true }, acceptLeaves: V({ read: false }) });
+    expect(stale.statusCode).toBe(400);
+    expect(stale.json().error).toMatch(/not the list you accepted/);
+    expect((await a.get()).ai).toMatchObject({ leavesVersion: V({ read: false }) });
+    expect((await a.patch(a.alex, { jobs: { read: true }, acceptLeaves: V() })).statusCode).toBe(200);
   });
 
   it('the key is sealed, write-only, never in an answer, a message or the database in clear', async () => {
@@ -352,7 +370,7 @@ describe('Settings.ai and the opt-in', () => {
     expect(row.ciphertext.toString('latin1')).not.toContain('sk-ant');
     expect(unseal(a.db, Buffer.from(TEST_SEALING_KEY, 'base64'), CLAUDE_KEY)).toBe(KEY);
     // Removing it while Claude is on turns the AI off, never over to another provider.
-    await a.patch(a.alex, { provider: 'claude', acceptLeaves: true });
+    await a.patch(a.alex, { provider: 'claude', acceptLeaves: V() });
     expect((await a.patch(a.alex, { claudeApiKey: null })).statusCode).toBe(200);
     expect((await a.get()).ai).toMatchObject({ provider: 'none', hasClaudeKey: false });
   });
@@ -382,7 +400,7 @@ describe('Settings.ai and the opt-in', () => {
     expect(asked.at(-1)).toEqual([{ host: 'ollama.lan', scheme: 'http', port: 11434, privateOk: true }]);
     expect(modelFor(a.db, { ...a.cfg, ollamaUrl: null }, deps)).toMatchObject({ model: null, why: expect.stringMatching(/OLLAMA_URL/) });
     expect(modelFor(a.db, { ...a.cfg, egress: false }, deps).model).toBeNull();
-    await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: true });
+    await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: V() });
     expect(modelFor(a.db, a.cfg, deps).model).toMatchObject({ provider: 'claude', model: 'claude-opus-5-5' });
     expect(asked.at(-1)).toEqual([{ host: 'api.anthropic.com' }]);
     await a.patch(a.alex, { provider: 'none' });
@@ -392,7 +410,7 @@ describe('Settings.ai and the opt-in', () => {
   it('an acceptance covers the list it was given: a line it does not hold pauses Claude until an admin accepts again', async () => {
     const a = await app();
     const deps = { egress: (rules: Rule[]) => createEgress({ rules }) };
-    expect((await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: true })).statusCode).toBe(200);
+    expect((await a.patch(a.alex, { provider: 'claude', claudeApiKey: KEY, acceptLeaves: V() })).statusCode).toBe(200);
     expect((await a.get()).ai).toMatchObject({ provider: 'claude', leavesAccepted: true });
     expect(modelFor(a.db, a.cfg, deps).model).toMatchObject({ provider: 'claude' });
     // A job off keeps it accepted (it sends less).
@@ -406,7 +424,7 @@ describe('Settings.ai and the opt-in', () => {
     // Changing anything else keeps it paused; accepting the list as it is now resumes it.
     expect((await a.patch(a.alex, { claudeModel: 'claude-sonnet-5-5' })).statusCode).toBe(200);
     expect(modelFor(a.db, a.cfg, deps).model).toBeNull();
-    expect((await a.patch(a.alex, { acceptLeaves: true })).statusCode).toBe(200);
+    expect((await a.patch(a.alex, { acceptLeaves: V({ explain: false }) })).statusCode).toBe(200);
     expect((await a.get()).ai.leavesAccepted).toBe(true);
     expect(modelFor(a.db, a.cfg, deps).model).toMatchObject({ provider: 'claude', model: 'claude-sonnet-5-5' });
     // Nothing accepted at all (a household from before this list was stored): paused.

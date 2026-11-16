@@ -18,7 +18,8 @@ Status: **Accepted** · 2026-11-15
   when a person confirms it, so it never reaches another prompt on the model's word; idea names, which a model may have
   proposed, go to prompts in `<untrusted>` blocks, and `<input>` holds only Shelf's numbers, enums and fixed lists. With
   Claude, the household has a daily allowance of tokens across every run (`ai_daily_tokens`, admins, 200,000 by
-  default) that a call is not made past, and the AI reads at most 20 shares a day per share token and 40 per person.
+  default) that a call is not made past, of which a share's runs may use at most half per sharer and 40% per share
+  token, and the AI reads at most 20 shares a day per share token and 40 per person, chosen fairly.
   What Settings says leaves is built from each job's own fields, and an admin's acceptance covers only the lines it was
   given.
 - **Phone-share tokens** are per person, write-only (`POST /api/shares` only), stored as a SHA-256 hash, shown once,

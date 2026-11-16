@@ -180,12 +180,13 @@ const checkRedundant: Spec<CheckRedundantIn, CheckRedundantOut> = {
   },
 };
 
-/** Every key path of a value (`a.b`: key b of a's objects, or of its array's items), the root's own name first. */
+/** Every key path of a value (`a.b`: key b of a's objects, or of its array's items), the root's own name first; null values included. */
 export function keyPaths(root: string, v: unknown, out = new Set<string>()): Set<string> {
   if (root) out.add(root);
   if (Array.isArray(v)) { for (const x of v) keyPaths(root, x, out); return out; }
   if (v && typeof v === 'object') {
-    for (const [k, x] of Object.entries(v)) if (x !== undefined && x !== null) keyPaths(root ? `${root}.${k}` : k, x, out);
+    // A key sent as null is still sent: it is checked like any other (only undefined, which JSON drops, is not).
+    for (const [k, x] of Object.entries(v)) if (x !== undefined) keyPaths(root ? `${root}.${k}` : k, x, out);
   }
   return out;
 }

@@ -21,7 +21,7 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { safeField } from '../mail/read';
 import { getAi } from './settings';
-import { SPEND, spentToday } from './spend';
+import { SHARE_SPEND, SPEND, spentToday } from './spend';
 
 export const AI_LIMITS = {
   /** Characters of the system and user message together. */
@@ -33,8 +33,9 @@ export const AI_LIMITS = {
   timeoutMs: { ollama: 180_000, claude: 90_000, fake: 5_000 } as Record<Model['provider'], number>,
 } as const;
 
-/** What calls in flight hold reserved against the allowance (ai/spend.ts), per database. */
-const reserved = new WeakMap<Db, number>();
+/** What calls in flight hold reserved against the allowance (ai/spend.ts), per database: the household's ('all'), and a share's sharer's ('p:…') and token's ('t:…'). */
+const reserved = new WeakMap<Db, Map<string, number>>();
+const held = (db: Db, k: string) => reserved.get(db)?.get(k) ?? 0;
 
 /** A job run's allowance: calls and tokens (input and output) across every AI call it makes. */
 export class AiBudget {
@@ -48,7 +49,8 @@ export class AiBudget {
 }
 
 export class AiError extends Error {
-  constructor(readonly reason: 'budget' | 'too_large' | 'failed' | 'takeaways', message: string, readonly runId?: string) {
+  /** `scope` of a budget error: the household's allowance, or only this share's sharer's or token's part of it. */
+  constructor(readonly reason: 'budget' | 'too_large' | 'failed' | 'takeaways', message: string, readonly runId?: string, readonly scope: 'run' | 'household' | 'person' | 'token' = 'run') {
     super(message);
     this.name = 'AiError';
   }
@@ -64,6 +66,8 @@ export interface RunContext {
   images?: Buffer[];
   /** The delivery address's pieces (mail/read.ts addressParts): no answer keeps a string holding one. */
   address?: string[];
+  /** A share's run: its sharer and the token it came with, each held to their part of the allowance (ai/spend.ts). */
+  share?: { personId: string; tokenId: string | null };
   now?: () => Date;
 }
 
@@ -140,7 +144,13 @@ export async function runAi<J extends JobName>(db: Db, model: Model, job: J, inp
   const bound = model.provider === 'claude' ? Buffer.byteLength(built.system) + Buffer.byteLength(built.user) + images.length * SPEND.perImage + JOBS[job].maxTokens + SPEND.overhead : 0;
   const allowance = model.provider === 'claude' ? getAi(db).dailyTokens : Infinity;
   // This run's spend stays reserved until its row records it, so no other run can miss it in between.
-  const hold = (n: number) => { if (n) reserved.set(db, (reserved.get(db) ?? 0) + n); };
+  const keys = ['all', ...(ctx.share ? [`p:${ctx.share.personId}`, ...(ctx.share.tokenId ? [`t:${ctx.share.tokenId}`] : [])] : [])];
+  const hold = (n: number) => {
+    if (!n) return;
+    const m = reserved.get(db) ?? new Map<string, number>();
+    reserved.set(db, m);
+    for (const k of keys) m.set(k, (m.get(k) ?? 0) + n);
+  };
   const id = ulid();
   try {
     for (let attempt = 0; attempt < 2 && !out; attempt++) {
@@ -148,8 +158,15 @@ export async function runAi<J extends JobName>(db: Db, model: Model, job: J, inp
       try {
         ctx.budget.take();
         if (bound) {
-          const spent = spentToday(db, now()) + (reserved.get(db) ?? 0);
-          if (spent + bound > allowance) throw new AiError('budget', `the household's AI allowance for the day is spent (${spent} of ${allowance} tokens in the last 24 hours)`);
+          const spent = spentToday(db, now()) + held(db, 'all');
+          if (spent + bound > allowance) throw new AiError('budget', `the household's AI allowance for the day is spent (${spent} of ${allowance} tokens in the last 24 hours)`, undefined, 'household');
+          // A share's run: its sharer, and its token, may spend only their part, so a leaked token cannot stop everyone's AI.
+          if (ctx.share) {
+            const by = spentToday(db, now(), { personId: ctx.share.personId }) + held(db, `p:${ctx.share.personId}`);
+            if (by + bound > allowance * SHARE_SPEND.perPerson) throw new AiError('budget', "this person's shares have used their part of the day's AI allowance", undefined, 'person');
+            const tok = ctx.share.tokenId;
+            if (tok && spentToday(db, now(), { tokenId: tok }) + held(db, `t:${tok}`) + bound > allowance * SHARE_SPEND.perToken) throw new AiError('budget', "this share token's shares have used their part of the day's AI allowance", undefined, 'token');
+          }
         }
       } catch (e) { if (attempt === 0) throw e; error = (e as Error).message; break; }
       hold(bound);
@@ -177,7 +194,7 @@ export async function runAi<J extends JobName>(db: Db, model: Model, job: J, inp
     db.insert(t.aiRun).values({
       id, job, provider: model.provider, model: served.slice(0, 100), promptVersion: built.promptVersion, inputHash,
       outputJson: out ? JSON.stringify(out) : null, costC: cost, startedAt, finishedAt: now().toISOString(),
-      error: out ? null : error.slice(0, 300), takeawaysOf, personId, tokens,
+      error: out ? null : error.slice(0, 300), takeawaysOf, personId, tokens, shareTokenId: ctx.share?.tokenId ?? null,
     }).run();
   } finally {
     if (bound) hold(-tokens);
