@@ -516,3 +516,42 @@ describe('the delivery address never reaches a kept field', () => {
     expect(await openVerified(Buffer.from(good.toString().replace('To: shelf.household@example.org', 'To: stranger@example.com')), o)).toMatchObject({ ok: false });
   });
 });
+
+describe('shelf#15: the round-3 nits', () => {
+  it('a shop line whose EAN is no ISBN is notBook, and never matches a book by its title', async () => {
+    const text = 'Buch The Long Tide of Markets von Mira Okafor EAN: 4001234567890 | Fr. 19.90\nBuch The Quiet Hedgehog von Lena Paulsen EAN: 9780000000019 | Fr. 16.90';
+    const p = parseShop('online_order', '4400123', text, []);
+    if (p.kind !== 'online_order') throw new Error('an online order');
+    expect(p.lines.map((l) => l.notBook ?? false)).toEqual([true, false]);
+    const db = world();
+    await run(db, fakeBox([{ uid: 1, raw: await signed(message({ id: 'oo15', from: 'shop@orellfuessli.ch', subject: 'Ihre Orell Füssli Bestellung (4400123)', body: text })) }]));
+    expect(JSON.parse(kept(db, '<oo15@orellfuessli.ch>').parsedJson!)).toMatchObject({ lines: [{ bookId: null, notBook: true }, { bookId: 'b_hedgehog' }] });
+  });
+
+  it('classify strips format characters: a zero-width character in or after the number does not hide it', () => {
+    expect(classify('x@orellfuessli.ch', 'Ihre OrellFüssli-Rechnung Nr. 1234​5678')).toEqual({ kind: 'invoice', number: '12345678' });
+    expect(classify('x@orellfuessli.ch', 'Ihre OrellFüssli-Rechnung Nr. 12345678​')).toEqual({ kind: 'invoice', number: '12345678' });
+    expect(classify('x@orellfuessli.ch', 'Wir bearbeiten Ihre Bestellung (4400⁠124)')).toEqual({ kind: 'click_collect', number: '4400124' });
+  });
+
+  it('an invoice row read whole but for its EAN is kept as eanUnreadable (with or without a Total), counted, never matched', async () => {
+    const spaced = ['978 0000 000002', 'The Long Tide of Markets', '1 ST', '19.90', '19.90 CHF', '2.6 %'];
+    const ok = ['9780000000019', 'The Quiet Hedgehog', '1 ST', '16.90', '16.90 CHF', '2.6 %'];
+    for (const rows of [[spaced, ok], [spaced, ok, ['Total', '36.80 CHF']]]) {
+      expect(parseInvoice('99001122', rows, false, [])).toMatchObject({ kind: 'invoice', totalC: 3680, lines: [
+        { ean: null, title: 'The Long Tide of Markets', totalC: 1990, eanUnreadable: true }, { ean: '9780000000019' },
+      ] });
+    }
+    // A whole row with no leading digits (a gift card, say) is no book row: not a line, not in the sum (PR #16 review).
+    expect(parseInvoice('1', [ok, ['Gutschein Geschenkkarte', '1 ST', '50.00', '50.00 CHF', '0 %']], false, [])).toMatchObject({ kind: 'invoice', totalC: 1690, lines: [{ ean: '9780000000019' }] });
+    // A row that is not a book row (no ST, no CHF, no VAT) is still left alone.
+    expect(parseInvoice('1', [['Kundennummer', '5550001'], ok], false, [])).toMatchObject({ kind: 'invoice', lines: [{ ean: '9780000000019' }] });
+    const db = world();
+    db.update(t.order).set({ status: 'quoted' }).where(eq(t.order.id, 'o_nov')).run();
+    await run(db, fakeBox([{ uid: 1, raw: await invoice('i15') }]), { pdfText: async () => ({ id: 'j', ok: true, kind: 'pdf.text', pages: 1, truncated: false, rows: [spaced, ok] }) });
+    // The title is a book's, but the EAN could not be read: no copy of it, the row to the Inbox.
+    expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all().map((c) => c.bookId)).toEqual(['b_hedgehog']);
+    expect(lines(db).b_tide!.state).toBe('planned');
+    expect(unmatchedLines(db).map((l) => l.title)).toEqual(['The Long Tide of Markets']);
+  });
+});

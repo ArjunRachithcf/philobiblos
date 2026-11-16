@@ -230,10 +230,24 @@ CREATE TABLE share (
   id         TEXT PRIMARY KEY NOT NULL,
   person_id  TEXT NOT NULL REFERENCES person(id),
   url        TEXT, note TEXT,
-  media_json TEXT NOT NULL DEFAULT '[]',   -- stored image/frame paths
+  media_json TEXT NOT NULL DEFAULT '[]',   -- stored image/frame paths: the media worker's re-encoded JPEGs only
   status     TEXT NOT NULL CHECK (status IN ('received','reading','done','failed')),
   found_json TEXT,                         -- AI extraction result (contracts/ai/extract_titles.schema.json)
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  title      TEXT, caption TEXT,            -- what the phone sent with it (untrusted: marked so in prompts, shown as text)
+  media_total INTEGER NOT NULL DEFAULT 0,  -- files received; progress = kept + refused of this
+  media_refused INTEGER NOT NULL DEFAULT 0,-- files the media worker refused (not an image, too many pixels, unreadable)
+  error      TEXT                          -- Shelf's own words when it failed
+);
+
+CREATE TABLE inbox_decision (              -- what a person decided in the Inbox (M3 e); idx -1: the whole item dismissed
+  item        TEXT NOT NULL,               -- 's_<share id>' or 'm_<hash of the mail's key>'
+  idx         INTEGER NOT NULL,
+  decision    TEXT NOT NULL CHECK (decision IN ('added','skipped','dismissed')),
+  person_id   TEXT REFERENCES person(id) ON DELETE SET NULL, -- who decided
+  book_id     TEXT REFERENCES book(id) ON DELETE SET NULL,   -- the book it added
+  decided_at  TEXT NOT NULL,
+  PRIMARY KEY (item, idx)
 );
 
 CREATE TABLE mail_seen (                   -- IMAP messages already read (ADR 0007); mail is hostile input
