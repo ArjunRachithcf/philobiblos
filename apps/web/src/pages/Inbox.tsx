@@ -28,7 +28,14 @@ export function Inbox({ me }: { me: Me }) {
 
   const [next, setNext] = useState<string | null>(null);
   // The first page, again after each decision; "Show more" adds the pages after it.
-  const load = useCallback(() => api<Page>(`/inbox?filter=${filter}`).then((p) => { setItems(p.items); setNext(p.nextCursor); }, (e) => setError(message(e))), [filter]);
+  // A page can come back empty with more after it (settled rows newer than anything waiting): followed, up to ten.
+  const load = useCallback(async () => {
+    try {
+      let p = await api<Page>(`/inbox?filter=${filter}`);
+      for (let i = 0; i < 10 && !p.items.length && p.nextCursor; i++) p = await api<Page>(`/inbox?filter=${filter}&cursor=${encodeURIComponent(p.nextCursor)}`);
+      setItems(p.items); setNext(p.nextCursor);
+    } catch (e) { setError(message(e)); }
+  }, [filter]);
   const more = async () => {
     if (!next) return;
     try { const p = await api<Page>(`/inbox?filter=${filter}&cursor=${encodeURIComponent(next)}`); setItems((x) => [...(x ?? []), ...p.items]); setNext(p.nextCursor); } catch (e) { setError(message(e)); }
@@ -67,7 +74,7 @@ export function Inbox({ me }: { me: Me }) {
         <Choice label="Show" value={filter} options={FILTERS} onChange={setFilter} />
         {error && <Notice kind="error">{error}</Notice>}
         <p className="sr-only" role="status">{status}</p>
-        {!items ? <p className="sr-only" role="status">Loading</p> : !items.length ? (
+        {!items ? <p className="sr-only" role="status">Loading</p> : !items.length && !next ? (
           <section className="group-block" aria-labelledby="in-empty-h">
             <div className="group-head"><h2 id="in-empty-h" tabIndex={-1}>Nothing waiting</h2></div>
             <p className="group-foot">{filter === 'ai' ? 'AI suggestions arrive here once the AI reads your shares.' : 'Share a post from your phone, or wait for the bookshop’s next mail.'}</p>

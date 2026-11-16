@@ -459,4 +459,19 @@ describe('the Inbox', () => {
     await later.kick();
     expect(readdirSync(join(a.data, 'incoming'))).toEqual([]);
   });
+
+  it(`a page reads at most ${PAGE.scan} rows: settled rows newer than anything waiting give an empty page with a cursor, and the next has the item (PR #17 review)`, async () => {
+    const a = await app();
+    const ins = a.db.$client.prepare("INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, 'unknown_layout', '{}', 'v', ?, '{}', 1)");
+    const dis = a.db.$client.prepare("INSERT INTO inbox_decision (item, idx, decision, decided_at) VALUES (?, -1, 'dismissed', 'x')");
+    a.db.$client.transaction(() => {
+      ins.run('<old@orellfuessli.ch>', '2026-01-01T00:00:00.000Z');
+      for (let i = 0; i < PAGE.scan + 100; i++) { ins.run(`<d${i}@orellfuessli.ch>`, '2026-11-01T00:00:00.000Z'); dis.run(mailItemId(`<d${i}@orellfuessli.ch>`)); }
+    })();
+    const first = (await a.app.inject({ url: '/api/inbox', headers: { cookie: a.alex } })).json() as { items: unknown[]; nextCursor: string | null };
+    expect(first.items).toEqual([]);
+    expect(first.nextCursor).toBeTruthy();
+    const second = (await a.app.inject({ url: `/api/inbox?cursor=${first.nextCursor}`, headers: { cookie: a.alex } })).json() as { items: { id: string }[]; nextCursor: string | null };
+    expect(second).toEqual({ items: [expect.objectContaining({ id: mailItemId('<old@orellfuessli.ch>') })], nextCursor: null });
+  }, 30_000);
 });

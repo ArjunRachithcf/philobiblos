@@ -3,6 +3,7 @@
 // Backlog (the filter bar, labels, tabs, a score's parts, grouping, bulk actions, a book added); the budget; the Brain
 // (the map and its table, views, the panel) and the proposals waiting for a decision (confirm, reject, a layer change);
 // the Inbox, share tokens and phone shares.
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { expect, request, test, type Page } from '@playwright/test';
@@ -527,11 +528,14 @@ test('another website cannot post a share through the share target: the share sc
   const other = await page.context().newPage();
   await other.route('http://evil.test/**', (r) => r.fulfill({ contentType: 'text/html', body: `<!doctype html><form id="f" method="post" enctype="multipart/form-data" action="${ORIGIN}/share-target"><input name="text" value="A share nobody made https://evil.test/x"><input name="url" value="https://evil.test/x"></form><script>document.getElementById('f').submit()</script>` }));
   const posted: string[] = [];
-  other.on('request', (r) => { if (r.url().startsWith(`${ORIGIN}/api/shares`)) posted.push(r.method()); });
+  other.on('request', (r) => { if (r.method() === 'POST' && r.url().startsWith(`${ORIGIN}/api/shares`)) posted.push(r.method()); });
   await other.goto('http://evil.test/');
   await other.waitForURL(/\/share\?pending=[0-9a-f-]{36}$/);
   await expect(other.getByRole('heading', { name: 'Send this to your Inbox?' })).toBeVisible();
   await expect(other.getByText('A share nobody made https://evil.test/x')).toBeVisible();
+  // Focus is on the heading, never on Send: keys the other site times for the person send nothing.
+  await expect(other.getByRole('heading', { name: 'Send this to your Inbox?' })).toBeFocused();
+  for (const key of ['Enter', 'Space', 'Enter']) await other.keyboard.press(key);
   await other.waitForTimeout(1500);
   expect(posted).toEqual([]);
   const inbox = await (await page.request.get('/api/inbox?filter=shared')).json() as { items: { share?: { url?: string } }[] };
@@ -543,5 +547,34 @@ test('another website cannot post a share through the share target: the share sc
   await other.goto(landed);
   await expect(other.getByText(/sent or discarded already/)).toBeVisible();
   expect(posted).toEqual([]);
+  // Only an explicit activation of Send posts: once more from the other site, then a click on Send.
+  await other.goto('http://evil.test/');
+  await other.waitForURL(/\/share\?pending=[0-9a-f-]{36}$/);
+  await other.waitForTimeout(1200);
+  await other.getByRole('button', { name: 'Send to the Inbox' }).click();
+  await expect(other.getByText('In your Inbox.')).toBeVisible();
+  expect(posted).toEqual(['POST']);
+  const after = await (await page.request.get('/api/inbox?filter=shared')).json() as { items: { id: string; share?: { url?: string } }[] };
+  const made = after.items.find((i) => i.share?.url === 'https://evil.test/x')!;
+  expect((await page.request.post(`/api/inbox/${made.id}/dismiss`, { headers: { origin: ORIGIN } })).status()).toBe(204);
   await other.close();
+});
+
+test('an empty first page with more after it is followed: never "Nothing waiting" next to "Show more" (PR #17 review)', async () => {
+  // 2,100 settled (dismissed) mails newer than the one still waiting: more than a page reads.
+  const db = new DatabaseSync(join(dataDir(SEEDED_PORT), 'shelf.sqlite'), { timeout: 5000 });
+  const ins = db.prepare("INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, 'unknown_layout', ?, 'v', ?, '{}', 1)");
+  const dis = db.prepare("INSERT INTO inbox_decision (item, idx, decision, decided_at) VALUES (?, -1, 'dismissed', 'x')");
+  const itemId = (key: string) => `m_${createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 32)}`;
+  db.exec('BEGIN');
+  ins.run('<e2e-old@orellfuessli.ch>', JSON.stringify({ subject: 'An old quote Shelf could not read', reason: 'a price Shelf cannot place' }), '2020-01-01T00:00:00.000Z');
+  for (let i = 0; i < 2100; i++) { ins.run(`<e2e-d${i}@orellfuessli.ch>`, '{}', '2030-01-01T00:00:00.000Z'); dis.run(itemId(`<e2e-d${i}@orellfuessli.ch>`)); }
+  db.exec('COMMIT');
+  db.close();
+  await page.goto('/inbox');
+  await expect(page.getByRole('heading', { name: 'An old quote Shelf could not read' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Nothing waiting' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss An old quote Shelf could not read' }).click();
+  await expect(page.getByRole('heading', { name: 'An old quote Shelf could not read' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show more' })).toHaveCount(0);
 });

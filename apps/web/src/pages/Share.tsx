@@ -32,6 +32,8 @@ function upload(form: FormData, onProgress: (sent: number, total: number) => voi
 
 /** A share waits for the person's tap at most this long. */
 export const PENDING_MAX_AGE_MS = 3600_000;
+/** Send does nothing this soon after the confirmation opens. */
+const SEND_DELAY_MS = 1000;
 interface Pending { id: string; form: FormData; dropped: number }
 
 async function readPending(id: string): Promise<Pending | null> {
@@ -169,11 +171,14 @@ function PendingShare({ p, onSend, onDiscard }: { p: Pending; onSend: () => void
   const id = useId();
   const field = (k: string) => { const v = p.form.get(k); return typeof v === 'string' ? v : null; };
   const images = p.form.getAll('media').filter((f) => typeof f !== 'string').length;
-  const send = useRef<HTMLButtonElement>(null);
-  useEffect(() => { send.current?.focus(); }, []);
+  // Focus goes to the heading, never to Send: another site can open this screen and time a keypress for it. And for a
+  // moment after it opens, Send ignores activation, as browsers do with permission prompts.
+  const head = useRef<HTMLHeadingElement>(null);
+  const opened = useRef(Date.now());
+  useEffect(() => { head.current?.focus(); opened.current = Date.now(); }, []);
   return (
     <section className="card stack" aria-labelledby={`${id}-h`}>
-      <h2 className="card-title" id={`${id}-h`}>Send this to your Inbox?</h2>
+      <h2 className="card-title" id={`${id}-h`} ref={head} tabIndex={-1}>Send this to your Inbox?</h2>
       <p className="footnote">It arrived through Shelf’s share target. Send it only if you shared it just now: another website can open this screen too.</p>
       <dl className="kv">
         {field('title') && <><dt>Title</dt><dd className="wrap">{field('title')}</dd></>}
@@ -184,7 +189,7 @@ function PendingShare({ p, onSend, onDiscard }: { p: Pending; onSend: () => void
       {p.dropped > 0 && <Notice kind="warn">{p.dropped} file{p.dropped === 1 ? ' was' : 's were'} over 20 MB and left out.</Notice>}
       <p className="footnote">Only one share waits here: sharing again replaces this one.</p>
       <div className="btn-row">
-        <button ref={send} type="button" className="btn btn-primary" onClick={onSend}>Send to the Inbox</button>
+        <button type="button" className="btn btn-primary" onClick={() => { if (Date.now() - opened.current >= SEND_DELAY_MS) onSend(); }}>Send to the Inbox</button>
         <button type="button" className="btn" onClick={onDiscard}>Discard</button>
       </div>
     </section>
