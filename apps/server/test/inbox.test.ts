@@ -95,7 +95,8 @@ describe('share tokens: high-entropy, hashed, compared in constant time, scoped,
     expect(findShareToken(a.db, id + other.token.slice(26))).toBeNull();
     expect(findShareToken(a.db, other.id + secret)).toBeNull();
     expect(findShareToken(a.db, secret)).toBeNull(); // the old shape: no id
-    expect(findShareToken(a.db, `${id}${secret.slice(0, 42)}A`)).toBeNull();
+    // One character changed (never to the one it is: a secret ending in A made this a 1-in-64 flake).
+    expect(findShareToken(a.db, `${id}${secret.slice(0, 42)}${secret[42] === 'A' ? 'B' : 'A'}`)).toBeNull();
     // At rest: only a hash; the token is in no column.
     const row = a.db.select().from(t.shareToken).where(eq(t.shareToken.id, id)).get()!;
     expect(JSON.stringify(row)).not.toContain(secret);
