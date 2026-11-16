@@ -266,7 +266,25 @@ export const share = sqliteTable('share', {
   status: text('status', { enum: ['received', 'reading', 'done', 'failed'] }).notNull(),
   foundJson: text('found_json'),
   createdAt: text('created_at').notNull(),
+  title: text('title'),
+  caption: text('caption'),
+  mediaTotal: integer('media_total').notNull().default(0),
+  mediaRefused: integer('media_refused').notNull().default(0),
+  error: text('error'),
 }, (t) => [check('share_status', sql`${t.status} IN ('received','reading','done','failed')`)]);
+
+// What a person decided in the Inbox (M3 e): one row per book of an item, idx -1 for the whole item dismissed.
+export const inboxDecision = sqliteTable('inbox_decision', {
+  item: text('item').notNull(),
+  idx: integer('idx').notNull(),
+  decision: text('decision', { enum: ['added', 'skipped', 'dismissed'] }).notNull(),
+  personId: text('person_id').references(() => person.id, { onDelete: 'set null' }),
+  bookId: text('book_id').references(() => book.id, { onDelete: 'set null' }),
+  decidedAt: text('decided_at').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.item, t.idx] }),
+  check('inbox_decision_decision', sql`${t.decision} IN ('added','skipped','dismissed')`),
+]);
 
 export const mailSeen = sqliteTable('mail_seen', {
   messageId: text('message_id').primaryKey(),

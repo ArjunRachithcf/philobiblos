@@ -8,14 +8,14 @@
 // is not an ambient credential. Every other change must carry Shelf's own Origin, in both modes.
 // A share token is good for POST /shares and nothing else. Kids, and people HomersLab sends without a role, get 403.
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { and, eq, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson, syncHomersLabPerson } from '../household/people';
 import { resolveIdentity } from '../identity';
 import { SESSION_COOKIE, liveSession, type Session } from './sessions';
-import { hashToken } from './tokens';
+import { Limiter, findShareToken } from '../shares/tokens';
 
 export type AuthMode = 'public' | 'person' | 'person-or-share-token';
 
@@ -28,6 +28,9 @@ declare module 'fastify' {
 
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/** Wrong share tokens: 10 in 10 minutes from one address, then every token from it waits out the window (429). */
+export const TOKEN_FAILURES = { max: 10, windowMs: 10 * 60_000 };
+
 function bearer(req: FastifyRequest): string | null {
   const h = req.headers.authorization;
   const m = typeof h === 'string' ? /^Bearer ([A-Za-z0-9_-]{20,200})$/.exec(h) : null;
@@ -35,15 +38,21 @@ function bearer(req: FastifyRequest): string | null {
 }
 
 export function authHook(cfg: Config, db: Db) {
+  const failures = new Limiter(TOKEN_FAILURES.max, TOKEN_FAILURES.windowMs);
   return async (req: FastifyRequest, reply: FastifyReply) => {
     const mode: AuthMode = req.routeOptions.config.auth ?? 'person';
     const token = mode === 'person-or-share-token' && req.headers.authorization !== undefined ? bearer(req) : null;
 
     if (mode === 'person-or-share-token' && req.headers.authorization !== undefined) {
       // A share token, and only that.
-      const row = token ? db.select().from(t.shareToken).where(and(eq(t.shareToken.tokenHash, hashToken(token)), isNull(t.shareToken.revokedAt))).get() : undefined;
+      const from = req.socket.remoteAddress ?? '';
+      if (failures.blocked(from)) return reply.code(429).send({ error: 'too many wrong share tokens: wait a few minutes' });
+      const row = token ? findShareToken(db, token) : null;
       const p = row ? getPerson(db, row.personId) : undefined;
-      if (!row || !p || p.role === 'kid') return reply.code(401).send({ error: 'sign in required' });
+      if (!row || !p || p.role === 'kid') {
+        failures.hit(from);
+        return reply.code(401).send({ error: 'sign in required' });
+      }
       db.update(t.shareToken).set({ lastUsedAt: new Date().toISOString() }).where(eq(t.shareToken.id, row.id)).run();
       req.caller = { personId: p.id, role: p.role, via: 'share-token' };
       return;

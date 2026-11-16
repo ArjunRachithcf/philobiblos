@@ -582,6 +582,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** What waits for a person: their own shares (and AI suggestions, M3 g), and the household's mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (its reason only, nothing of its content). Decided and dismissed items drop out. */
         get: operations["getInbox"];
         put?: never;
         post?: never;
@@ -603,7 +604,27 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Add or skip one book of an item (its found[].index). Add: a share's or a quote's or shop line's book goes to the backlog of `for` (a handle or `me`: yourself or a kid, never another adult); an invoice line's book becomes a copy (owned). A notBook line, or one without a title, can only be skipped. Once decided, decided. */
         post: operations["decideFound"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/inbox/{itemId}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Takes a whole item out of the Inbox (a share of yours, a mail that failed closed or was not verified, the rest of a mail's lines). Nothing else changes; the mail stays in mail_seen. */
+        post: operations["dismissInboxItem"];
         delete?: never;
         options?: never;
         head?: never;
@@ -619,7 +640,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Phone share target (PWA share_target, or an iOS Shortcut with a per-person share token) */
+        /** Phone share target (the PWA's share_target through its service worker, or an iOS Shortcut with a per-person share token). Images only for now (JPEG, PNG, WebP, GIF, by their bytes; video arrives with M3 f), each re-encoded by the media worker before it is kept; the originals are deleted once read. 30 shares per person per 10 minutes. */
         post: operations["createShare"];
         delete?: never;
         options?: never;
@@ -637,7 +658,7 @@ export interface paths {
         /** The current person's share tokens (never the token itself) */
         get: operations["listShareTokens"];
         put?: never;
-        /** A new share token for the current person; the token is in this response only, and stored hashed */
+        /** A new share token for the current person; the token is in this response only, and stored hashed. At most 10 live tokens a person. */
         post: operations["createShareToken"];
         delete?: never;
         options?: never;
@@ -668,6 +689,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** A share of yours: its progress through the media worker and what was found. Another adult's answers 404. */
         get: operations["getShare"];
         put?: never;
         post?: never;
@@ -736,7 +758,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Admins only. prices, metadata, covers and mail run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
+        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images) run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
         post: operations["runJob"];
         delete?: never;
         options?: never;
@@ -1003,16 +1025,47 @@ export interface components {
             }[];
         };
         InboxItem: {
-            id?: string;
+            id: string;
             /** @enum {unknown} */
-            kind?: "share" | "ai_suggestion" | "unmatched_invoice_line";
+            kind: "share" | "ai_suggestion" | "unmatched_invoice_line" | "unmatched_quote_line" | "unmatched_shop_line" | "mail_failed" | "mail_waiting" | "mail_unverified";
             by?: components["schemas"]["Person"];
-            title?: string;
-            createdAt?: string;
+            /** @description Shelf's own words, or a share's title, or a verified mail's subject (safeField); plain text, never HTML */
+            title: string;
+            createdAt: string;
             mediaCount?: number;
-            found?: {
-                title?: string;
-                author?: string;
+            /** @description kind share */
+            share?: {
+                /** @enum {unknown} */
+                status?: "received" | "reading" | "done" | "failed";
+                progress?: {
+                    done?: number;
+                    total?: number;
+                };
+                refused?: number;
+                url?: string | null;
+                note?: string | null;
+            };
+            /** @description mail kinds: what Shelf knows of it. An unverified mail has its reason only. */
+            mail?: {
+                reason?: string | null;
+                /** @description the kind the mail looked like (failed closed) */
+                expected?: string | null;
+                date?: string | null;
+                /** @description order or invoice number */
+                number?: string | null;
+            };
+            found: {
+                /** @description the n of POST /inbox/{itemId}/books/{n} */
+                index: number;
+                title?: string | null;
+                author?: string | null;
+                ean?: string | null;
+                /** @description an EAN that is no ISBN (a toy, a game): skip only */
+                notBook?: boolean;
+                /** @description an invoice row read whole but for its EAN */
+                eanUnreadable?: boolean;
+                qty?: number;
+                priceC?: number | null;
                 /** @enum {unknown} */
                 verdict?: "add" | "skip_off_theme" | "skip_owned" | "fiction";
                 idea?: string;
@@ -1020,19 +1073,24 @@ export interface components {
                 theme?: string;
                 buildsOn?: string[];
                 /** @enum {unknown} */
-                decided?: "added" | "skipped" | null;
+                decided: "added" | "skipped" | null;
             }[];
         };
         Share: {
-            id?: string;
+            id: string;
             /** @enum {unknown} */
-            status?: "received" | "reading" | "done" | "failed";
-            progress?: {
-                done?: number;
-                total?: number;
+            status: "received" | "reading" | "done" | "failed";
+            progress: {
+                done: number;
+                total: number;
             };
-            found?: Record<string, never>[];
-            error?: string;
+            /** @description images the media worker refused */
+            refused?: number;
+            found?: {
+                title: string;
+                author?: string | null;
+            }[];
+            error?: string | null;
         };
         Order: {
             id?: string;
@@ -2681,7 +2739,7 @@ export interface operations {
     getInbox: {
         parameters: {
             query?: {
-                filter?: "all" | "ai" | "shared";
+                filter?: "all" | "ai" | "shared" | "mail";
             };
             header?: never;
             path?: never;
@@ -2698,6 +2756,15 @@ export interface operations {
                     "application/json": components["schemas"]["InboxItem"][];
                 };
             };
+            /** @description Unknown filter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
         };
@@ -2712,18 +2779,69 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": {
                     /** @enum {unknown} */
-                    action?: "add" | "skip";
+                    action: "add" | "skip";
                     for?: string;
                 };
             };
         };
         responses: {
-            /** @description OK */
+            /** @description The item as it is now */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Bad request: not a book, no title, or an invalid body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such item or book (or another adult's share) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Decided already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dismissInboxItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dismissed */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2731,6 +2849,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such item (or another adult's share) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     createShare: {
@@ -2745,6 +2872,7 @@ export interface operations {
                 "multipart/form-data": {
                     url?: string;
                     text?: string;
+                    title?: string;
                     note?: string;
                     media?: string[];
                 };
@@ -2758,16 +2886,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        id?: string;
+                        id: string;
                         /** @enum {unknown} */
-                        status?: "received" | "reading";
+                        status: "received" | "reading" | "done";
                     };
+                };
+            };
+            /** @description Nothing to share, a field too long, or not multipart */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             /** @description Too many files (more than 30) or a file over 20 MB */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A file that is not a JPEG, PNG, WebP or GIF image by its bytes */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many shares or failed tokens; wait */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Media processing is unavailable here (no media worker): a share without files still works */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2821,12 +2985,22 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ShareToken"] & {
+                        /** @description the token's id, then 256 random bits */
                         token: string;
                     };
                 };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description Ten live tokens already; revoke one first */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     revokeShareToken: {
@@ -2873,6 +3047,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description No such share */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     createOrderDraft: {

@@ -21,7 +21,8 @@ export const LIMITS = { lines: 5000, lineChars: 1000, books: 100 } as const;
 interface NotBook { notBook?: true }
 export interface QuoteLine extends NotBook { title: string | null; author: string | null; ean: string | null; priceC: number | null; delivery: string | null; available: boolean }
 export interface ShopLine extends NotBook { title: string | null; author: string | null; ean: string | null; qty: number; priceC: number }
-export interface InvoiceLine extends NotBook { title: string | null; ean: string | null; qty: number; priceC: number; discountPct: number | null; totalC: number; vatPct: number }
+/** `eanUnreadable`: an invoice row read whole but for its EAN (spaced, cut, not 13 digits): never matched, to the Inbox. */
+export interface InvoiceLine extends NotBook { title: string | null; ean: string | null; qty: number; priceC: number; discountPct: number | null; totalC: number; vatPct: number; eanUnreadable?: true }
 const ISBN = /^97[89]\d{10}$/;
 const notBook = (ean: string | null | undefined): NotBook => (ean && !ISBN.test(ean) ? { notBook: true } : {});
 
@@ -51,7 +52,8 @@ const SUBJECTS: ['online_order' | 'click_collect' | 'invoice', RegExp][] = [
 ];
 
 export function classify(from: string, subject: string | null): Kind {
-  const s = (subject ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  // Format characters (a zero-width space after the number, say) would otherwise hide a number from the patterns.
+  const s = (subject ?? '').normalize('NFKC').replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim();
   for (const [kind, re] of SUBJECTS) {
     const m = re.exec(s);
     if (m) return /^\d{4,11}$/.test(m[1]!) ? { kind, number: m[1]! } : { kind: 'number_unreadable', expected: kind };
@@ -235,7 +237,6 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
     const lastAmount = () => { for (let i = tok.length - 1; i >= 0; i--) { const m = money(tok[i]!); if (m != null) return m; } return null; };
     if (/^(?:total|gesamt\w*|rechnungsbetrag|totalbetrag)\b/i.test(s)) { stated = lastAmount(); continue; }
     if (/^(?:versand\w*|porto|shipping)\b/i.test(s)) { postage += lastAmount() ?? 0; continue; }
-    if (!/^\d{13}$/.test(tok[0]!)) continue;
     // From the end: VAT %, CHF, total, [discount %], price, ST, qty; the title is what is left.
     let i = tok.length - 1;
     const vat = pct(tok[i--] ?? '');
@@ -246,9 +247,19 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
     const price = money(tok[i--] ?? '');
     const st = tok[i--]?.toUpperCase() === 'ST';
     const qty = /^\d{1,2}$/.test(tok[i] ?? '') ? Number(tok[i--]) : null;
-    if (vat == null || !chf || total == null || price == null || !st || !qty || i < 1) return refuse('invoice', P, 'a book row Shelf cannot read');
-    // A row whose EAN is no ISBN is read whole (it counts in the total) but is not a book (notBook).
-    out.push({ ean: field(tok[0], address), title: field(tok.slice(1, i + 1).join(' '), address), qty, priceC: price, discountPct: discount, totalC: total, vatPct: vat, ...notBook(tok[0]) });
+    const whole = vat != null && chf && total != null && price != null && st && qty;
+    if (!/^\d{13}$/.test(tok[0]!)) {
+      // A book row but for its EAN (spaced, cut short): read, counted in the total, and sent to the Inbox, never matched.
+      if (!whole) continue;
+      let from = 0;
+      while (from <= i && /^[\d-]+$/.test(tok[from]!)) from++;
+      if (from === 0 || from > i) continue;
+      out.push({ ean: null, title: field(tok.slice(from, i + 1).join(' '), address), qty, priceC: price, discountPct: discount, totalC: total, vatPct: vat, eanUnreadable: true });
+    } else {
+      if (!whole || i < 1) return refuse('invoice', P, 'a book row Shelf cannot read');
+      // A row whose EAN is no ISBN is read whole (it counts in the total) but is not a book (notBook).
+      out.push({ ean: field(tok[0], address), title: field(tok.slice(1, i + 1).join(' '), address), qty, priceC: price, discountPct: discount, totalC: total, vatPct: vat, ...notBook(tok[0]) });
+    }
     if (out.length > LIMITS.books) return refuse('invoice', P, 'too many books');
   }
   if (!out.length) return refuse('invoice', P, 'no book rows');

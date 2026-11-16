@@ -18,13 +18,16 @@ import { peopleRoutes } from './routes/people';
 import { stubRoutes } from './routes/stubs';
 import { jobRoutes, type JobDeps } from './routes/jobs';
 import { createEgress, egressRules } from './net/egress';
+import { inboxRoutes } from './routes/inbox';
+import { ShareProcessor } from './shares/shares';
+import type { runMediaJob } from './media/client';
 
 /** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md). */
 export const SHARE_LIMITS = { files: 30, fileSize: 20 * 1024 * 1024, fields: 10, fieldSize: 64 * 1024, parts: 40 };
 
 export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; url: string }[] }
 
-export interface AppOptions { logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps> }
+export interface AppOptions { logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   const app = Fastify({
@@ -50,6 +53,10 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   await app.register(fastifyRateLimit, { global: false });
   const webauthn = opts.webauthn ?? simpleWebAuthn(cfg);
   const challenges = new Challenges();
+  // Shares' files through the media worker; anything left from before a restart is picked up at once.
+  const shares = new ShareProcessor(db, { dataDir: cfg.dataDir, workDir: cfg.workDir, media: opts.media, retryMs: opts.shareRetryMs });
+  app.addHook('onClose', async () => shares.close());
+  app.addHook('onReady', async () => { void shares.kick(); });
   await app.register(async (api) => {
     api.addHook('onRequest', authHook(cfg, db));
     await authRoutes(api, cfg, db, webauthn, challenges);
@@ -58,9 +65,10 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     await backlogRoutes(api, cfg, db);
     await monthRoutes(api, cfg, db);
     await knowledgeRoutes(api, db);
-    await stubRoutes(api, cfg, db);
+    await stubRoutes(api, cfg);
+    await inboxRoutes(api, cfg, db, shares);
     // The one HTTP client (ADR 0009): the manifest's hosts and OLLAMA_URL; Claude joins only with the opt-in (M3 g).
-    await jobRoutes(api, cfg, db, { egress: createEgress({ rules: egressRules({ ollamaUrl: cfg.ollamaUrl }), enabled: cfg.egress }), ...opts.jobs });
+    await jobRoutes(api, cfg, db, { egress: createEgress({ rules: egressRules({ ollamaUrl: cfg.ollamaUrl }), enabled: cfg.egress }), shares, ...opts.jobs });
   }, { prefix: '/api' });
   if (cfg.webDir && existsSync(cfg.webDir)) {
     await app.register(fastifyStatic, { root: cfg.webDir });

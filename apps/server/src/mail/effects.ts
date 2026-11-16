@@ -44,8 +44,9 @@ function authorIs(stored: string, given: string): boolean {
 }
 
 /** The one book a line names: by EAN, then by normalised title and author; null for none or several. */
-export function matchBook(books: BookKey[], l: { ean: string | null; title: string | null; author?: string | null; notBook?: true }): string | null {
-  if (l.notBook) return null; // an EAN that is no ISBN: never a book, not even by its title
+export function matchBook(books: BookKey[], l: { ean: string | null; title: string | null; author?: string | null; notBook?: true; eanUnreadable?: true }): string | null {
+  // An EAN that is no ISBN, or one Shelf could not read: never matched, not even by its title (to the Inbox).
+  if (l.notBook || l.eanUnreadable) return null;
   if (l.ean) {
     const hit = books.filter((b) => b.isbn13 === l.ean);
     if (hit.length === 1) return hit[0]!.id;

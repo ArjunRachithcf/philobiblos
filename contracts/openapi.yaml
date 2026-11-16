@@ -227,36 +227,49 @@ paths:
       responses: { '400': { description: 'Bad request: a takeaway for a kid, feedback for an adult, or an invalid value', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such person or book, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Reading' } } } } }
 
   /inbox:
-    get: { tags: [inbox], operationId: getInbox, parameters: [{ name: filter, in: query, schema: { enum: [all, ai, shared] } }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InboxItem' } } } } } } }
+    get:
+      tags: [inbox]
+      operationId: getInbox
+      summary: 'What waits for a person: their own shares (and AI suggestions, M3 g), and the household''s mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (its reason only, nothing of its content). Decided and dismissed items drop out.'
+      parameters: [{ name: filter, in: query, schema: { enum: [all, ai, shared, mail] } }]
+      responses: { '400': { description: Unknown filter, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InboxItem' } } } } } }
   /inbox/{itemId}/books/{index}:
     parameters: [{ name: itemId, in: path, required: true, schema: {type: string} }, { name: index, in: path, required: true, schema: {type: integer} }]
     post:
       tags: [inbox]
       operationId: decideFound
-      requestBody: { content: { application/json: { schema: { type: object, properties: { action: { enum: [add, skip] }, for: {type: string} } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } }
+      summary: 'Add or skip one book of an item (its found[].index). Add: a share''s or a quote''s or shop line''s book goes to the backlog of `for` (a handle or `me`: yourself or a kid, never another adult); an invoice line''s book becomes a copy (owned). A notBook line, or one without a title, can only be skipped. Once decided, decided.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [action], additionalProperties: false, properties: { action: { enum: [add, skip] }, for: { type: string, maxLength: 40 } } } } } }
+      responses: { '400': { description: 'Bad request: not a book, no title, or an invalid body', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: 'No such item or book (or another adult''s share)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: Decided already, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'The item as it is now', content: { application/json: { schema: { $ref: '#/components/schemas/InboxItem' } } } } }
+  /inbox/{itemId}/dismiss:
+    parameters: [{ name: itemId, in: path, required: true, schema: {type: string} }]
+    post:
+      tags: [inbox]
+      operationId: dismissInboxItem
+      summary: 'Takes a whole item out of the Inbox (a share of yours, a mail that failed closed or was not verified, the rest of a mail''s lines). Nothing else changes; the mail stays in mail_seen.'
+      responses: { '404': { description: 'No such item (or another adult''s share)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Dismissed } }
   /shares:
     post:
       tags: [inbox]
       operationId: createShare
       security: [ { homerslabPerson: [] }, { session: [] }, { shareToken: [] } ]
-      summary: Phone share target (PWA share_target, or an iOS Shortcut with a per-person share token)
+      summary: 'Phone share target (the PWA''s share_target through its service worker, or an iOS Shortcut with a per-person share token). Images only for now (JPEG, PNG, WebP, GIF, by their bytes; video arrives with M3 f), each re-encoded by the media worker before it is kept; the originals are deleted once read. 30 shares per person per 10 minutes.'
       requestBody:
         content:
-          multipart/form-data: { schema: { type: object, properties: { url: {type: string}, text: {type: string}, note: {type: string}, media: { type: array, items: { type: string, format: binary } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { id: {type: string}, status: { enum: [received, reading] } } } } } }, '413': { description: 'Too many files (more than 30) or a file over 20 MB', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+          multipart/form-data: { schema: { type: object, properties: { url: {type: string, maxLength: 2000}, text: {type: string, maxLength: 5000}, title: {type: string, maxLength: 300}, note: {type: string, maxLength: 2000}, media: { type: array, items: { type: string, format: binary } } } } }
+      responses: { '400': { description: 'Nothing to share, a field too long, or not multipart', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Accepted, content: { application/json: { schema: { type: object, required: [id, status], properties: { id: {type: string}, status: { enum: [received, reading, done] } } } } } }, '413': { description: 'Too many files (more than 30) or a file over 20 MB', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '415': { description: 'A file that is not a JPEG, PNG, WebP or GIF image by its bytes', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many shares or failed tokens; wait, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '503': { description: 'Media processing is unavailable here (no media worker): a share without files still works', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
   /share-tokens:
     get: { tags: [inbox], operationId: listShareTokens, summary: The current person's share tokens (never the token itself), responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ShareToken' } } } } } } }
     post:
       tags: [inbox]
       operationId: createShareToken
-      summary: A new share token for the current person; the token is in this response only, and stored hashed
+      summary: 'A new share token for the current person; the token is in this response only, and stored hashed. At most 10 live tokens a person.'
       requestBody: { content: { application/json: { schema: { type: object, required: [label], properties: { label: {type: string, maxLength: 60} } } } } }
-      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/ShareToken' }, { type: object, required: [token], properties: { token: {type: string} } } ] } } } } }
+      responses: { '409': { description: Ten live tokens already; revoke one first, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/ShareToken' }, { type: object, required: [token], properties: { token: { type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}[A-Za-z0-9_-]{43}$', description: 'the token''s id, then 256 random bits' } } } ] } } } } }
   /share-tokens/{id}:
     delete: { tags: [inbox], operationId: revokeShareToken, parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Revoked } } }
   /shares/{id}:
-    get: { tags: [inbox], operationId: getShare, parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Progress and result, content: { application/json: { schema: { $ref: '#/components/schemas/Share' } } } } } }
+    get: { tags: [inbox], operationId: getShare, summary: 'A share of yours: its progress through the media worker and what was found. Another adult''s answers 404.', parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '404': { description: No such share, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Progress and result, content: { application/json: { schema: { $ref: '#/components/schemas/Share' } } } } } }
 
   /orders:
     post:
@@ -272,7 +285,7 @@ paths:
     get: { tags: [settings], operationId: getSettings, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } } } }
     patch: { tags: [settings], operationId: patchSettings, summary: '`person` (your own settings) is stored, and the household''s `budget` and `order` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` needs the sealing key (409 without it).', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: No sealing key, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
   /jobs/{job}/run:
-    post: { tags: [system], operationId: runJob, description: 'Admins only. prices, metadata, covers and mail run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet.', parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, metadata, covers, ai_suggest] } }, { name: again, in: query, required: false, schema: { enum: ['true', 'false'] }, description: 'metadata: look up every book again, not only those never looked up' }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started, content: { application/json: { schema: { type: object, properties: { id: { type: string, description: 'the job_run row' } } } } } }, '409': { description: 'That job is running already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } } }
+    post: { tags: [system], operationId: runJob, description: 'Admins only. prices, metadata, covers, mail and shares (the media worker''s queue of shared images) run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet.', parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, metadata, covers, ai_suggest] } }, { name: again, in: query, required: false, schema: { enum: ['true', 'false'] }, description: 'metadata: look up every book again, not only those never looked up' }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started, content: { application/json: { schema: { type: object, properties: { id: { type: string, description: 'the job_run row' } } } } } }, '409': { description: 'That job is running already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } } }
 
 components:
   securitySchemes:
@@ -358,15 +371,37 @@ components:
         themes: { type: array, items: { type: object, properties: { theme: {type: string}, books: {type: integer}, loved: {type: integer} } } }
     InboxItem:
       type: object
+      required: [id, kind, title, createdAt, found]
       properties:
         id: {type: string}
-        kind: { enum: [share, ai_suggestion, unmatched_invoice_line] }
+        kind: { enum: [share, ai_suggestion, unmatched_invoice_line, unmatched_quote_line, unmatched_shop_line, mail_failed, mail_waiting, mail_unverified] }
         by: { $ref: '#/components/schemas/Person' }
-        title: {type: string}
+        title: { type: string, description: 'Shelf''s own words, or a share''s title, or a verified mail''s subject (safeField); plain text, never HTML' }
         createdAt: {type: string}
         mediaCount: {type: integer}
-        found: { type: array, items: { type: object, properties: { title: {type: string}, author: {type: string}, verdict: { enum: [add, skip_off_theme, skip_owned, fiction] }, idea: {type: string}, layer: {type: string}, theme: {type: string}, buildsOn: { type: array, items: {type: string} }, decided: { enum: [added, skipped, null] } } } }
-    Share: { type: object, properties: { id: {type: string}, status: { enum: [received, reading, done, failed] }, progress: { type: object, properties: { done: {type: integer}, total: {type: integer} } }, found: { type: array, items: { type: object } }, error: {type: string} } }
+        share: { type: object, description: 'kind share', properties: { status: { enum: [received, reading, done, failed] }, progress: { type: object, properties: { done: {type: integer}, total: {type: integer} } }, refused: {type: integer}, url: { type: [string, 'null'] }, note: { type: [string, 'null'] } } }
+        mail: { type: object, description: 'mail kinds: what Shelf knows of it. An unverified mail has its reason only.', properties: { reason: { type: [string, 'null'] }, expected: { type: [string, 'null'], description: 'the kind the mail looked like (failed closed)' }, date: { type: [string, 'null'] }, number: { type: [string, 'null'], description: 'order or invoice number' } } }
+        found:
+          type: array
+          items:
+            type: object
+            required: [index, decided]
+            properties:
+              index: { type: integer, description: 'the n of POST /inbox/{itemId}/books/{n}' }
+              title: { type: [string, 'null'] }
+              author: { type: [string, 'null'] }
+              ean: { type: [string, 'null'] }
+              notBook: { type: boolean, description: 'an EAN that is no ISBN (a toy, a game): skip only' }
+              eanUnreadable: { type: boolean, description: 'an invoice row read whole but for its EAN' }
+              qty: {type: integer}
+              priceC: { type: [integer, 'null'] }
+              verdict: { enum: [add, skip_off_theme, skip_owned, fiction] }
+              idea: {type: string}
+              layer: {type: string}
+              theme: {type: string}
+              buildsOn: { type: array, items: {type: string} }
+              decided: { enum: [added, skipped, null] }
+    Share: { type: object, required: [id, status, progress], properties: { id: {type: string}, status: { enum: [received, reading, done, failed] }, progress: { type: object, required: [done, total], properties: { done: {type: integer}, total: {type: integer} } }, refused: { type: integer, description: 'images the media worker refused' }, found: { type: array, items: { type: object, required: [title], properties: { title: {type: string}, author: { type: [string, 'null'] } } } }, error: { type: [string, 'null'] } } }
     Order:
       type: object
       properties:

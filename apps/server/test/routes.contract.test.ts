@@ -7,7 +7,7 @@ import { parse } from 'yaml';
 import { EDGE_IDENTITY, loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { seal } from '../src/household/sealed';
-import { ORIGIN, TEST_SEALING_KEY, expectValid, fakeWebAuthn, household, isPublic, ops, request, security, sessionCookie } from './helpers';
+import { ORIGIN, TEST_SEALING_KEY, expectValid, fakeWebAuthn, household, inboxItems, isPublic, ops, request, security, sessionCookie } from './helpers';
 
 const standalone = () => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY });
 const homerslab = () => loadConfig({ SHELF_MODE: 'homerslab', SHELF_EDGE_IDENTITY: 'homerslab-v1', SHELF_TRUSTED_PROXY: '127.0.0.1', SHELF_ORIGIN: ORIGIN, SHELF_DATA_DIR: '/nonexistent' });
@@ -21,6 +21,7 @@ let adult: string;
 let kid: string;
 beforeAll(async () => {
   db0 = household();
+  inboxItems(db0);
   seal(db0, Buffer.from(TEST_SEALING_KEY, 'base64'), 'bookshop_email', 'orders@bookshop.example');
   admin = sessionCookie(db0, 'p_alex');
   adult = sessionCookie(db0, 'p_sam');
@@ -155,7 +156,8 @@ describe('share tokens', () => {
     const created = await built.app.inject({ method: 'POST', url: '/api/share-tokens', headers: { cookie: admin, origin: ORIGIN }, payload: { label: 'Phone' } });
     expect(created.statusCode).toBe(201);
     const { id, token } = created.json();
-    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(token).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}[A-Za-z0-9_-]{43}$/);
+    expect(token.slice(0, 26)).toBe(id);
     const auth = { authorization: `Bearer ${token}` };
     const req = request(shares);
     const { origin: _o, ...noOrigin } = req.headers;
@@ -175,15 +177,16 @@ describe('share upload limits', () => {
     const parts = Array.from({ length: n }, (_, i) => [`--${b}`, `Content-Disposition: form-data; name="media"; filename="${i}.jpg"`, 'Content-Type: image/jpeg', '', 'x'.repeat(size)].join('\r\n'));
     return { payload: [...parts, `--${b}--`, ''].join('\r\n'), headers: { 'content-type': `multipart/form-data; boundary=${b}`, cookie, origin: ORIGIN } };
   };
+  // Within the limits, the files are read to their end; without a media worker here the share is then refused (503).
   it('30 files pass, 31 are refused with 413', async () => {
-    expect((await built.app.inject({ method: 'POST', url: '/api/shares', ...files(30, 10, admin) })).statusCode).toBe(202);
+    expect((await built.app.inject({ method: 'POST', url: '/api/shares', ...files(30, 10, admin) })).statusCode).toBe(503);
     expect((await built.app.inject({ method: 'POST', url: '/api/shares', ...files(31, 10, admin) })).statusCode).toBe(413);
   });
   it('a file over the size limit is refused with 413', async () => {
     const db = household();
     const small = await buildApp(standalone(), db, { shareLimits: { fileSize: 1024 } });
     const c = sessionCookie(db, 'p_alex');
-    expect((await small.app.inject({ method: 'POST', url: '/api/shares', ...files(1, 1000, c) })).statusCode).toBe(202);
+    expect((await small.app.inject({ method: 'POST', url: '/api/shares', ...files(1, 1000, c) })).statusCode).toBe(503);
     expect((await small.app.inject({ method: 'POST', url: '/api/shares', ...files(1, 2000, c) })).statusCode).toBe(413);
     await small.app.close();
   });

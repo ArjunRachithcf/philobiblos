@@ -10,6 +10,7 @@ import type { WebAuthn } from '../src/auth/webauthn';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { currentMonth } from '../src/month/plan';
+import { mailItemId } from '../src/inbox/inbox';
 
 /** Plans are made for this month and the next only: the tests use the server's this month (SHELF_TZ default). */
 export const THIS_MONTH = currentMonth('Europe/Zurich');
@@ -63,7 +64,7 @@ export function sample(s0: Schema): unknown {
 export function multipart(): { body: string; contentType: string } {
   const b = 'shelf-test-boundary';
   const body = [`--${b}`, 'Content-Disposition: form-data; name="url"', '', 'https://example.org/p/1', `--${b}`,
-    'Content-Disposition: form-data; name="media"; filename="a.jpg"', 'Content-Type: image/jpeg', '', 'not really a jpeg', `--${b}--`, ''].join('\r\n');
+    'Content-Disposition: form-data; name="text"', '', 'A caption', `--${b}--`, ''].join('\r\n');
   return { body, contentType: `multipart/form-data; boundary=${b}` };
 }
 
@@ -72,12 +73,16 @@ export type SpecOp = (typeof ops)[number];
 export const security = (o: { op: Op }) => (o.op.security ?? spec.security) as Record<string, string[]>[];
 export const isPublic = (o: { op: Op }) => security(o).length === 0;
 
+/** A share of Alex's in household(). */
+export const SHARE_ID = '01JC0000000000000000000000';
+
 /** Path parameters that name something real in household() (and leave the signed-in admin alone). */
 const PARAMS: Record<string, Record<string, string>> = {
   getBrain: { personId: 'p_alex' }, reviewLink: { fromBook: 'b_ledger', toBook: 'b_tide' }, reviewBookIdea: { bookId: 'b_tide', ideaId: 'i_markets' }, editIdea: { ideaId: 'i_markets' },
   undoMerge: { mergeId: 'm_old' },
   getOrder: { id: 'o_old' }, getMonth: { month: THIS_MONTH }, setMonthBudget: { month: THIS_MONTH }, changePicks: { month: THIS_MONTH },
   renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
+  getShare: { id: SHARE_ID }, decideFound: { itemId: mailItemId('<inv-1@bookshop.example>'), index: '0' }, dismissInboxItem: { itemId: mailItemId('unverified:abc') },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
 };
@@ -87,6 +92,7 @@ const BODIES: Record<string, unknown> = {
   bulkBacklog: { ids: ['p_alex.b_tide'], action: 'reopen' },
   reviewLink: { state: 'confirmed' }, reviewBookIdea: { state: 'confirmed' }, editIdea: { name: 'Markets and value' },
   addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
+  decideFound: { action: 'skip' },
   setMonthBudget: { min: 10000, max: 15000 }, changePicks: { recompute: true }, createOrderDraft: { month: THIS_MONTH },
 };
 
@@ -152,6 +158,15 @@ export function household(): Db {
     db.insert(t.passkey).values({ id, personId: 'p_alex', publicKey: Buffer.from([1]), label: id, createdAt: now }).run();
   }
   return db;
+}
+
+/** For the contract test: a share of Alex's, a verified invoice with a line that matched no book, a mail that was not verified. */
+export function inboxItems(db: Db): void {
+  const now = new Date().toISOString();
+  db.insert(t.share).values({ id: SHARE_ID, personId: 'p_alex', url: 'https://example.org/p/1', status: 'done', createdAt: now }).run();
+  db.insert(t.mailSeen).values({ messageId: '<inv-1@bookshop.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: now, accepted: 1, authJson: '{}',
+    parsedJson: JSON.stringify({ invoiceNumber: '123456', lines: [{ ean: '9780000000002', title: 'A Book Nobody Has', qty: 1, priceC: 2000, discountPct: null, totalC: 2000, vatPct: 2.6, bookId: null }] }) }).run();
+  db.insert(t.mailSeen).values({ messageId: 'unverified:abc', kind: 'not_verified', parserVersion: 'm3d-1', seenAt: now, accepted: 0, authJson: JSON.stringify({ accepted: false, reason: 'not from the bookshop', fromDomain: 'evil.example' }) }).run();
 }
 
 export function sessionCookie(db: Db, personId: string): string {

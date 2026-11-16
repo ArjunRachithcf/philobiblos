@@ -64,19 +64,6 @@ export const monthPlan = (month: string): S['MonthPlan'] => ({
   order: null,
 });
 
-export const inbox: S['InboxItem'][] = [{
-  id: 'in_share1',
-  kind: 'share',
-  by: alex,
-  title: '@example.parenting · 3 slides',
-  createdAt: '2026-11-15T10:00:00.000Z',
-  mediaCount: 3,
-  found: [{ title: 'Care at the Centre', author: 'Ruth Adeyemi', verdict: 'add', idea: 'Care and the commons', layer: 'core', buildsOn: ['Notes on Unpaid Work'], decided: null }],
-}];
-
-export const share = (id: string): S['Share'] => ({ id, status: 'reading', progress: { done: 1, total: 3 }, found: [] });
-
-
 export const settings: S['Settings'] = {
   budget: { min: 10000, max: 15000 },
   adultPicks: 2,

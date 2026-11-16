@@ -81,8 +81,11 @@ joins the order's thread (at most 20). Lines match books by EAN first, then by n
 name, "Surname, First" or the surname alone; the title alone on an invoice), never by its title to a book with another
 ISBN, and never at all when its EAN is no ISBN (not 978/979: a toy, a game, a Tonie, decided from the digits before the
 field filter); a line that matches no book, or more than one, is kept with its structured fields and shown in the
-Inbox (M3 e) for a person to resolve. A shop subject whose number is not one run of 4 to 11 digits (spaced, or longer
-than a kept field allows) is an unknown layout.
+Inbox (M3 e) for a person to resolve. An invoice row that reads whole but for its EAN (spaced, cut short) is kept as
+`eanUnreadable`, counts in the total, never matches, and goes to the Inbox too. A shop subject whose number is not one
+run of 4 to 11 digits (spaced, or longer than a kept field allows; format characters such as a zero-width space are
+stripped first) is an unknown layout. In the Inbox, adding an invoice line makes its copies (owned), adding a quote's or
+a shop's line puts its book in a backlog (yours or a kid's), and a line whose EAN is no ISBN can only be skipped.
 
 Layouts (quotes, all must parse; the shop's mails as the fixtures write them):
 - `Author: X / Title: Y / ISBN: n / Price: CHF 19.90 / Delivery due: 3 – 4 days` blocks, a field a line (or on one line
@@ -123,10 +126,15 @@ All outgoing requests go through one HTTP client that allows only the hosts in t
 
 ## Phone share (ADR 0006)
 
-- Android: the web app is a PWA with `share_target` (POST multipart to `/api/shares`, url + text + files).
-- iOS: a Shortcut "Send to Shelf" posting the same multipart with a per-person share token (`Authorization: Bearer`),
-  created in Settings and shown once with a QR code. The token is stored hashed, can be revoked, and is write-only: it
+- Android: the web app is a PWA with `share_target` (POST multipart to `/share-target`, title + text + url + files).
+  Its service worker takes that POST, keeps the parts in the browser's cache for a moment and opens the share screen,
+  which posts them to `/api/shares` itself: with Shelf's Origin and session, as every other change (ADR 0010).
+- iOS: a Shortcut "Send to Shelf" posting the same multipart to `/api/shares` with a per-person share token
+  (`Authorization: Bearer`), created in Settings and shown once with a QR code (steps in `docs/phone-share.md`). The
+  token is its id and 256 random bits, stored hashed, compared in constant time, can be revoked, and is write-only: it
   is accepted by `POST /api/shares` and nothing else (ADR 0009).
+- Images only for now (JPEG, PNG, WebP, GIF, by their bytes; the Shortcut converts photos to JPEG); video arrives with
+  M3 f. Until the AI reads shares (M3 g) a share is `done` once its images are re-encoded.
 - A share carries images, the link and the caption. Shelf never logs in to Instagram and never holds an Instagram
   session (ADR 0006); the link is stored as text and fetched only through oEmbed without a login, if at all.
 - Media are size-limited (20 MB per file, 30 files), type-checked by content, and processed in the media worker.
