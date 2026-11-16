@@ -24,6 +24,8 @@ export interface MailAuth {
   fromDomain: string | null;
   /** The Message-ID as signed (the verified header's value), when accepted. */
   messageId?: string | null;
+  /** The From's one address as signed (lowercase), when accepted: the parsers tell the English Bookshop by it. */
+  from?: string;
 }
 
 const inDomain = (d: string | null | undefined, domain: string) => !!d && (d.toLowerCase() === domain || d.toLowerCase().endsWith(`.${domain}`));
@@ -33,6 +35,9 @@ const inDomain = (d: string | null | undefined, domain: string) => !!d && (d.toL
  * 33–126 other than `:`, then `:` at once) or the continuation of the one above it (starting with a space or tab).
  * A line that is neither, a NUL, a lone CR, a continuation first or a block over 256 KB makes the mail unreadable:
  * a parser that stops at such a line would read the signed headers as body, and whatever stood above as the mail.
+ * Refused as well, though no bypass is known (shelf#13): any other control character (a form feed, say), a
+ * continuation that is only white space (obsolete folding) and a name holding an encoded word (`=?`): parsers
+ * disagree on each, and genuine bookshop mail has none.
  */
 export function headerBlock(raw: Buffer): { block: Buffer; fields: { name: string; value: string }[] } | { problem: string } {
   const ends = [raw.indexOf('\r\n\r\n'), raw.indexOf('\n\n')].filter((i) => i >= 0);
@@ -40,16 +45,20 @@ export function headerBlock(raw: Buffer): { block: Buffer; fields: { name: strin
   if (end > 256 * 1024) return { problem: 'its headers are too large' };
   const block = raw.subarray(0, end);
   if (block.includes(0)) return { problem: 'a NUL in its headers' };
+  // Control characters other than tab, CR and LF (a lone CR is refused below, by line).
+  for (const b of block) if ((b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) || b === 0x7f) return { problem: 'a control character in its headers' };
   const fields: { name: string; value: string }[] = [];
   for (const line of block.toString('latin1').split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l))) {
     if (line.includes('\r')) return { problem: 'a lone CR in its headers' };
     if (/^[ \t]/.test(line)) {
       if (!fields.length) return { problem: 'its headers begin with a continuation' };
+      if (!line.trim()) return { problem: 'a continuation line that is only white space' };
       fields[fields.length - 1]!.value += ` ${line.trim()}`;
       continue;
     }
     const m = /^([\x21-\x39\x3b-\x7e]+):(.*)$/.exec(line);
     if (!m) return { problem: 'a line in its headers that is not a header field' };
+    if (m[1]!.includes('=?')) return { problem: 'an encoded word in a header name' };
     fields.push({ name: m[1]!.toLowerCase(), value: m[2]!.trim() });
   }
   return { block, fields };
@@ -121,7 +130,7 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
   for (const r of res.dkim?.results ?? []) {
     if (r.status?.result !== 'pass' || !inDomain(r.signingDomain, domain) || !inDomain(r.status?.aligned || '', domain)) continue;
     const problem = coverageProblem(r as Parameters<typeof coverageProblem>[0], hs);
-    if (!problem) return { accepted: true, via: 'dkim', reason: `dkim=pass for ${r.signingDomain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null };
+    if (!problem) return { accepted: true, via: 'dkim', reason: `dkim=pass for ${r.signingDomain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null, from: fromAddrs[0]! };
     why = problem;
   }
 
@@ -133,7 +142,7 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
     if (!ok) return no(`the forward's seal by ${sealer} does not show the bookshop's DKIM passing`, fromDomain);
     const problem = coverageProblem(arc.signature, hs);
     if (problem) return no(`the forward's seal: ${problem}`, fromDomain);
-    return { accepted: true, via: 'arc', reason: `arc=pass by ${sealer}, which saw dkim=pass for ${domain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null };
+    return { accepted: true, via: 'arc', reason: `arc=pass by ${sealer}, which saw dkim=pass for ${domain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null, from: fromAddrs[0]! };
   }
   return no(why, fromDomain);
 }

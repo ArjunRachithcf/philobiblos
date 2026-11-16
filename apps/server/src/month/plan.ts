@@ -261,7 +261,8 @@ export function setMonthBudget(db: Db, month: string, me: string, body: unknown)
   return getMonth(db, month, me);
 }
 
-export interface OrderPlaces { bookshopEmail: string | null; deliveryAddress: string | null }
+/** Where an order goes; `bcc` is Shelf's own mailbox (the IMAP user, when it is an address), or null. */
+export interface OrderPlaces { bookshopEmail: string | null; deliveryAddress: string | null; bcc?: string | null }
 
 /** POST /orders: the month's picks as an order, and its Compose link (never sent by Shelf). */
 export function composeOrder(db: Db, month: string, me: string, places: OrderPlaces): S['Order'] {
@@ -276,7 +277,7 @@ export function composeOrder(db: Db, month: string, me: string, places: OrderPla
     month, deliveryAddress: places.deliveryAddress, signedBy: getPerson(db, me)!.name,
     lines: lines.map((l) => { const b = books.get(l.bookId)!; return { title: b.title, authors: JSON.parse(b.authorsJson) as string[], isbn13: b.isbn13 }; }),
   });
-  const link = mailto(places.bookshopEmail, subject, body);
+  const link = mailto(places.bookshopEmail, subject, body, places.bcc ?? null);
   const estimate = lines.reduce((n, l) => n + (l.estimateC ?? 0), 0);
   db.update(t.order).set({ status: 'drafted', estimateC: estimate }).where(eq(t.order.id, o.id)).run();
   return { ...orderView(db, orderOf(db, month)!), composeUrl: link.url, composeComplete: link.complete, composeTo: places.bookshopEmail, composeSubject: subject, composeText: body };

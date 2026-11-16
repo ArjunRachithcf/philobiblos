@@ -1,60 +1,21 @@
 // The mail reader (ADR 0007) against hostile mail: every message here is invented and signed by the test with keys
 // it makes (the bookshop's domain stands in a fake DNS; nothing is looked up for real). The IMAP side has its own test
 // against a real server (test/imap.test.ts, scripts/imap-test.sh); here a stand-in mailbox plays it.
-import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { sealMessage } from 'mailauth';
-import { dkimSign } from 'mailauth/lib/dkim/sign';
 import { describe, expect, it } from 'vitest';
 import * as t from '../src/db/schema';
 import { refreshMail } from '../src/mail/job';
 import { MailUnreadable, addressParts, readMail, safeField } from '../src/mail/read';
 import { addressDomains, headerBlock, verifyBookshopMail } from '../src/mail/verify';
 import { dkimKeyResolver } from '../src/net/dns';
-import type { Mailbox } from '../src/net/imap';
 import { SEALED } from '../src/routes/month';
 import { seal } from '../src/household/sealed';
 import { TEST_SEALING_KEY, household } from './helpers';
+import { CFG, HOUSEHOLD, SEALERS, evil, fakeBox, message, resolver, sealed, shop, signed } from './mailkit';
 
-const key = () => generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'der' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
-const shop = key(), google = key(), evil = key();
-const record = (k: ReturnType<typeof key>) => [[`v=DKIM1; k=rsa; p=${k.publicKey.toString('base64')}`]];
-const DNS: Record<string, string[][]> = {
-  'mail._domainkey.orellfuessli.ch': record(shop),
-  'arc._domainkey.google.com': record(google),
-  'arc._domainkey.evil.example': record(evil),
-  'mail._domainkey.evil.example': record(evil),
-};
-const resolver = async (name: string) => { const r = DNS[name.toLowerCase()]; if (!r) throw Object.assign(new Error('nx'), { code: 'ENOTFOUND' }); return r; };
-const SEALERS = ['google.com'];
-const HOUSEHOLD = ['shelf.household@example.org'];
-
-function message(o: { from?: string; extra?: string; body?: string; id?: string; subject?: string; html?: boolean } = {}): Buffer {
-  return Buffer.from([
-    `From: ${o.from ?? 'English Bookshop <english-orders@orellfuessli.ch>'}`,
-    'To: shelf.household@example.org',
-    `Subject: ${o.subject ?? 'Re: Book order'}`,
-    `Message-ID: <${o.id ?? `m${Math.random().toString(36).slice(2)}`}@orellfuessli.ch>`,
-    'Date: Mon, 16 Nov 2026 09:00:00 +0100',
-    ...(o.extra ? [o.extra] : []),
-    'MIME-Version: 1.0',
-    `Content-Type: ${o.html ? 'text/html' : 'text/plain'}; charset=utf-8`,
-    '',
-    o.body ?? 'Dear customer,\r\nAuthor: Mira Okafor / Title: The Long Tide of Markets / ISBN: 9780000000002 / Price: CHF 19.90\r\nKind regards',
-    '',
-  ].join('\r\n'));
-}
-async function signed(raw: Buffer, domain = 'orellfuessli.ch', k = shop, extra: { headerList?: string; maxBodyLength?: number } = {}): Promise<Buffer> {
-  const r = await dkimSign(raw, { signatureData: [{ signingDomain: domain, selector: 'mail', privateKey: k.privateKey, ...extra }] });
-  return Buffer.concat([Buffer.from(r.signatures), raw]);
-}
-async function sealed(raw: Buffer, by: 'google.com' | 'evil.example', authResults: string): Promise<Buffer> {
-  const h = await sealMessage(raw, { signingDomain: by, selector: 'arc', privateKey: (by === 'google.com' ? google : evil).privateKey, authResults, cv: 'none' });
-  return Buffer.concat([h, raw]);
-}
 const verify = (raw: Buffer, dns = resolver) => verifyBookshopMail(raw, { arcSealers: SEALERS, recipients: HOUSEHOLD, resolver: dns });
 
 describe('is it the bookshop?', () => {
@@ -137,6 +98,10 @@ describe('the header block is strict, and what was parsed is what was signed', (
     ['a NUL', 'X-Note: a\u0000b'],
     ['a continuation first', ' Price correction CHF 999.00'],
     ['a lone CR', 'X-Note: a\rSubject: forged'],
+    // shelf#13: no bypass known, but parsers disagree on each, and genuine bookshop mail has none.
+    ['a form feed', 'X-Note: a\fb'],
+    ['a continuation that is only white space', 'X-Note: a\r\n \t'],
+    ['an encoded word as a name', '=?utf-8?q?Subject?=: forged'],
   ])('a line with %s above the signed headers: refused', async (_n, line) => {
     const mail = Buffer.concat([Buffer.from(`${line}\r\n`, 'latin1'), await signed(message())]);
     expect(headerBlock(mail)).toHaveProperty('problem');
@@ -147,7 +112,7 @@ describe('the header block is strict, and what was parsed is what was signed', (
     const good = await signed(message({ id: 'same1' }));
     const hb = headerBlock(good);
     if (!('block' in hb)) throw new Error('strict block expected');
-    await expect(readMail(good, hb.block)).resolves.toMatchObject({ messageId: '<same1@orellfuessli.ch>', subject: 'Re: Book order' });
+    await expect(readMail(good, hb.block)).resolves.toMatchObject({ content: { messageId: '<same1@orellfuessli.ch>', subject: 'Re: Book order' } });
     // A block that is not this mail's (as if the parser had read other headers than the verified ones): refused.
     const other = headerBlock(message({ id: 'other1', subject: 'Something else' }));
     if (!('block' in other)) throw new Error('strict block expected');
@@ -159,7 +124,8 @@ describe('the header block is strict, and what was parsed is what was signed', (
     const mail = await signed(message({ id: 'fields1', body: 'Delivery to: Somewhere Street 1, 8000 Exampletown\r\nCard 4111 1111 1111 1111\r\nTotal CHF 19.90' }));
     await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 6, raw: mail }]), resolver });
     const kept = JSON.parse(db.select().from(t.mailSeen).get()!.parsedJson!);
-    expect(kept).toEqual({ subject: 'Re: Book order', date: expect.any(String), messageId: '<fields1@orellfuessli.ch>', inReplyTo: null, pdfs: 0, uidValidity: 7, uid: 6 });
+    // A quote with no book in it is a layout Shelf does not know: refused, and only that is kept.
+    expect(kept).toEqual({ subject: 'Re: Book order', date: expect.any(String), messageId: '<fields1@orellfuessli.ch>', inReplyTo: null, pdfs: 0, uidValidity: 7, uid: 6, parser: 'quote-1', expected: 'bookshop_quote', reason: 'no books' });
     expect(JSON.stringify(kept)).not.toMatch(/Somewhere|4111|19\.90/);
   });
 });
@@ -176,6 +142,14 @@ describe('a kept field never holds the address or a long number', () => {
     ['commas', '4111,1111,1111,1111'], ['zero-width spaces', '4111​1111​1111​1111'], ['" - "', '4111 - 1111 - 1111 - 1111'], ['full-width digits', '４１１１ 1111 1111 1111'],
     ['slashes', '4111/1111/1111/1111'], ['NBSP', '4111 1111 1111 1111'],
   ])('a card-like number with %s: dropped', (_n, v) => expect(safeField(`Card ${v}`, [])).toBeNull());
+
+  // shelf#13's residue, against an address whose name and street share no word (so each rule is tested alone).
+  const other = addressParts('Alex Brightwater\nBahnhofstrasse 12\n8000 Zürich');
+  it.each([
+    ['a compound street abbreviated', 'Bahnhofstr. 12'], ['ue for ü', 'CH-8000 Zuerich'], ['the surname alone', 'Herr Brightwater'],
+    ['the name reversed', 'Brightwater, Alex'],
+  ])('%s: dropped', (_n, v) => expect(safeField(`Delivered to ${v}`, other)).toBeNull());
+  it('a common street word on its own is no reason to drop a field', () => expect(safeField('Strasse der Bücher', addressParts('A Reader\nLange Strasse 1'))).toBe('Strasse der Bücher'));
 
   it('what may stay: an ISBN as the whole field, a price, an order number, ordinary words', () => {
     expect(safeField('978-0-00-000000-2', [])).toBe('978-0-00-000000-2');
@@ -207,24 +181,10 @@ describe('a kept field never holds the address or a long number', () => {
     const raw = Buffer.from(['From: english-orders@orellfuessli.ch', 'Subject: Ihre Rechnung', 'Message-ID: <inv1@orellfuessli.ch>', 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${b}"`, '',
       `--${b}`, 'Content-Type: text/plain', '', 'See the invoice.', '', part('invoice.pdf', Buffer.from('%PDF-1.4 made up')), part('not-really.pdf', Buffer.from('MZ an executable')), `--${b}--`, ''].join('\r\n'));
     const h = headerBlock(raw);
-    expect(await readMail(raw, 'block' in h ? h.block : Buffer.alloc(0))).toMatchObject({ pdfs: 1 });
+    expect(await readMail(raw, 'block' in h ? h.block : Buffer.alloc(0))).toMatchObject({ content: { pdfs: 1 } });
   });
 });
 
-/** A stand-in mailbox: these messages, these UIDs. */
-function fakeBox(msgs: { uid: number; raw: Buffer }[], uidValidity = 7): Mailbox & { closed: number } {
-  const box = {
-    uidValidity, closed: 0,
-    async list(after: number, max: number) {
-      return msgs.filter((m) => m.uid > after).slice(0, max).map((m) => ({ uid: m.uid, size: m.raw.length, messageId: /Message-ID: (<[^>]+>)/i.exec(m.raw.toString())?.[1] ?? null }));
-    },
-    async source(uid: number) { return msgs.find((m) => m.uid === uid)?.raw ?? null; },
-    async close() { box.closed++; },
-  };
-  return box;
-}
-const IMAP = { host: 'imap.example.org', user: 'shelf', password: { value: 'not-a-real-password' }, folder: 'INBOX' };
-const CFG = { imap: IMAP, arcSealers: SEALERS, mailRecipients: HOUSEHOLD, sealingKey: null };
 
 describe('the mail job', () => {
   it('records each mail once: verified with its content, not verified with only Shelf\'s reason', async () => {
@@ -235,7 +195,7 @@ describe('the mail job', () => {
     const cfg = CFG;
     expect(await refreshMail(db, cfg, { open: async () => box, resolver })).toMatchObject({ status: 'done', detail: '2 new: 1 verified, 1 not verified, 0 seen before' });
     const rows = db.select().from(t.mailSeen).all();
-    expect(rows.find((r) => r.messageId === '<good1@orellfuessli.ch>')).toMatchObject({ accepted: 1, kind: 'unclassified' });
+    expect(rows.find((r) => r.messageId === '<good1@orellfuessli.ch>')).toMatchObject({ accepted: 1, kind: 'bookshop_quote' });
     expect(JSON.parse(rows.find((r) => r.accepted === 1)!.parsedJson!)).toMatchObject({ subject: 'Re: Book order', uid: 3 });
     // An unverified mail never claims its Message-ID: it is kept under a hash of its bytes.
     const bad = rows.find((r) => r.accepted === 0)!;
