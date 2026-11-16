@@ -15,6 +15,9 @@ export type Candidate = components['schemas']['Candidate'];
 export type Brain = components['schemas']['Brain'];
 export type Proposals = components['schemas']['Proposals'];
 export type Layer = components['schemas']['Layer'];
+export type InboxItem = components['schemas']['InboxItem'];
+export type Share = components['schemas']['Share'];
+export type ShareToken = components['schemas']['ShareToken'];
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); }

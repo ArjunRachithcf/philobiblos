@@ -72,6 +72,9 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   }, { prefix: '/api' });
   if (cfg.webDir && existsSync(cfg.webDir)) {
     await app.register(fastifyStatic, { root: cfg.webDir });
+    // The PWA's share target is the service worker's (public/sw.js): a share that reaches the server here came before
+    // the worker was installed. Nothing of it is read; the share screen says to open Shelf once and share again.
+    app.post('/share-target', async (_req, reply) => reply.code(303).header('location', '/share?offline=1').send());
     app.setNotFoundHandler((req, reply) => (req.url.startsWith('/api/') ? reply.code(404).send({ error: 'not found' }) : reply.sendFile('index.html')));
   }
   return { app, apiRoutes };
