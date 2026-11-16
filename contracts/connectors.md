@@ -59,7 +59,9 @@ the fields above are kept.
 
 Open Library by ISBN or title+author → subjects, description, cover (downloaded once to `/data/covers`). Cached forever,
 refreshable by hand. Responses are limited (1 MB JSON, 5 MB image, 10 s); covers are decoded and re-encoded by the media
-worker before they are stored, so no original file is ever served.
+worker before they are stored, so no original file is ever served. Covers come from `covers.openlibrary.org`, which redirects to
+the Internet Archive (`archive.org`, then a data node `ia<number>.us.archive.org`): the only redirects to another host
+the client follows (ADR 0009).
 
 All outgoing requests go through one HTTP client that allows only the hosts in the manifest's egress list (ADR 0009).
 

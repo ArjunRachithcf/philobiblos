@@ -44,6 +44,4 @@ export async function stubRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     return reply.code(204).send();
   });
 
-
-  app.post('/jobs/:job/run', async (_req, reply) => reply.code(202).send());
 }

@@ -24,6 +24,13 @@ Status: **Accepted** · 2026-11-15
 - **Egress allowlist.** One HTTP client for the whole app allows only the hosts in the manifest's egress list (plus the
   configured IMAP and Ollama hosts, and Claude only after the opt-in). The price lookup and Open Library are parsed with
   size and time limits; covers are re-encoded locally before they are stored or served.
+  Decided 2026-11-16 (M3 b): the name is resolved by the client and the connection goes to the address it checked (no
+  second lookup for DNS rebinding to change); a public host must resolve to public addresses only. Redirects stay on
+  their host (at most 3), with one exception: Open Library's covers live at the Internet Archive, so
+  `covers.openlibrary.org` may redirect to `archive.org` and then to a data node matching `^ia\d{3,8}\.us\.archive\.org$`:
+  https on 443 only, at most 2 such hops, each looked up and checked again, and the image still goes through the media
+  worker. The client names itself honestly (`Shelf/<version>`); when a site refuses it (the bookshop's search answers
+  403), Shelf does without (ADR 0008: the price is unknown and counts as CHF 25) and never disguises the client.
 - **Secrets never in output**: not in logs, API responses, the UI, error messages or `ai_run` rows. A new share token is
   the one exception, in the response that creates it.
 - **Mail is hostile** (ADR 0007): sender and DKIM/ARC checks before any effect; links never followed.

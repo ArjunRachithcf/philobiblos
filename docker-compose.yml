@@ -17,6 +17,8 @@ services:
       SHELF_TZ: Europe/Zurich
       # AI: Ollama is the default; Claude only after the opt-in in Settings.
       OLLAMA_URL: ${OLLAMA_URL:-}
+      # off: nothing leaves (prices, Open Library and covers stay as they are); docs/security.md
+      SHELF_EGRESS: ${SHELF_EGRESS:-on}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Mail (ADR 0007): the Shelf-only mailbox, read over IMAP (TLS) with an app password.
       SHELF_IMAP_HOST: ${SHELF_IMAP_HOST:-}

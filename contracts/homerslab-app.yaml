@@ -39,6 +39,9 @@ config:
 network:
   # Enforced by Shelf's own HTTP client as well (ADR 0009): nothing else is reachable from the app.
   egress: [www.orellfuessli.ch, openlibrary.org, covers.openlibrary.org, '${SHELF_IMAP_HOST}:993', '${OLLAMA_URL}']
+  # Only as redirect targets of covers.openlibrary.org (https, at most two hops, src/net/egress.ts): the Internet Archive
+  # keeps Open Library's covers on archive.org and its data nodes ia<number>.us.archive.org.
+  egress_redirects: [archive.org, 'ia<number>.us.archive.org']
   optional_egress: [api.anthropic.com]
   optional_egress_note: api.anthropic.com only when the household opts in to Claude in Settings; with Ollama nothing leaves for AI.
 # NEEDS HomersLab (shelf#8): the media worker is a second container from the same image, `node /app/worker/dist/main.js`,
