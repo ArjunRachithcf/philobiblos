@@ -1,7 +1,7 @@
 // The Shelf-only mailbox over IMAP (ADR 0007, contracts/connectors.md): the only IMAP connection in Shelf, and only
 // these operations. TLS from the first byte on port 993 (no STARTTLS, so nothing to downgrade), the certificate and
 // the host name verified, TLS 1.2 or newer. The folder is opened with EXAMINE (read-only), and the reader only lists
-// UIDs and sizes and reads a message's bytes with BODY.PEEK: it never stores a flag, moves, copies, deletes, expunges
+// UIDs (UID SEARCH) and sizes and reads a message's bytes with BODY.PEEK: it never stores a flag, moves, copies, deletes, expunges
 // or appends (an architecture test, test/mail.test.ts, keeps every other call out of this file).
 import { readFileSync } from 'node:fs';
 import { ImapFlow } from 'imapflow';
@@ -18,8 +18,8 @@ export interface MailboxConfig {
 export interface MessageInfo { uid: number; size: number; messageId: string | null }
 export interface Mailbox {
   uidValidity: number;
-  /** Messages with a UID above `afterUid`, oldest first, at most `max`. */
-  list(afterUid: number, max: number): Promise<MessageInfo[]>;
+  /** Messages with a UID above `afterUid` (and, if given, received since `since`), oldest first, at most `max`. */
+  list(afterUid: number, max: number, since?: Date): Promise<MessageInfo[]>;
   /** The message's bytes, or null if it is gone or larger than `maxBytes`. */
   source(uid: number, maxBytes: number): Promise<Buffer | null>;
   close(): Promise<void>;
@@ -54,15 +54,17 @@ export async function openMailbox(c: MailboxConfig): Promise<Mailbox> {
   if (!box.readOnly) { await client.logout().catch(() => {}); throw new MailboxError('the server did not open the folder read-only'); }
   return {
     uidValidity: Number(box.uidValidity),
-    async list(afterUid, max) {
+    async list(afterUid, max, since) {
       if (!box.exists) return [];
+      // UID SEARCH first (numbers only), then envelopes for at most `max` of them: a large mailbox costs one search.
+      const uids = await client.search({ uid: `${afterUid + 1}:*`, ...(since ? { since } : {}) }, { uid: true });
+      const pick = (uids || []).filter((u) => u > afterUid).sort((a, b) => a - b).slice(0, max);
+      if (!pick.length) return [];
       const out: MessageInfo[] = [];
-      for await (const m of client.fetch(`${afterUid + 1}:*`, { uid: true, size: true, envelope: true }, { uid: true })) {
-        // "n:*" always includes the newest message, even when its UID is lower than n.
-        if (m.uid <= afterUid) continue;
+      for await (const m of client.fetch(pick.join(','), { uid: true, size: true, envelope: true }, { uid: true })) {
         out.push({ uid: m.uid, size: m.size ?? 0, messageId: m.envelope?.messageId ?? null });
       }
-      return out.sort((a, b) => a.uid - b.uid).slice(0, max);
+      return out.sort((a, b) => a.uid - b.uid);
     },
     async source(uid, maxBytes) {
       const m = await client.fetchOne(String(uid), { uid: true, size: true }, { uid: true });

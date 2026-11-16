@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "89b80f97-be68-474f-971a-524443f5ec1a",
+  "id": "88aebfbd-a1bd-4b0a-ab26-7f519603fe59",
   "prevId": "2d036f4b-9970-48d5-8d2c-81273b6bbdd5",
   "tables": {
     "ai_run": {
@@ -1427,6 +1427,13 @@
         "last_uid": {
           "name": "last_uid",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "config_key": {
+          "name": "config_key",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

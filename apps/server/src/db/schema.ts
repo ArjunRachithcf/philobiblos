@@ -283,6 +283,7 @@ export const mailCursor = sqliteTable('mail_cursor', {
   folder: text('folder').primaryKey(),
   uidValidity: integer('uid_validity').notNull(),
   lastUid: integer('last_uid').notNull(),
+  configKey: text('config_key').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
 

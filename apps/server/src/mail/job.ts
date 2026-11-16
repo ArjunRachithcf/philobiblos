@@ -1,9 +1,14 @@
-// The mail job (ADR 0007): reads what is new in the Shelf-only mailbox, checks who sent it, and records each mail once
-// in mail_seen (keyed by its Message-ID, so a mail seen again, after a UIDVALIDITY change say, is not recorded twice).
+// The mail job (ADR 0007): reads what is new in the Shelf-only mailbox, checks who sent it, and records each verified
+// mail once in mail_seen, keyed by its Message-ID (so a mail seen again, after a UIDVALIDITY change say, is not
+// recorded twice). Only a verified mail claims its Message-ID: an unverified one is keyed by a hash of its bytes, so a
+// forgery cannot take the id of the genuine mail that follows it. When the checks' settings change (or the reader's
+// version), the window is read again, so a mail refused under the old settings is checked under the new ones.
+// The first run reads the last 90 days only.
 // It changes nothing else: the parsers that turn a verified mail into quotes, orders and copies come later (M3 d) and
 // read what is kept here. A mail that fails the checks is kept as "not verified" with Shelf's reason, and its content
 // is not kept at all.
 import { createHash } from 'node:crypto';
+import { and } from 'drizzle-orm';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -11,11 +16,16 @@ import { MediaUnavailable, runMediaJob } from '../media/client';
 import { MailboxError, openMailbox, type Mailbox, type MailboxConfig } from '../net/imap';
 import type { TxtResolver } from '../net/dns';
 import type { Outcome } from '../jobs/books';
-import { MAIL_LIMITS, MailUnreadable, readMail } from './read';
+import { SEALED } from '../routes/month';
+import { SealError, isSealed, sealingKey, unseal } from '../household/sealed';
+import type { Config } from '../config';
+import { MAIL_LIMITS, MailUnreadable, addressParts, readMail } from './read';
 import { verifyBookshopMail } from './verify';
 
-export const PARSER_VERSION = 'm3c-1';
+export const PARSER_VERSION = 'm3c-2';
 export const PER_RUN = 200;
+/** The first run, and a run after the settings changed, read mail from this many days back. */
+export const WINDOW_DAYS = 90;
 
 export interface MailDeps {
   open?: (c: MailboxConfig) => Promise<Mailbox>;
@@ -24,13 +34,23 @@ export interface MailDeps {
   now?: () => Date;
 }
 
-/** A Message-ID as a key: the header's value, or, for a mail without one, a hash of its bytes. */
-const keyOf = (messageId: string | null, raw: Buffer | null, uid: number, uidValidity: number) =>
-  messageId?.trim().slice(0, 300) || (raw ? `sha256:${createHash('sha256').update(raw).digest('hex')}` : `uid:${uidValidity}:${uid}`);
+const hash = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 
-export async function refreshMail(db: Db, cfg: { imap: MailboxConfig | null; workDir: string | null; arcSealers: string[] }, deps: MailDeps = {}): Promise<Outcome> {
+export type MailJobConfig = Pick<Config, 'workDir' | 'arcSealers' | 'mailRecipients' | 'sealingKey'> & { imap: MailboxConfig | null };
+
+export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {}): Promise<Outcome> {
   if (!cfg.imap) return { status: 'blocked', detail: 'no mailbox is set up (SHELF_IMAP_HOST, SHELF_IMAP_USER, SHELF_IMAP_PASSWORD)' };
   const now = deps.now ?? (() => new Date());
+  // The delivery address is sealed (PR #7); it is unsealed here only to find it in the mail and leave it out.
+  let address: string[] = [];
+  if (isSealed(db, SEALED.deliveryAddress)) {
+    try { address = addressParts(unseal(db, sealingKey(cfg), SEALED.deliveryAddress)); } catch (e) {
+      if (!(e instanceof SealError)) throw e;
+      return { status: 'blocked', detail: 'the sealing key cannot open the delivery address, so it could not be kept out of the mail: nothing read' };
+    }
+  }
+  const recipients = [...new Set([...cfg.mailRecipients, ...(cfg.imap.user.includes('@') ? [cfg.imap.user] : [])].map((r) => r.toLowerCase()))];
+  const configKey = hash(JSON.stringify([PARSER_VERSION, [...cfg.arcSealers].sort(), [...recipients].sort()]));
   const media = deps.media ?? ((kind, input) => runMediaJob(cfg.workDir, kind, input));
   let box: Mailbox;
   try { box = await (deps.open ?? openMailbox)(cfg.imap); } catch (e) {
@@ -40,33 +60,40 @@ export async function refreshMail(db: Db, cfg: { imap: MailboxConfig | null; wor
   let verified = 0, notVerified = 0, already = 0;
   try {
     const cur = db.select().from(t.mailCursor).where(eq(t.mailCursor.folder, folder)).get();
-    let last = cur && cur.uidValidity === box.uidValidity ? cur.lastUid : 0;
+    const fresh = !cur || cur.uidValidity !== box.uidValidity || cur.configKey !== configKey;
+    let last = fresh ? 0 : cur.lastUid;
     const advance = (uid: number) => {
       last = uid;
-      const v = { uidValidity: box.uidValidity, lastUid: uid, updatedAt: now().toISOString() };
+      const v = { uidValidity: box.uidValidity, lastUid: uid, configKey, updatedAt: now().toISOString() };
       db.insert(t.mailCursor).values({ folder, ...v }).onConflictDoUpdate({ target: t.mailCursor.folder, set: v }).run();
     };
-    const list = await box.list(last, PER_RUN);
+    const list = await box.list(last, PER_RUN, last === 0 ? new Date(now().getTime() - WINDOW_DAYS * 86_400_000) : undefined);
     for (const m of list) {
-      const known = m.messageId && db.select({ id: t.mailSeen.messageId }).from(t.mailSeen).where(eq(t.mailSeen.messageId, m.messageId.trim().slice(0, 300))).get();
+      const id = m.messageId?.trim().slice(0, 300) || null;
+      // Known only as a verified mail: an unverified row never stands for a Message-ID.
+      const known = id && db.select({ id: t.mailSeen.messageId }).from(t.mailSeen).where(and(eq(t.mailSeen.messageId, id), eq(t.mailSeen.accepted, 1))).get();
       if (known) { already++; advance(m.uid); continue; }
       const raw = m.size <= MAIL_LIMITS.message ? await box.source(m.uid, MAIL_LIMITS.message) : null;
-      const key = keyOf(m.messageId, raw, m.uid, box.uidValidity);
+      const unverifiedKey = `unverified:${raw ? hash(raw) : `uid:${box.uidValidity}:${m.uid}`}`;
       const record = (row: { kind: string; parsedJson: string | null; authJson: string; accepted: number }) => {
-        db.insert(t.mailSeen).values({ messageId: key, parserVersion: PARSER_VERSION, seenAt: now().toISOString(), ...row }).onConflictDoNothing().run();
+        const key = row.accepted === 1 && id ? id : row.accepted === 1 && raw ? `sha256:${hash(raw)}` : unverifiedKey;
+        const v = { parserVersion: PARSER_VERSION, seenAt: now().toISOString(), ...row };
+        db.insert(t.mailSeen).values({ messageId: key, ...v }).onConflictDoUpdate({ target: t.mailSeen.messageId, set: v }).run();
+        // Verified now: what was kept of it as unverified goes.
+        if (row.accepted === 1) db.delete(t.mailSeen).where(eq(t.mailSeen.messageId, unverifiedKey)).run();
       };
       if (!raw) {
         record({ kind: 'unread', parsedJson: null, authJson: JSON.stringify({ accepted: false, reason: 'larger than 25 MB, not read' }), accepted: 0 });
         notVerified++; advance(m.uid); continue;
       }
-      const auth = await verifyBookshopMail(raw, { arcSealers: cfg.arcSealers, resolver: deps.resolver });
+      const auth = await verifyBookshopMail(raw, { arcSealers: cfg.arcSealers, recipients, resolver: deps.resolver });
       if (!auth.accepted) {
         record({ kind: 'not_verified', parsedJson: null, authJson: JSON.stringify(auth), accepted: 0 });
         notVerified++; advance(m.uid); continue;
       }
       let content;
       try {
-        content = await readMail(raw, media);
+        content = await readMail(raw, media, address);
       } catch (e) {
         // Without the media worker a PDF cannot be read now: stop here, and this mail is read again next time.
         if (e instanceof MediaUnavailable) return { status: 'blocked', detail: `stopped: ${e.message}; ${verified} verified, ${notVerified} not verified so far` };

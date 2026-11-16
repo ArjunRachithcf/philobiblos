@@ -246,6 +246,7 @@ CREATE TABLE mail_cursor (                 -- where the mail reader stopped, per
   folder       TEXT PRIMARY KEY NOT NULL,
   uid_validity INTEGER NOT NULL,           -- the folder's UIDVALIDITY; when it changes, reading starts over (mail_seen keeps it idempotent)
   last_uid     INTEGER NOT NULL,
+  config_key   TEXT NOT NULL,              -- the checks' settings it read under; when they change, the window is read again
   updated_at   TEXT NOT NULL
 );
 

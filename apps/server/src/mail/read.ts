@@ -5,7 +5,8 @@
 //
 // What is kept leaves out what the household wrote to the bookshop: quoted lines (`>`) and everything below a reply
 // header are dropped (the person's request, with the delivery address and the card number they typed, is quoted in
-// the bookshop's replies), and any run of 12 or more digits that is not an ISBN/EAN is masked as well.
+// the bookshop's replies); any line or PDF cell that holds a piece of the delivery address (sealed, PR #7: unsealed
+// only here, to find it) is replaced; and any run of 12 or more digits that is not an ISBN/EAN is masked as well.
 import PostalMime from 'postal-mime';
 import { textOf } from '../books/prices';
 import type { MediaOutcome } from '../media/client';
@@ -37,17 +38,45 @@ export class MailUnreadable extends Error {
   constructor(readonly code: string) { super(`the mail cannot be read: ${code}`); }
 }
 
-const REPLY_HEADER = /^(?:-{2,}\s*(?:Original Message|Ursprüngliche Nachricht|Message d'origine)\s*-{2,}|On .{3,200} wrote:|Am .{3,200} schrieb .{1,200}:|Von:\s|From:\s|Le .{3,200} a écrit\s?:)/i;
+// Where the household's own words begin in a reply: German, English, French and Italian clients, Outlook's line.
+const REPLY_HEADER = /^(?:_{10,}$|-{2,}\s*(?:Original(?:nachricht| Message)|Ursprüngliche Nachricht|Message d'origine|Messaggio originale)\s*-{2,}|(?:From|Von|De|Da|Sent|Gesendet|Envoyé|Inviato)\s?:\s|On .{3,200} wrote:|Am .{3,200} schrieb .{1,200}:|Le .{3,200} a écrit\s?:|Il .{3,200} ha scritto\s?:)/i;
+const SPACES = /[\u00a0\u2007\u202f\u2009\u200a\u2002-\u2006\u3000]/g;
+const ISBN = /\b97[89](?:[ -]?\d){10}\b/g;
+const DIGITS = /\d(?:[\s\-./]{0,2}\d){11,}/g;
 
-/** The bookshop's own words: no quoted lines, nothing below a reply header, long digit runs masked unless ISBN/EAN. */
-export function keepText(text: string): string {
+/** Masks every run of 12 or more digits (with up to two separators of space, -, . or / between them) but ISBNs. */
+export function maskNumbers(text: string): string {
+  const isbns: string[] = [];
+  const held = text.replace(SPACES, ' ').replace(ISBN, (m) => `\ue000${isbns.push(m) - 1}\ue000`);
+  return held.replace(DIGITS, '[number removed]').replace(/\ue000(\d+)\ue000/g, (_m, n: string) => isbns[Number(n)]!);
+}
+
+/** The pieces of the household's delivery address worth finding again (lines and comma parts of 5+ letters), normalised. */
+export function addressParts(address: string | null): string[] {
+  if (!address) return [];
+  return [...new Set(address.split(/[\n,;]+/).map(normal).filter((p) => p.replace(/[^a-z0-9]/g, '').length >= 5))];
+}
+const normal = (s: string) => s.replace(SPACES, ' ').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+const mentions = (line: string, parts: string[]) => { const l = normal(line); return parts.some((p) => l.includes(p)); };
+
+/**
+ * The bookshop's own words: no quoted lines, nothing below a reply header, no line that holds a piece of the
+ * household's delivery address, long digit runs masked unless ISBN/EAN.
+ */
+export function keepText(text: string, address: string[] = []): string {
   const out: string[] = [];
   for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
-    if (REPLY_HEADER.test(line.trim())) break;
+    if (REPLY_HEADER.test(line.replace(SPACES, ' ').trim())) break;
     if (/^\s*>/.test(line)) continue;
-    out.push(line.replace(/\d(?:[ \-.]?\d){11,}/g, (m) => (/^97[89]\d{10}$/.test(m.replace(/[ \-.]/g, '')) ? m : '[number removed]')));
+    if (mentions(line, address)) { out.push('[address removed]'); continue; }
+    out.push(maskNumbers(line));
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, MAIL_LIMITS.text);
+}
+
+/** A PDF's rows with the same care: a cell that holds a piece of the address, or a long number, is masked. */
+export function keepRows(rows: string[][], address: string[]): string[][] {
+  return rows.map((r) => r.map((c) => (mentions(c, address) ? '[address removed]' : maskNumbers(c))));
 }
 
 /** HTML as text, line by line: no tag, script, style, link or image survives (only the words between them). Linear. */
@@ -55,7 +84,7 @@ export const htmlText = (html: string) => textOf(html.slice(0, 4 * 1024 * 1024),
 
 const isPdf = (b: Uint8Array) => b.length > 5 && Buffer.from(b.subarray(0, 5)).toString('latin1') === '%PDF-';
 
-export async function readMail(raw: Buffer, media: (kind: 'pdf.text', input: Uint8Array) => Promise<MediaOutcome>): Promise<MailContent> {
+export async function readMail(raw: Buffer, media: (kind: 'pdf.text', input: Uint8Array) => Promise<MediaOutcome>, address: string[] = []): Promise<MailContent> {
   if (raw.length > MAIL_LIMITS.message) throw new MailUnreadable('too_large');
   let mail;
   try {
@@ -66,7 +95,7 @@ export async function readMail(raw: Buffer, media: (kind: 'pdf.text', input: Uin
   } catch (e) {
     throw new MailUnreadable(String((e as { code?: string }).code ?? 'malformed').slice(0, 40));
   }
-  const text = keepText(mail.text ?? htmlText(mail.html ?? ''));
+  const text = keepText(mail.text ?? htmlText(mail.html ?? ''), address);
   const pdfs: MailContent['pdfs'] = [];
   let skipped = 0;
   for (const a of mail.attachments ?? []) {
@@ -75,7 +104,7 @@ export async function readMail(raw: Buffer, media: (kind: 'pdf.text', input: Uin
     if (!isPdf(bytes)) continue;
     if (bytes.length > MAIL_LIMITS.pdf || pdfs.length >= MAIL_LIMITS.pdfs) { skipped++; continue; }
     const r = await media('pdf.text', bytes);
-    if (r.ok && r.kind === 'pdf.text') pdfs.push({ name: String(a.filename ?? 'attachment.pdf').replace(/[^\w .-]/g, '_').slice(0, 100), pages: r.pages, rows: r.rows, truncated: r.truncated });
+    if (r.ok && r.kind === 'pdf.text') pdfs.push({ name: String(a.filename ?? 'attachment.pdf').replace(/[^\w .-]/g, '_').slice(0, 100), pages: r.pages, rows: keepRows(r.rows, address), truncated: r.truncated });
     else skipped++;
   }
   const one = (v: unknown, max: number) => (typeof v === 'string' && v ? v.slice(0, max) : null);

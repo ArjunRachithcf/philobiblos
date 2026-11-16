@@ -15,6 +15,12 @@ as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), rea
 
 - the original sender (the forwarded `From`, exactly one address, and `Sender` where present) must be the bookshop's
   domain; `Return-Path` is not checked, because a forwarding filter rewrites it to the forwarder (SRS) (M3 c);
+- it must be addressed (To or Cc) to the household (`SHELF_MAIL_RECIPIENTS`, or the mailbox itself), so a genuine
+  bookshop mail to someone else cannot be replayed into Shelf;
+- what Shelf reads from the headers must be what was signed: a header that may appear once appears once, the passing
+  signature covers From, To, Subject, Date, Message-ID, MIME-Version and Content-Type (and Cc, Sender, Reply-To,
+  In-Reply-To, References and Content-Transfer-Encoding when present) and no fewer instances than the mail has, and
+  a signature over part of the body (`l=`) does not count;
 - the DKIM signature of the bookshop's domain must pass, or, for a forward that broke it, the `ARC-Authentication-Results`
   of the forwarding provider must show `dkim=pass` for that domain; a mail that fails, or has neither, is stored with
   `accepted = 0` and shown in the Inbox as "not verified", and changes nothing (and none of its content is kept). The
@@ -22,7 +28,11 @@ as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), rea
   DKIM key records (`<selector>._domainkey.<domain>`, a few per mail), never SPF, DMARC or anything a mail names;
 - what is kept of a verified mail is the bookshop's own words: quoted lines and everything below a reply header are
   dropped (the household's request, with its delivery address and card number, is quoted in the replies), and runs of
-  12 or more digits that are not an ISBN/EAN are masked;
+  12 or more digits that are not an ISBN/EAN are masked (whatever spaces, dashes, dots or slashes sit between them);
+  any line or PDF cell holding a piece of the delivery address (sealed; unsealed only to find it) is replaced;
+- only a verified mail claims its Message-ID (an unverified one is kept under a hash of its bytes, so a forgery cannot
+  shadow the genuine mail); the first run reads the last 90 days, by UID SEARCH; when the checks' settings change, that
+  window is read again;
 - links in mail are never followed, fetched or shown as clickable; images are not loaded;
 - bodies are parsed as text with size limits (1 MB per mail, 10 MB per attachment, only `application/pdf` attachments
   are read); PDFs are parsed in the media worker (ADR 0009), never in the server process;

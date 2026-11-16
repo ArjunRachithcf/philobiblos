@@ -37,6 +37,8 @@ export interface Config {
   imap: { host: string; user: string; password: { value: string } | { file: string }; folder: string } | null;
   /** Mail providers whose ARC seal Shelf trusts for a forward that broke the bookshop's DKIM (SHELF_MAIL_ARC_SEALERS). */
   arcSealers: string[];
+  /** The household's addresses the bookshop writes to (SHELF_MAIL_RECIPIENTS); a mail to anyone else is not taken. */
+  mailRecipients: string[];
 }
 
 /**
@@ -83,6 +85,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       password: env.SHELF_IMAP_PASSWORD ? { value: env.SHELF_IMAP_PASSWORD } : { file: env.SHELF_IMAP_PASSWORD_FILE! },
       folder: env.SHELF_IMAP_FOLDER || 'INBOX',
     } : null,
+    mailRecipients: (env.SHELF_MAIL_RECIPIENTS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter((d) => /^[^@\s]+@[^@\s]+$/.test(d)),
     arcSealers: (env.SHELF_MAIL_ARC_SEALERS ?? 'google.com').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
   };
 }

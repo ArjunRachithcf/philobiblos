@@ -12,11 +12,13 @@ import { describe, expect, it } from 'vitest';
 import * as t from '../src/db/schema';
 import { MediaUnavailable } from '../src/media/client';
 import { refreshMail } from '../src/mail/job';
-import { MailUnreadable, htmlText, keepText, readMail } from '../src/mail/read';
+import { MailUnreadable, addressParts, htmlText, keepRows, keepText, readMail } from '../src/mail/read';
 import { addressDomains, verifyBookshopMail } from '../src/mail/verify';
 import { dkimKeyResolver } from '../src/net/dns';
 import type { Mailbox } from '../src/net/imap';
-import { household } from './helpers';
+import { SEALED } from '../src/routes/month';
+import { seal } from '../src/household/sealed';
+import { TEST_SEALING_KEY, household } from './helpers';
 
 const key = () => generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'der' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
 const shop = key(), google = key(), evil = key();
@@ -29,6 +31,7 @@ const DNS: Record<string, string[][]> = {
 };
 const resolver = async (name: string) => { const r = DNS[name.toLowerCase()]; if (!r) throw Object.assign(new Error('nx'), { code: 'ENOTFOUND' }); return r; };
 const SEALERS = ['google.com'];
+const HOUSEHOLD = ['shelf.household@example.org'];
 
 function message(o: { from?: string; extra?: string; body?: string; id?: string; subject?: string; html?: boolean } = {}): Buffer {
   return Buffer.from([
@@ -45,15 +48,15 @@ function message(o: { from?: string; extra?: string; body?: string; id?: string;
     '',
   ].join('\r\n'));
 }
-async function signed(raw: Buffer, domain = 'orellfuessli.ch', k = shop): Promise<Buffer> {
-  const r = await dkimSign(raw, { signatureData: [{ signingDomain: domain, selector: 'mail', privateKey: k.privateKey }] });
+async function signed(raw: Buffer, domain = 'orellfuessli.ch', k = shop, extra: { headerList?: string; maxBodyLength?: number } = {}): Promise<Buffer> {
+  const r = await dkimSign(raw, { signatureData: [{ signingDomain: domain, selector: 'mail', privateKey: k.privateKey, ...extra }] });
   return Buffer.concat([Buffer.from(r.signatures), raw]);
 }
 async function sealed(raw: Buffer, by: 'google.com' | 'evil.example', authResults: string): Promise<Buffer> {
   const h = await sealMessage(raw, { signingDomain: by, selector: 'arc', privateKey: (by === 'google.com' ? google : evil).privateKey, authResults, cv: 'none' });
   return Buffer.concat([h, raw]);
 }
-const verify = (raw: Buffer, dns = resolver) => verifyBookshopMail(raw, { arcSealers: SEALERS, resolver: dns });
+const verify = (raw: Buffer, dns = resolver) => verifyBookshopMail(raw, { arcSealers: SEALERS, recipients: HOUSEHOLD, resolver: dns });
 
 describe('is it the bookshop?', () => {
   it('signed by the bookshop\'s domain, aligned with its From: accepted', async () => {
@@ -69,6 +72,11 @@ describe('is it the bookshop?', () => {
     ['two From addresses', async () => signed(message({ from: 'english-orders@orellfuessli.ch, a@evil.example' }))],
     ['two From headers', async () => signed(message({ extra: 'From: a@evil.example' }))],
     ['a Sender elsewhere', async () => signed(message({ extra: 'Sender: a@evil.example' }))],
+    ['headers prepended above the signed ones (Subject, Message-ID, In-Reply-To, Date)', async () => Buffer.concat([Buffer.from('Subject: FORGED\r\nMessage-ID: <forged@x>\r\nIn-Reply-To: <forged-reply@x>\r\nDate: Mon, 1 Jan 2030 00:00:00 +0000\r\n'), await signed(message())])],
+    ['a prepended Subject alone', async () => Buffer.concat([Buffer.from('Subject: FORGED\r\n'), await signed(message())])],
+    ['a signature that does not cover the Subject, which was then changed', async () => Buffer.from((await signed(message(), 'orellfuessli.ch', shop, { headerList: 'From:To:Date:Message-ID:MIME-Version:Content-Type' })).toString().replace('Subject: Re: Book order', 'Subject: CHANGED'))],
+    ['a signature over part of the body (l=), with more appended', async () => Buffer.concat([await signed(message(), 'orellfuessli.ch', shop, { maxBodyLength: 20 }), Buffer.from('Price correction: CHF 999.00, pay at https://evil.example\r\n')])],
+    ['a genuine bookshop mail to someone else (a replay)', async () => signed(Buffer.from(message().toString().replace('To: shelf.household@example.org', 'To: stranger@example.com')))],
   ])('%s: not verified', async (_n, make) => {
     expect(await verify(await make())).toMatchObject({ accepted: false, via: null });
   });
@@ -110,6 +118,25 @@ describe('is it the bookshop?', () => {
 
 describe('what is kept of a mail', () => {
   const noMedia = async () => { throw new Error('no PDF expected'); };
+
+  it.each([
+    ['French Outlook', 'De : A Reader <reader@example.org>'], ['Italian', 'Da: A Reader'], ['Outlook\'s line', '________________________________'],
+    ['Outlook\'s Sent', 'Sent: Monday, 16 November 2026 09:00'], ['German', 'Von: A Reader'], ['Italian client', 'Il 16 nov 2026, A Reader ha scritto:'],
+  ])('a reply header (%s) ends what is kept', (_n, marker) => {
+    expect(keepText(['Your quote: CHF 19.90', marker, 'Premium Card number: 4111 1111 1111 1111', 'Somewhere Street 1'].join('\n'))).toBe('Your quote: CHF 19.90');
+  });
+
+  it.each([
+    ['non-breaking spaces', '4111\u00a01111\u00a01111\u00a01111'], ['slashes', '4111/1111/1111/1111'], ['a double space', '4111  1111 1111 1111'], ['narrow spaces', '4111\u202f1111\u202f1111\u202f1111'],
+  ])('card-like numbers with %s are masked whole; an ISBN stays', (_n, n) => {
+    expect(keepText(`Card ${n} and ISBN 978-0-00-000000-2`)).toBe('Card [number removed] and ISBN 978-0-00-000000-2');
+  });
+
+  it('the household\'s delivery address is left out of the text and of PDF rows', () => {
+    const parts = addressParts('A Reader\nSomewhere Street 1\n8000 Exampletown');
+    expect(keepText('Delivered to:\nA  Reader\nSomewhere\u00a0street 1\n8000 EXAMPLETOWN\nTotal CHF 19.90', parts)).toBe('Delivered to:\n[address removed]\n[address removed]\n[address removed]\nTotal CHF 19.90');
+    expect(keepRows([['Lieferadresse', 'Somewhere Street 1, 8000 Exampletown'], ['9780000000002', 'A Made-up Title', '19.90']], parts)).toEqual([['Lieferadresse', '[address removed]'], ['9780000000002', 'A Made-up Title', '19.90']]);
+  });
 
   it('the bookshop\'s words only: quoted lines and the household\'s own request below a reply header are dropped', () => {
     const text = [
@@ -181,6 +208,7 @@ function fakeBox(msgs: { uid: number; raw: Buffer }[], uidValidity = 7): Mailbox
   return box;
 }
 const IMAP = { host: 'imap.example.org', user: 'shelf', password: { value: 'not-a-real-password' }, folder: 'INBOX' };
+const CFG = { imap: IMAP, workDir: null, arcSealers: SEALERS, mailRecipients: HOUSEHOLD, sealingKey: null };
 
 describe('the mail job', () => {
   it('records each mail once: verified with its content, not verified with only Shelf\'s reason', async () => {
@@ -188,29 +216,79 @@ describe('the mail job', () => {
     const good = await signed(message({ id: 'good1' }));
     const forged = message({ id: 'forged1', from: 'english-orders@orellfuessli.ch', body: 'Pay here: https://evil.example' });
     const box = fakeBox([{ uid: 3, raw: good }, { uid: 5, raw: forged }]);
-    const cfg = { imap: IMAP, workDir: null, arcSealers: SEALERS };
+    const cfg = CFG;
     expect(await refreshMail(db, cfg, { open: async () => box, resolver })).toMatchObject({ status: 'done', detail: '2 new: 1 verified, 1 not verified, 0 seen before' });
     const rows = db.select().from(t.mailSeen).all();
     expect(rows.find((r) => r.messageId === '<good1@orellfuessli.ch>')).toMatchObject({ accepted: 1, kind: 'unclassified' });
     expect(JSON.parse(rows.find((r) => r.accepted === 1)!.parsedJson!).text).toContain('CHF 19.90');
-    const bad = rows.find((r) => r.messageId === '<forged1@orellfuessli.ch>')!;
+    // An unverified mail never claims its Message-ID: it is kept under a hash of its bytes.
+    const bad = rows.find((r) => r.accepted === 0)!;
+    expect(bad.messageId).toMatch(/^unverified:[0-9a-f]{64}$/);
     expect(bad).toMatchObject({ accepted: 0, kind: 'not_verified', parsedJson: null });
     expect(bad.authJson).not.toContain('evil');
     expect(db.select().from(t.mailCursor).where(eq(t.mailCursor.folder, 'INBOX')).get()).toMatchObject({ uidValidity: 7, lastUid: 5 });
     expect(box.closed).toBe(1);
 
-    // Again: nothing new. A new UIDVALIDITY starts over, and nothing is recorded twice.
+    // Again: nothing new. A new UIDVALIDITY starts over: the verified one is known, the other is checked again, and
+    // nothing is recorded twice.
     expect((await refreshMail(db, cfg, { open: async () => fakeBox([{ uid: 3, raw: good }, { uid: 5, raw: forged }]), resolver })).detail).toBe('0 new: 0 verified, 0 not verified, 0 seen before');
-    expect((await refreshMail(db, cfg, { open: async () => fakeBox([{ uid: 1, raw: good }, { uid: 2, raw: forged }], 8), resolver })).detail).toBe('2 new: 0 verified, 0 not verified, 2 seen before');
+    expect((await refreshMail(db, cfg, { open: async () => fakeBox([{ uid: 1, raw: good }, { uid: 2, raw: forged }], 8), resolver })).detail).toBe('2 new: 0 verified, 1 not verified, 1 seen before');
     expect(db.select().from(t.mailSeen).all()).toHaveLength(2);
+  });
+
+  it('a forgery cannot take the Message-ID of the genuine mail after it', async () => {
+    const db = household();
+    const forged = message({ id: 'next', body: 'Pay here' });
+    const genuine = await signed(message({ id: 'next' }));
+    await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 1, raw: forged }, { uid: 2, raw: genuine }]), resolver });
+    expect(db.select().from(t.mailSeen).where(eq(t.mailSeen.messageId, '<next@orellfuessli.ch>')).get()).toMatchObject({ accepted: 1 });
+    expect(db.select().from(t.mailSeen).all().filter((r) => r.accepted === 0).map((r) => r.messageId)).toEqual([expect.stringMatching(/^unverified:[0-9a-f]{64}$/)]);
+  });
+
+  it('a mail refused under the old settings is checked again under the new ones (and then counts)', async () => {
+    const db = household();
+    const noShopKey = async (n: string) => (n.startsWith('mail._domainkey.orellfuessli.ch') ? Promise.reject(Object.assign(new Error('nx'), { code: 'ENOTFOUND' })) : resolver(n));
+    const forward = await sealed(await signed(message({ id: 'fwd1' })), 'google.com', 'mx.google.com; dkim=pass header.i=@orellfuessli.ch');
+    const box = () => fakeBox([{ uid: 4, raw: forward }]);
+    await refreshMail(db, { ...CFG, arcSealers: [] }, { open: async () => box(), resolver: noShopKey });
+    expect(db.select().from(t.mailSeen).all().map((r) => r.accepted)).toEqual([0]);
+    await refreshMail(db, CFG, { open: async () => box(), resolver: noShopKey });
+    expect(db.select().from(t.mailSeen).all().map((r) => [r.messageId, r.accepted])).toEqual([['<fwd1@orellfuessli.ch>', 1]]);
+  });
+
+  it('the first run reads a window (90 days), not the whole mailbox; later runs go on by UID', async () => {
+    const db = household();
+    const asked: (Date | undefined)[] = [];
+    const box = fakeBox([{ uid: 1, raw: await signed(message({ id: 'w1' })) }]);
+    const list = box.list.bind(box);
+    box.list = async (a, m, since) => { asked.push(since); return list(a, m); };
+    const now = new Date('2026-11-16T10:00:00Z');
+    await refreshMail(db, CFG, { open: async () => box, resolver, now: () => now });
+    await refreshMail(db, CFG, { open: async () => box, resolver, now: () => now });
+    expect(asked).toEqual([new Date('2026-08-18T10:00:00Z'), undefined]);
+  });
+
+  it('the delivery address (sealed) is left out of what is kept; a key that cannot open it reads nothing', async () => {
+    const db = household();
+    const key = Buffer.from(TEST_SEALING_KEY, 'base64');
+    seal(db, key, SEALED.deliveryAddress, 'A Reader\nSomewhere Street 1\n8000 Exampletown');
+    const mail = await signed(message({ id: 'conf1', body: 'We have ordered your books.\r\nDelivery to: Somewhere Street 1, 8000 Exampletown\r\nTotal CHF 19.90' }));
+    await refreshMail(db, { ...CFG, sealingKey: { value: TEST_SEALING_KEY } }, { open: async () => fakeBox([{ uid: 1, raw: mail }]), resolver });
+    const kept = JSON.parse(db.select().from(t.mailSeen).get()!.parsedJson!).text as string;
+    expect(kept).toContain('Total CHF 19.90');
+    expect(kept).not.toMatch(/Somewhere|Exampletown/);
+    const other = household();
+    seal(other, key, SEALED.deliveryAddress, 'A Reader');
+    expect(await refreshMail(other, { ...CFG, sealingKey: { value: Buffer.alloc(32, 9).toString('base64') } }, { open: async () => fakeBox([{ uid: 1, raw: mail }]), resolver })).toMatchObject({ status: 'blocked' });
+    expect(other.select().from(t.mailSeen).all()).toEqual([]);
   });
 
   it('without the media worker, a mail with a PDF is left for the next run (the cursor stays before it)', async () => {
     const db = household();
     const b = 'p';
-    const withPdf = await signed(Buffer.from(['From: english-orders@orellfuessli.ch', 'To: shelf@example.org', 'Subject: Rechnung', 'Message-ID: <pdf1@orellfuessli.ch>', 'Date: Mon, 16 Nov 2026 09:00:00 +0100', 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${b}"`, '',
+    const withPdf = await signed(Buffer.from(['From: english-orders@orellfuessli.ch', 'To: shelf.household@example.org', 'Subject: Rechnung', 'Message-ID: <pdf1@orellfuessli.ch>', 'Date: Mon, 16 Nov 2026 09:00:00 +0100', 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${b}"`, '',
       `--${b}`, 'Content-Type: text/plain', '', 'Invoice attached.', `--${b}`, 'Content-Type: application/pdf', 'Content-Transfer-Encoding: base64', '', Buffer.from('%PDF-1.4 x').toString('base64'), `--${b}--`, ''].join('\r\n')));
-    const out = await refreshMail(db, { imap: IMAP, workDir: null, arcSealers: SEALERS }, { open: async () => fakeBox([{ uid: 9, raw: withPdf }]), resolver, media: async () => { throw new MediaUnavailable(); } });
+    const out = await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 9, raw: withPdf }]), resolver, media: async () => { throw new MediaUnavailable(); } });
     expect(out.status).toBe('blocked');
     expect(db.select().from(t.mailSeen).all()).toEqual([]);
     expect(db.select().from(t.mailCursor).all()).toEqual([]);
@@ -218,8 +296,8 @@ describe('the mail job', () => {
 
   it('no mailbox set up, or one that refuses: the run says so, and never the password', async () => {
     const db = household();
-    expect(await refreshMail(db, { imap: null, workDir: null, arcSealers: SEALERS })).toMatchObject({ status: 'blocked' });
-    const out = await refreshMail(db, { imap: IMAP, workDir: null, arcSealers: SEALERS }, { open: async () => { const { MailboxError } = await import('../src/net/imap'); throw new MailboxError('cannot sign in to imap.example.org:993 over TLS'); } });
+    expect(await refreshMail(db, { ...CFG, imap: null })).toMatchObject({ status: 'blocked' });
+    const out = await refreshMail(db, CFG, { open: async () => { const { MailboxError } = await import('../src/net/imap'); throw new MailboxError('cannot sign in to imap.example.org:993 over TLS'); } });
     expect(out).toMatchObject({ status: 'failed' });
     expect(out.detail).not.toContain('not-a-real-password');
   });
