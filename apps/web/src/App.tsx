@@ -1,4 +1,4 @@
-// Shelf's web app: sign-in, the one-time links, the household, the brain and its proposals, the library, the backlog and
+// Shelf's web app: sign-in, the one-time links, the household, this month, the brain and its proposals, the library, the backlog and
 // the budget. A screen never calls the network
 // beyond Shelf's own API (ADR 0003).
 import { useCallback, useEffect, useState } from 'react';
@@ -8,13 +8,14 @@ import { Household } from './pages/Household';
 import { Backlog } from './pages/Backlog';
 import { Brain } from './pages/Brain';
 import { Proposals } from './pages/Proposals';
+import { ThisMonth } from './pages/ThisMonth';
 import { Library } from './pages/Library';
 import { Settings } from './pages/Settings';
 import { SignIn } from './pages/SignIn';
 import { Notice } from './ui';
 
-const NAV = [['/brain', 'Brain'], ['/proposals', 'Proposals'], ['/backlog', 'Backlog'], ['/library', 'Library'], ['/settings', 'Settings']] as const;
-const NAV_KID = NAV.filter(([to]) => to !== '/brain' && to !== '/proposals');
+const NAV = [['/month', 'This month'], ['/brain', 'Brain'], ['/proposals', 'Proposals'], ['/backlog', 'Backlog'], ['/library', 'Library'], ['/settings', 'Settings']] as const;
+const NAV_KID = NAV.filter(([to]) => to !== '/brain' && to !== '/proposals' && to !== '/month');
 const path = () => location.pathname.replace(/\/+$/, '') || '/';
 
 export function App() {
@@ -71,6 +72,7 @@ export function App() {
       </header>
       <main className="page" id="main">
         {!me ? <p className="sr-only" role="status">Loading</p>
+          : route === '/month' ? <ThisMonth me={me} go={go} />
           : route === '/brain' ? <Brain me={me} go={go} />
           : route === '/proposals' ? <Proposals />
           : route === '/library' ? <Library me={me} />

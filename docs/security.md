@@ -8,7 +8,7 @@ shared posts, PDFs, videos and web pages it did not write. Security comes before
 | Asset | Where | Why it matters |
 |---|---|---|
 | People, kids' names and birth years, reading and takeaways | SQLite | private to the household; kids especially |
-| Delivery address | `sealed_secret`, key outside the database | physical address |
+| Delivery address, the bookshop's address | `sealed_secret` (AES-256-GCM, bound to its name), key outside the database: `SHELF_SEALING_KEY` or `SHELF_SEALING_KEY_FILE`; standalone makes `sealing.key` (0600) in its own folder, `SHELF_KEYS_DIR` (`./keys` next to `./data` in docker-compose.yml), never inside the data folder | physical address; where orders go |
 | IMAP app password of the Shelf-only mailbox | secret (env/file) | reads the bookshop's mail |
 | Claude API key (if opted in) | secret (env/file) | costs money, sends data out |
 | Share tokens | hashed in `share_token` | anyone holding one can drop shares into a person's Inbox |
@@ -28,8 +28,9 @@ shared posts, PDFs, videos and web pages it did not write. Security comes before
 | **A hostile PDF** | exploit pdfjs, exhaust memory | media worker; never in the server process |
 | **A compromised or manipulated AI provider, prompt injection** | make Shelf act, fetch URLs, leak data, skew picks | AI output is schema-validated data only; no tool use, no URLs fetched from output; scores come from `packages/scoring`; people confirm links; Ollama by default, Claude only by opt-in with a visible list of what leaves |
 | **A malicious book page** (price lookup, Open Library) | oversized or script-laden pages, decompression bombs, redirects elsewhere | allowlisted hosts in one HTTP client; size/time limits; parsed as text; covers re-encoded by the worker |
-| **Someone with a copy of the database** (a backup) | read the address | sealed with a key that is not in the database or its backup |
+| **Someone with a copy of the database** (a backup) | read the address | sealed with a key that is not in the database or its backup: standalone keeps it in `keys/`, apart from `data/` (back it up somewhere else, a password manager say); under HomersLab it is the app's secret `SHELF_SEALING_KEY`, kept and backed up by HomersLab with its secrets, not with the app's data |
 
+| **Whoever writes the order mail** (Compose) | add recipients or headers through the bookshop's address; make Shelf send mail | Shelf never sends mail: Compose is a `mailto:` the person opens; the address must be one plain address (no `?`, `&`, `%`, commas, spaces or line breaks), and the text never holds a card number (`month/order-mail.ts`); the delivery address is write-only in Settings and appears only in the Compose text |
 | **Another website the person visits** | make the browser change something in Shelf (CSRF) | SameSite=Strict session cookie; every change must carry Shelf's own `Origin`; CSP `frame-ancestors 'none'` |
 | **Whoever reads Shelf's data folder** | the setup link | the same person could replace the database; the link works once, for 24 hours, and only while no admin can sign in |
 
@@ -47,3 +48,15 @@ applies; a feature that cannot meet them waits.
 - Sign-in rate limits count per client address. Behind a reverse proxy every client has the proxy's address, so the
   limit is shared by the household (20 sign-in steps a minute); a proxy in front of standalone Shelf should keep its
   own limits.
+
+## Rotating the sealing key
+
+There is no re-encryption step, on purpose: Shelf never holds two keys. To rotate (or after a key is lost):
+
+1. Replace the key: a new `SHELF_SEALING_KEY` under HomersLab; standalone, delete `keys/sealing.key` (a new one is
+   made on the next save).
+2. Settings keeps working for everyone; "Where orders go" says the addresses need entering again (`needsReentry`), and
+   Compose answers 409 until they are.
+3. An admin enters the bookshop's address and the delivery address again; they are sealed under the new key.
+
+The old rows cannot be opened with the new key (each row carries its key's id, and GCM refuses anything else).

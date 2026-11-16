@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { getPerson, household } from '../household/people';
+import { actsFor, getPerson, household } from '../household/people';
 import { norm } from '../seed/import';
 import { candidateId, parseCandidateId } from './backlog';
 
@@ -15,9 +15,9 @@ export class BacklogError extends Error {
 const ISBN13 = /^97[89]\d{10}$/;
 
 function mayChange(db: Db, me: string, personId: string): void {
-  const p = getPerson(db, personId);
-  if (!p) throw new BacklogError(404, 'no such person');
-  if (p.id !== me && p.role !== 'kid') throw new BacklogError(403, 'only they change their own backlog');
+  const may = actsFor(db, me, personId);
+  if (may === 'none') throw new BacklogError(404, 'no such person');
+  if (may === 'other') throw new BacklogError(403, 'only they change their own backlog');
 }
 
 const text = (v: unknown, name: string, max: number, required: boolean): string | null => {
@@ -67,7 +67,6 @@ export function bulk(db: Db, me: string, body: unknown, now = new Date()): numbe
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BacklogError(400, 'a JSON object is needed');
   const b = body as { ids?: unknown; action?: unknown; months?: unknown };
   if (!Array.isArray(b.ids) || b.ids.length === 0 || b.ids.length > 200) throw new BacklogError(400, 'ids: 1 to 200 candidate ids');
-  if (b.action === 'add_to_month') throw new BacklogError(400, 'adding to the month arrives with This month (M2)');
   if (!['not_for_me', 'snooze', 'reopen'].includes(b.action as string)) throw new BacklogError(400, 'action: not_for_me, snooze or reopen');
   const months = b.months === undefined ? 3 : b.months;
   if (b.action === 'snooze' && (!Number.isInteger(months) || (months as number) < 1 || (months as number) > 24)) throw new BacklogError(400, 'months: 1 to 24');

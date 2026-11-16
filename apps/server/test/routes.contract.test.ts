@@ -6,9 +6,10 @@ import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import { EDGE_IDENTITY, loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
-import { ORIGIN, expectValid, fakeWebAuthn, household, isPublic, ops, request, security, sessionCookie } from './helpers';
+import { seal } from '../src/household/sealed';
+import { ORIGIN, TEST_SEALING_KEY, expectValid, fakeWebAuthn, household, isPublic, ops, request, security, sessionCookie } from './helpers';
 
-const standalone = () => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent' });
+const standalone = () => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY });
 const homerslab = () => loadConfig({ SHELF_MODE: 'homerslab', SHELF_EDGE_IDENTITY: 'homerslab-v1', SHELF_TRUSTED_PROXY: '127.0.0.1', SHELF_ORIGIN: ORIGIN, SHELF_DATA_DIR: '/nonexistent' });
 const HL_ADULT = { 'x-homerslab-person': 'hl-sam', 'x-homerslab-name': 'Sam', 'x-homerslab-role': 'adult' };
 const HL_KID = { 'x-homerslab-person': 'hl-kid', 'x-homerslab-name': 'Kid 1', 'x-homerslab-role': 'kid' };
@@ -20,6 +21,7 @@ let adult: string;
 let kid: string;
 beforeAll(async () => {
   db0 = household();
+  seal(db0, Buffer.from(TEST_SEALING_KEY, 'base64'), 'bookshop_email', 'orders@bookshop.example');
   admin = sessionCookie(db0, 'p_alex');
   adult = sessionCookie(db0, 'p_sam');
   kid = sessionCookie(db0, 'p_kid1');
@@ -196,6 +198,17 @@ describe('no secrets in responses', () => {
     };
     for (const url of ['/api/settings', '/api/me', '/api/me/passkeys']) walk((await built.app.inject({ url, headers: { cookie: admin } })).json());
     expect(keys.filter((k) => /password|apikey|api_key|secret|^card|cardnumber|address|token|publickey|hash/i.test(k))).toEqual([]);
+  });
+  it('the delivery address is sealed at rest and never sent back', async () => {
+    const addr = 'Alex Example\nExample Street 1\n8000 Zurich';
+    const r = await built.app.inject({ method: 'PATCH', url: '/api/settings', headers: { cookie: admin, origin: ORIGIN }, payload: { order: { deliveryAddress: addr } } });
+    expect(r.statusCode, r.body).toBe(200);
+    const s = await built.app.inject({ url: '/api/settings', headers: { cookie: admin } });
+    expect(s.json().order).toMatchObject({ hasDelivery: true, bookshopEmail: 'orders@bookshop.example' });
+    expect(s.body).not.toContain('Example Street');
+    const row = db0.select().from(t.sealedSecret).all().find((x) => x.key === 'delivery_address')!;
+    expect(row.ciphertext.toString('latin1')).not.toContain('Example');
+    expect((await built.app.inject({ method: 'PATCH', url: '/api/settings', headers: { cookie: adult, origin: ORIGIN }, payload: { order: { deliveryAddress: 'x' } } })).statusCode).toBe(403);
   });
   it('responses carry the security headers', async () => {
     const r = await built.app.inject({ url: '/api/health' });

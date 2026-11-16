@@ -13,9 +13,6 @@ import * as ex from '../stubs/examples';
 export async function stubRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   app.get('/health', { config: { auth: 'public' } }, async () => ({ ok: true, version: VERSION, mode: cfg.mode }));
 
-  app.get<{ Params: { month: string } }>('/month/:month', async (req) => ex.monthPlan(req.params.month));
-  app.put<{ Params: { month: string } }>('/month/:month/budget', async (req) => ex.monthPlan(req.params.month));
-  app.post<{ Params: { month: string } }>('/month/:month/picks', async (req) => ex.monthPlan(req.params.month));
 
 
 
@@ -47,8 +44,6 @@ export async function stubRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     return reply.code(204).send();
   });
 
-  app.post('/orders', async (_req, reply) => reply.code(201).send(ex.order));
-  app.get('/orders/:id', async () => ex.order);
 
   app.post('/jobs/:job/run', async (_req, reply) => reply.code(202).send());
 }

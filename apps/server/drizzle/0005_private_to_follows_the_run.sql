@@ -2,10 +2,11 @@
 -- AI run (ai_run.takeaways_of): an insert with a run and no private_to gets it; a mismatch is refused, and so is an
 -- update of ai_run_id or private_to that leaves them apart (taking private_to off while the run is set, or moving a row
 -- to someone's run without making it theirs). Clearing ai_run_id (the purge) keeps private_to, and once set it never
--- changes or goes (deleting the row is the only way out; INSERT OR REPLACE, which deletes without delete triggers, is
--- refused on a private row unless it carries the same private_to). A run's takeaways_of is fixed once it has
--- proposals, and a run with takeaways is deleted only after its proposals are (the purge deletes or lets them go in the
--- same transaction).
+-- changes or goes (deleting the row is the only way out). INSERT OR REPLACE deletes without delete triggers, so an insert
+-- over a private row is refused unless the statement itself names the same private_to: one that leaves it to the fill
+-- trigger is refused too (that trigger runs after the insert; this check sees NULL), which fails closed. A run's
+-- takeaways_of is fixed once it has proposals, and a run with takeaways is deleted only after its proposals are (the
+-- purge deletes or lets them go in the same transaction).
 -- src/knowledge/from-run.ts sets it too; this is the guard for every other path (raw SQL included).
 CREATE TRIGGER book_link_private_to_check_insert BEFORE INSERT ON book_link
 WHEN NEW.ai_run_id IS NOT NULL AND NEW.private_to IS NOT NULL AND NEW.private_to IS NOT (SELECT takeaways_of FROM ai_run WHERE id = NEW.ai_run_id)

@@ -7,13 +7,13 @@ import { fileURLToPath } from 'node:url';
 const port = process.argv[2] ?? '4173';
 const seed = process.argv[3];
 const data = fileURLToPath(new URL(`../.e2e-data-${port}/`, import.meta.url));
-rmSync(data, { recursive: true, force: true });
-mkdirSync(data, { recursive: true });
+const keys = fileURLToPath(new URL(`../.e2e-data-${port}-keys/`, import.meta.url)); // apart from the data, as in a real install
+for (const d of [data, keys]) { rmSync(d, { recursive: true, force: true }); mkdirSync(d, { recursive: true }); }
 const serverDir = fileURLToPath(new URL('../../server/', import.meta.url));
 const env = {
   ...process.env,
   SHELF_MODE: 'standalone', SHELF_PORT: port, SHELF_HOST: '127.0.0.1', SHELF_ORIGIN: `http://localhost:${port}`,
-  SHELF_DATA_DIR: data, SHELF_WEB_DIR: fileURLToPath(new URL('../dist/', import.meta.url)),
+  SHELF_DATA_DIR: data, SHELF_KEYS_DIR: keys, SHELF_WEB_DIR: fileURLToPath(new URL('../dist/', import.meta.url)),
   SHELF_MIGRATIONS_DIR: `${serverDir}drizzle/`,
 };
 if (seed) {

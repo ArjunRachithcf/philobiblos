@@ -100,6 +100,7 @@ const RELEASED: Record<string, string> = {
   '0002_ai_runs_know_takeaways.sql': '9b9e3c78fdf2d18c82eb6ddf2cf3bb13f7340995338ea3513f9d905325ca3375', // contract v3 (M1 b, PR #2)
   '0003_backlog.sql': '9932624f9add595389393ecd98268a6e19bc46bfa89beb4887895b5c8535697c', // contract v4 (M1 c, PR #4)
   '0004_reviews.sql': '8c03643bd767eba82d96db42f8c827f53f8899ba63270ab9f524721cfae5c418', // contract v5 (M2 a, PR #5)
+  '0005_private_to_follows_the_run.sql': '25e5212cb395e646fa44442d184bbb36d48635ddadad28e5b41213dffed72922', // contract v6 (M2 b, PR #6)
 };
 const drizzleDir = fileURLToPath(new URL('../drizzle', import.meta.url));
 

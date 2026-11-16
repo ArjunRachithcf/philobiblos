@@ -17,6 +17,13 @@ export interface Config {
   /** The address people open (scheme, host, port): WebAuthn's origin and relying party, and the Origin requests must carry. */
   origin: string;
   rpId: string;
+  /**
+   * Where the key that seals the delivery address and the bookshop's address comes from (never the database):
+   * SHELF_SEALING_KEY (base64, 32 bytes) or SHELF_SEALING_KEY_FILE; standalone falls back to a file it makes in
+   * SHELF_KEYS_DIR (default ./keys; /keys in the image): its own folder, never the data folder a backup copies.
+   * null: nothing can be sealed (homerslab mode without the secret).
+   */
+  sealingKey: { value: string } | { file: string; create: boolean } | null;
 }
 
 /**
@@ -51,6 +58,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDir: env.SHELF_WEB_DIR ?? null,
     origin: origin.origin,
     rpId: origin.hostname,
+    sealingKey: env.SHELF_SEALING_KEY ? { value: env.SHELF_SEALING_KEY }
+      : env.SHELF_SEALING_KEY_FILE ? { file: env.SHELF_SEALING_KEY_FILE, create: false }
+      : mode === 'standalone' ? { file: join(resolve(env.SHELF_KEYS_DIR ?? './keys'), 'sealing.key'), create: true } : null,
   };
 }
 
