@@ -1114,8 +1114,13 @@ export interface components {
                 readonly hasDelivery?: boolean;
                 /** @description false under HomersLab without SHELF_SEALING_KEY */
                 readonly canSeal?: boolean;
-                /** @description sealed under a key that is gone (rotated or lost): an admin enters both addresses again */
+                /** @description the key is usable but the rows were sealed under another (rotated): an admin enters both addresses again */
                 readonly needsReentry?: boolean;
+                /**
+                 * @description the server's key configuration is wrong (canSeal false): the addresses are kept; fix SHELF_SEALING_KEY
+                 * @enum {unknown}
+                 */
+                readonly keyProblem?: "missing" | "unreadable";
             };
             /** @description IMAP mailbox that receives only the forwarded bookshop mail (ADR 0007); its app password is a secret, never in the API */
             mail?: {

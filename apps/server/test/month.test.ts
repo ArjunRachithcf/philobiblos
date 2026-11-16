@@ -208,6 +208,23 @@ describe('a replaced sealing key', () => {
   });
 });
 
+describe('a broken key configuration', () => {
+  it('says the key is missing or unreadable, never "enter both addresses again"', async () => {
+    for (const [env, problem] of [[{ SHELF_SEALING_KEY: 'too-short' }, 'unreadable'], [{ SHELF_SEALING_KEY_FILE: '/nonexistent/sealing.key' }, 'missing']] as const) {
+      const app = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', ...env }), db);
+      await app.app.ready();
+      const h = { cookie: cookie.alex!, origin: ORIGIN, 'content-type': 'application/json' };
+      const s = await app.app.inject({ url: '/api/settings', headers: h });
+      expect(s.statusCode, s.body).toBe(200);
+      expect(s.json().order).toMatchObject({ canSeal: false, keyProblem: problem, needsReentry: false });
+      const p = await app.app.inject({ method: 'PATCH', url: '/api/settings', headers: h, payload: JSON.stringify({ order: { bookshopEmail: 'orders@bookshop.example' } }) });
+      expect([p.statusCode, p.json().error]).toEqual([409, expect.stringContaining(`the sealing key is ${problem}`)]);
+      expect((await app.app.inject({ method: 'POST', url: '/api/orders', headers: h, payload: JSON.stringify({ month: THIS_MONTH }) })).json().error).toContain(`the sealing key is ${problem}`);
+      await app.app.close();
+    }
+  });
+});
+
 describe('the order mail (pure)', () => {
   it('only one plain address; nothing that adds headers or recipients', () => {
     expect(EMAIL.test('orders@bookshop.example')).toBe(true);

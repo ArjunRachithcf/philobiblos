@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { requireAdmin } from '../auth/hook';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { SealError, isSealed, sealingKey, unseal } from '../household/sealed';
+import { SealError, isSealed, keyProblem, sealingKey, unseal } from '../household/sealed';
 import { MonthError, changePicks, checkWindow, composeOrder, currentMonth, getMonth, getOrder, setMonthBudget } from '../month/plan';
 
 export const SEALED = { bookshopEmail: 'bookshop_email', deliveryAddress: 'delivery_address' } as const;
@@ -37,6 +37,8 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db) {
       const month = b?.month ?? currentMonth(cfg.timezone);
       if (typeof month !== 'string') throw new MonthError(400, 'month: YYYY-MM');
       checkWindow(db, month, cfg.timezone, true);
+      const problem = keyProblem(cfg);
+      if (problem && (isSealed(db, SEALED.bookshopEmail) || isSealed(db, SEALED.deliveryAddress))) throw new MonthError(409, `the sealing key is ${problem}: the server's SHELF_SEALING_KEY needs fixing`);
       const open = (name: string) => (isSealed(db, name) ? unseal(db, sealingKey(cfg), name) : null);
       const places = { bookshopEmail: open(SEALED.bookshopEmail), deliveryAddress: open(SEALED.deliveryAddress) };
       return reply.code(201).send(composeOrder(db, month, req.caller!.personId, places));

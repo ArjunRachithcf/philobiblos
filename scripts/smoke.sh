@@ -32,9 +32,9 @@ wait_health() { # url mode
 }
 
 # 1. Standalone, as a household would run it.
-mkdir -p "$work/data" "$work/keys"
+mkdir -p "$work/data" "$work/keys" "$work/work"
 port=$((20000 + $$ % 20000))
-SHELF_IMAGE="$tag" SHELF_PORT="$port" SHELF_UID="$(id -u)" SHELF_GID="$(id -g)" \
+SHELF_IMAGE="$tag" SHELF_PORT="$port" SHELF_UID="$(id -u)" SHELF_WORKER_UID="$(( $(id -u) + 1 ))" SHELF_GID="$(id -g)" \
   docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" up -d --no-build
 wait_health "http://127.0.0.1:$port/api/health" standalone
 test -s "$work/data/shelf.sqlite"
@@ -42,6 +42,23 @@ grep -q "^http://localhost:$port/setup#" "$work/data/setup-link.txt"
 # the recovery CLI is in the image (ADR 0010); with no admin yet it refuses, and prints no link
 out="$(SHELF_IMAGE="$tag" docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" exec -T shelf shelf recover alex 2>&1 || true)"
 grep -q "no admin with the handle alex" <<<"$out" || { echo "shelf recover: $out" >&2; exit 1; }
+# the media worker (ADR 0009): no network at all, nothing reachable from it, and it re-encodes a job the server hands it
+dc() { SHELF_IMAGE="$tag" docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" "$@"; }
+[ "$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$(dc ps -q shelf-worker)")" = none ] || { echo "the worker has a network" >&2; exit 1; }
+dc exec -T shelf-worker node -e "fetch('http://1.1.1.1/',{signal:AbortSignal.timeout(3000)}).then(()=>process.exit(1),()=>process.exit(0))" \
+  || { echo "the worker reached the network" >&2; exit 1; }
+# its own user; in/ is read-only to it, and out/ cannot be swapped for a link (its parent is the image's read-only /work)
+[ "$(dc exec -T shelf-worker id -u)" != "$(dc exec -T shelf id -u)" ] || { echo "the worker runs as the server's user" >&2; exit 1; }
+dc exec -T shelf-worker sh -c 'touch /work/in/x' 2>/dev/null && { echo "the worker can write in/" >&2; exit 1; }
+dc exec -T shelf-worker sh -c 'mv /work/out /work/out2 || ln -s /tmp /work/x' 2>/dev/null && { echo "the worker can replace out/" >&2; exit 1; }
+ok=""
+for _ in $(seq 1 20); do if out="$(dc exec -T shelf shelf media-check 2>&1)"; then ok=1; break; fi; sleep 1; done
+# 50 clean jobs in the worker's own PID namespace: none may be taken for a leftover (the worker would restart)
+out="$(dc exec -T shelf shelf media-check 50 2>&1)" || { echo "media-check 50: $out" >&2; dc logs --tail 20 shelf-worker >&2; exit 1; }
+[ -n "$ok" ] || { echo "media-check: $out" >&2; dc logs --tail 20 shelf-worker >&2; ls -laR "$work/work" >&2; exit 1; }
+echo "$out"
+# a clean job leaves nothing behind, so the worker did not have to restart
+[ "$(docker inspect -f '{{.RestartCount}}' "$(dc ps -q shelf-worker)")" = 0 ] || { echo "the worker restarted" >&2; exit 1; }
 
 # 2. HomersLab: the manifest's image settings (port, volume, env).
 env_args=()

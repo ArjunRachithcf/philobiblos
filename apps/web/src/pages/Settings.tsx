@@ -115,7 +115,7 @@ function OrderPlaces({ admin }: { admin: boolean }) {
             <span className="hint" id={`${id}-ah`}>It goes into the order text only. It is sealed on the server and never shown here again.</span>
           </div>
           {order.needsReentry && <Notice kind="warn" title="Enter both addresses again.">They were sealed with a key that has since changed, so Shelf cannot read them. Compose waits until they are saved again.</Notice>}
-          {order.canSeal === false && <Notice kind="warn">The sealing key is missing, so the addresses cannot be saved.</Notice>}
+          {order.canSeal === false && <Notice kind="warn" title={`The sealing key is ${order.keyProblem ?? 'missing'}.`}>The server’s configuration needs fixing (SHELF_SEALING_KEY). The saved addresses are kept; nothing needs entering again.</Notice>}
           {error && <Notice kind="error">{error}</Notice>}
           {ok && <Notice kind="ok">{ok}</Notice>}
           <div className="btn-row"><button type="submit" className="btn btn-primary">Save where orders go</button></div>

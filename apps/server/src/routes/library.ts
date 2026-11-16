@@ -3,7 +3,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { SealError, isSealed, seal, sealingKey, unseal } from '../household/sealed';
+import { SealError, isSealed, keyProblem, seal, sealingKey, unseal } from '../household/sealed';
 import { EMAIL } from '../month/order-mail';
 import { SEALED } from './month';
 import { BudgetError, getBudget, setBudget } from '../household/budget';
@@ -56,11 +56,15 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db) {
       // they need entering again (docs/security.md, "Rotating the sealing key").
       let email: string | null = null;
       let needsReentry = false;
-      try { email = isSealed(db, SEALED.bookshopEmail) ? unseal(db, sealingKey(cfg), SEALED.bookshopEmail) : null; } catch (e) { if (!(e instanceof SealError)) throw e; needsReentry = true; }
-      if (!needsReentry && isSealed(db, SEALED.deliveryAddress)) {
-        try { unseal(db, sealingKey(cfg), SEALED.deliveryAddress); } catch (e) { if (!(e instanceof SealError)) throw e; needsReentry = true; }
+      // A key that is missing or unreadable is the server's configuration, not the addresses: canSeal false says so.
+      const problem = keyProblem(cfg);
+      if (!problem) {
+        for (const name of [SEALED.bookshopEmail, SEALED.deliveryAddress]) {
+          if (!isSealed(db, name)) continue;
+          try { const v = unseal(db, sealingKey(cfg), name); if (name === SEALED.bookshopEmail) email = v; } catch (e) { if (!(e instanceof SealError)) throw e; needsReentry = true; }
+        }
       }
-      const order = { bookshopEmail: email, hasDelivery: isSealed(db, SEALED.deliveryAddress), canSeal: cfg.sealingKey !== null, needsReentry };
+      const order = { bookshopEmail: email, hasDelivery: isSealed(db, SEALED.deliveryAddress), canSeal: problem === null, ...(problem ? { keyProblem: problem } : {}), needsReentry };
       return { ...ex.settings, budget: getBudget(db), person: personSettings(getPerson(db, req.caller!.personId)!), order };
     } catch (e) { return fail(reply, e); }
   });
@@ -75,8 +79,8 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     try {
       // All or nothing: both parts are checked before either is written.
       const order = body.order === undefined ? null : checkOrder(body.order);
+      if (order && keyProblem(cfg)) return reply.code(409).send({ error: `the sealing key is ${keyProblem(cfg)}: fix SHELF_SEALING_KEY (or SHELF_SEALING_KEY_FILE) on the server` });
       const key = order ? sealingKey(cfg) : null;
-      if (order && !key) return reply.code(409).send({ error: 'no sealing key: HomersLab gives SHELF_SEALING_KEY' });
       db.transaction((tx) => {
         if (body.budget !== undefined) setBudget(tx as unknown as Db, body.budget);
         if (order?.bookshopEmail !== undefined) seal(tx as unknown as Db, key!, SEALED.bookshopEmail, order.bookshopEmail);

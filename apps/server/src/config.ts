@@ -24,6 +24,8 @@ export interface Config {
    * null: nothing can be sealed (homerslab mode without the secret).
    */
   sealingKey: { value: string } | { file: string; create: boolean } | null;
+  /** The folder shared with the media worker (ADR 0009); null: no worker, media jobs are unavailable. */
+  workDir: string | null;
 }
 
 /**
@@ -61,6 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sealingKey: env.SHELF_SEALING_KEY ? { value: env.SHELF_SEALING_KEY }
       : env.SHELF_SEALING_KEY_FILE ? { file: env.SHELF_SEALING_KEY_FILE, create: false }
       : mode === 'standalone' ? { file: join(resolve(env.SHELF_KEYS_DIR ?? './keys'), 'sealing.key'), create: true } : null,
+    workDir: env.SHELF_WORK_DIR ? resolve(env.SHELF_WORK_DIR) : null,
   };
 }
 
