@@ -3,10 +3,17 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { MediaKind, MediaResult } from '@shelf/contracts/media';
 import { JobError, pdfText, reencodeImage } from './jobs';
+import { videoFrames } from './video';
 
 const [kind, inputPath, outputPath, id] = process.argv.slice(2) as [MediaKind | 'test.spin' | 'test.alloc' | 'test.linger' | 'test.setsid' | 'test.doublefork', string, string, string];
 
 async function run(): Promise<MediaResult> {
+  if (kind === 'video.frames') {
+    // The video is never read in here whole: ffmpeg gets a descriptor of it (video.ts).
+    const frames = await videoFrames(inputPath);
+    writeFileSync(outputPath, Buffer.concat(frames.map((f) => f.data)), { mode: 0o640 });
+    return { id, ok: true, kind, frames: frames.map(({ width, height, data, at }) => ({ width, height, bytes: data.length, at })) };
+  }
   const input = readFileSync(inputPath);
   if (kind === 'image.reencode') {
     const r = await reencodeImage(input);

@@ -2,19 +2,21 @@
 // server never decodes an image, a PDF or a video itself (an architecture test keeps sharp, pdfjs-dist and ffmpeg out
 // of the server), and it reads what comes back as untrusted, as if the worker had been taken over by the file it read:
 // every file through `readUntrusted` (no links, no FIFOs, a size cap), the result checked against the job's id and
-// kind (`readResult`), and a returned image walked marker by marker (`cleanJpeg`) without decoding it.
+// kind (`readResult`), and a returned image, or each of a video's frames, walked marker by marker (`cleanJpeg`) without
+// decoding it.
 //
 // One job is in flight at a time, so in/ never holds anyone else's file for a compromised decoder to read; a few more
 // may wait, and beyond that the answer is 'busy'.
 import { rmSync } from 'node:fs';
 import { ulid } from 'ulid';
-import { MEDIA_LIMITS, SERVER_WAIT_MS, checkDirs, paths, prepareDirs, readResult, readUntrusted, workerAlive, writeAtomic, type MediaKind, type MediaResult } from '@shelf/contracts/media';
+import { MEDIA_LIMITS, serverWaitMs, checkDirs, paths, prepareDirs, readResult, readUntrusted, workerAlive, writeAtomic, type MediaKind, type MediaResult } from '@shelf/contracts/media';
 
 export class MediaUnavailable extends Error {
   constructor() { super('media processing is unavailable: the media worker is not running'); }
 }
 
-export type MediaOutcome = MediaResult & { image?: Buffer };
+/** A result, with the re-encoded image (image.reencode) or the frames, in order (video.frames). */
+export type MediaOutcome = MediaResult & { image?: Buffer; images?: Buffer[] };
 
 /** Jobs that may wait behind the one in flight. */
 export const MAX_WAITING = 4;
@@ -72,7 +74,7 @@ async function runOne(root: string, kind: MediaKind, input: Uint8Array, o: { pol
   prepareDirs(root);
   const id = ulid();
   const p = paths(root, id);
-  const until = Date.now() + Math.min(o.waitMs ?? SERVER_WAIT_MS, SERVER_WAIT_MS);
+  const until = Date.now() + Math.min(o.waitMs ?? serverWaitMs(kind), serverWaitMs(kind));
   try {
     writeAtomic(p.input, input);
     writeAtomic(p.job, JSON.stringify({ id, kind, createdAt: new Date().toISOString() }));
@@ -81,7 +83,20 @@ async function runOne(root: string, kind: MediaKind, input: Uint8Array, o: { pol
       checkDirs(root);
       const r = readResult(root, id, kind);
       if (r) {
-        if (!r.ok || r.kind !== 'image.reencode') return r;
+        if (!r.ok || r.kind === 'pdf.text') return r;
+        if (r.kind === 'video.frames') {
+          // The frames back to back, exactly the bytes the result names, each one a clean JPEG of its reported size.
+          const all = readUntrusted(p.output, MEDIA_LIMITS.framesMax * MEDIA_LIMITS.frameMaxBytes);
+          if (!Buffer.isBuffer(all) || all.length !== r.frames.reduce((k, f) => k + f.bytes, 0)) return { id, ok: false, error: 'failed' };
+          const images: Buffer[] = [];
+          let off = 0;
+          for (const f of r.frames) {
+            const b = all.subarray(off, (off += f.bytes));
+            if (!cleanJpeg(b, f.width, f.height)) return { id, ok: false, error: 'failed' };
+            images.push(Buffer.from(b));
+          }
+          return { ...r, images };
+        }
         const image = readUntrusted(p.output, MEDIA_LIMITS.maxOutput);
         if (!Buffer.isBuffer(image) || image.length !== r.bytes || !cleanJpeg(image, r.width, r.height)) return { id, ok: false, error: 'failed' };
         return { ...r, image };

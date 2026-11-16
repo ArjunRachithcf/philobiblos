@@ -14,3 +14,6 @@ coverage/
 /apps/web/playwright-report/
 /keys/
 sealing.key
+
+# The media worker's ffmpeg and ffprobe in a checkout (apps/worker/ffmpeg/build.sh; scripts/video-test.sh puts them there)
+/apps/worker/bin/

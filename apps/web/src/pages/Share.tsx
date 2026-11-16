@@ -3,7 +3,7 @@
 // browser POST to the share target, so this screen never sends on its own: it shows what arrived, and only the
 // person's tap on "Send to the Inbox" posts it to /api/shares (as Shelf's own page, with Shelf's Origin and the
 // session). An untouched share expires after an hour. Then it shows how the media worker gets on.
-// Without a pending share it is a form: a link, a note and images, by hand.
+// Without a pending share it is a form: a link, a note and images or videos, by hand.
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, message, type Share as ShareView } from '../api';
 import { Notice, PageHead } from '../ui';
@@ -23,7 +23,7 @@ function upload(form: FormData, onProgress: (sent: number, total: number) => voi
       let body: { id?: string; status?: string; error?: string } = {};
       try { body = JSON.parse(x.responseText) as typeof body; } catch { /* no body */ }
       if (x.status === 202 && typeof body.id === 'string') resolve({ id: body.id, status: body.status ?? 'received' });
-      else reject(new Error(body.error ?? (x.status === 413 ? 'Too many files, or one over 20 MB.' : x.status === 429 ? 'Too many shares; wait a few minutes.' : 'Shelf did not take the share.')));
+      else reject(new Error(body.error ?? (x.status === 413 ? 'Too many files, or too large: an image up to 20 MB, a video up to 64 MB, 100 MB together.' : x.status === 429 ? 'Too many shares; wait a few minutes.' : 'Shelf did not take the share.')));
     };
     x.onerror = () => reject(new Error('Shelf did not answer.'));
     x.send(form);
@@ -32,7 +32,7 @@ function upload(form: FormData, onProgress: (sent: number, total: number) => voi
 
 /** A share waits for the person's tap at most this long. */
 export const PENDING_MAX_AGE_MS = 3600_000;
-/** Send does nothing this soon after the confirmation opens. */
+/** Send does nothing this soon after the confirmation is shown (opened, or brought back into view). */
 const SEND_DELAY_MS = 1000;
 interface Pending { id: string; form: FormData; dropped: number }
 
@@ -116,11 +116,11 @@ export function Share({ go }: { go: (to: string) => void }) {
   const done = view?.progress.done ?? 0;
   const pct = sent && !shareId ? Math.round((sent.sent / Math.max(1, sent.total)) * 100) : total ? Math.round((done / total) * 100) : view ? 100 : 0;
   const what = !shareId ? 'Sending to Shelf' : !view ? 'Sent' : view.status === 'received' ? 'Waiting for the media worker'
-    : view.status === 'reading' ? `Re-encoding the images: ${done} of ${total}` : view.status === 'done' ? 'Done' : 'It could not be read';
+    : view.status === 'reading' ? `Reading the images and videos: ${done} of ${total}` : view.status === 'done' ? 'Done' : 'It could not be read';
 
   return (
     <>
-      <PageHead title="Share to Shelf" sub="A post’s images, its link and its caption go to your Inbox. Shelf never logs in to Instagram." />
+      <PageHead title="Share to Shelf" sub="A post’s images or video, its link and its caption go to your Inbox. Shelf never logs in to Instagram." />
       <div className="stack">
         {error && <Notice kind="error">{error}</Notice>}
         {(sent || shareId) && (
@@ -133,8 +133,8 @@ export function Share({ go }: { go: (to: string) => void }) {
               </div>
             </div>
             <p className="sr-only" role="status">{what}</p>
-            {view?.status === 'done' && <Notice kind="ok" title="In your Inbox.">{total ? `${total - (view.refused ?? 0)} of ${total} image${total === 1 ? '' : 's'} kept${view.refused ? `; ${view.refused} could not be read` : ''}.` : 'The link and the note are kept.'}</Notice>}
-            {view?.status === 'failed' && <Notice kind="error" title="Nothing was kept.">{view.error ?? 'The images could not be read.'}</Notice>}
+            {view?.status === 'done' && <Notice kind="ok" title="In your Inbox.">{total ? `${total - (view.refused ?? 0)} of ${total} file${total === 1 ? '' : 's'} kept${view.refused ? `; ${view.refused} could not be read` : ''}.` : 'The link and the note are kept.'}</Notice>}
+            {view?.status === 'failed' && <Notice kind="error" title="Nothing was kept.">{view.error ?? 'The files could not be read.'}</Notice>}
             {view && (view.status === 'done' || view.status === 'failed') && (
               <div className="btn-row">
                 <a className="btn btn-primary" href="/inbox" onClick={(e) => { e.preventDefault(); go('/inbox'); }}>Open the Inbox</a>
@@ -156,8 +156,8 @@ export function Share({ go }: { go: (to: string) => void }) {
               <textarea className="input textarea" id={`${id}-n`} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} />
             </div>
             <div className="field">
-              <label className="field-label" htmlFor={`${id}-f`}>Images (JPEG, PNG, WebP or GIF; up to 30)</label>
-              <input className="input" id={`${id}-f`} type="file" ref={files} multiple accept="image/jpeg,image/png,image/webp,image/gif" />
+              <label className="field-label" htmlFor={`${id}-f`}>Images or videos (JPEG, PNG, WebP, GIF; MP4, MOV, WebM; up to 30)</label>
+              <input className="input" id={`${id}-f`} type="file" ref={files} multiple accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" />
             </div>
             <div className="btn-row"><button type="submit" className="btn btn-primary">Send to the Inbox</button></div>
           </form>
@@ -170,12 +170,28 @@ export function Share({ go }: { go: (to: string) => void }) {
 function PendingShare({ p, onSend, onDiscard }: { p: Pending; onSend: () => void; onDiscard: () => void }) {
   const id = useId();
   const field = (k: string) => { const v = p.form.get(k); return typeof v === 'string' ? v : null; };
-  const images = p.form.getAll('media').filter((f) => typeof f !== 'string').length;
+  const files = p.form.getAll('media').filter((f) => typeof f !== 'string').length;
   // Focus goes to the heading, never to Send: another site can open this screen and time a keypress for it. And for a
-  // moment after it opens, Send ignores activation, as browsers do with permission prompts.
+  // moment after the screen is shown, Send is disabled (aria-disabled, so it stays in reach), as browsers do with
+  // permission prompts. "Shown" counts from when the person can see it: a screen opened in a background tab, or brought
+  // back from the browser's page cache, starts the moment again when it comes into view.
   const head = useRef<HTMLHeadingElement>(null);
-  const opened = useRef(Date.now());
-  useEffect(() => { head.current?.focus(); opened.current = Date.now(); }, []);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const restart = () => {
+      clearTimeout(timer);
+      setReady(false);
+      if (document.visibilityState === 'visible') timer = setTimeout(() => setReady(true), SEND_DELAY_MS);
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') restart(); else { clearTimeout(timer); setReady(false); } };
+    const onShow = (e: PageTransitionEvent) => { if (e.persisted) restart(); };
+    head.current?.focus();
+    restart();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onShow);
+    return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('pageshow', onShow); };
+  }, []);
   return (
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <h2 className="card-title" id={`${id}-h`} ref={head} tabIndex={-1}>Send this to your Inbox?</h2>
@@ -184,13 +200,14 @@ function PendingShare({ p, onSend, onDiscard }: { p: Pending; onSend: () => void
         {field('title') && <><dt>Title</dt><dd className="wrap">{field('title')}</dd></>}
         {field('url') && <><dt>Link</dt><dd className="wrap mono">{field('url')}</dd></>}
         {field('text') && <><dt>Text</dt><dd className="wrap">{field('text')}</dd></>}
-        <dt>Images</dt><dd>{images}</dd>
+        <dt>Images and videos</dt><dd>{files}</dd>
       </dl>
-      {p.dropped > 0 && <Notice kind="warn">{p.dropped} file{p.dropped === 1 ? ' was' : 's were'} over 20 MB and left out.</Notice>}
+      {p.dropped > 0 && <Notice kind="warn">{p.dropped} file{p.dropped === 1 ? ' was' : 's were'} over 64 MB and left out.</Notice>}
       <p className="footnote">Only one share waits here: sharing again replaces this one.</p>
+      {/* Discard first: the safe choice comes first in the tab order. */}
       <div className="btn-row">
-        <button type="button" className="btn btn-primary" onClick={() => { if (Date.now() - opened.current >= SEND_DELAY_MS) onSend(); }}>Send to the Inbox</button>
         <button type="button" className="btn" onClick={onDiscard}>Discard</button>
+        <button type="button" className="btn btn-primary" aria-disabled={!ready} onClick={() => { if (ready) onSend(); }}>Send to the Inbox</button>
       </div>
     </section>
   );

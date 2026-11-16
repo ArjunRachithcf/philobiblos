@@ -12,7 +12,7 @@ const KIND: Record<InboxItem['kind'], string> = {
   share: 'Shared', ai_suggestion: 'AI suggestion', unmatched_invoice_line: 'Invoice', unmatched_quote_line: 'Quote',
   unmatched_shop_line: 'Shop order', mail_failed: 'Could not read', mail_waiting: 'Waiting', mail_unverified: 'Not verified',
 };
-const SHARE_STATUS: Record<string, string> = { received: 'Waiting for the media worker', reading: 'Re-encoding the images', done: 'Received', failed: 'Failed' };
+const SHARE_STATUS: Record<string, string> = { received: 'Waiting for the media worker', reading: 'Reading the images and videos', done: 'Received', failed: 'Failed' };
 const chf = (c?: number | null) => (c == null ? null : `CHF ${(c / 100).toFixed(2)}`);
 const day = (iso?: string | null) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null; };
 

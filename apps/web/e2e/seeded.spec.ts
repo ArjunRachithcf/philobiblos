@@ -538,6 +538,29 @@ test('another website cannot post a share through the share target: the share sc
   for (const key of ['Enter', 'Space', 'Enter']) await other.keyboard.press(key);
   await other.waitForTimeout(1500);
   expect(posted).toEqual([]);
+  // Discard comes first in the tab order; Send says it is disabled while the moment after the screen is shown lasts
+  // (shelf#18), and that moment starts again whenever the screen comes back into view: another tab brought forward, or
+  // the page restored from the browser's page cache.
+  const send = other.getByRole('button', { name: 'Send to the Inbox' });
+  await other.keyboard.press('Tab');
+  await expect(other.getByRole('button', { name: 'Discard' })).toBeFocused();
+  await expect(send).toHaveAttribute('aria-disabled', 'false');
+  const setVisible = (v: boolean) => other.evaluate((visible) => {
+    Object.defineProperty(document, 'visibilityState', { value: visible ? 'visible' : 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, v);
+  await setVisible(false);
+  await expect(send).toHaveAttribute('aria-disabled', 'true');
+  await setVisible(true);
+  await expect(send).toHaveAttribute('aria-disabled', 'true');
+  // A click while it is disabled (forced: Playwright itself waits for an enabled button) sends nothing.
+  await send.click({ force: true });
+  await expect(send).toHaveAttribute('aria-disabled', 'false');
+  await other.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect(send).toHaveAttribute('aria-disabled', 'true');
+  await send.click({ force: true });
+  await other.waitForTimeout(300);
+  expect(posted).toEqual([]);
   const inbox = await (await page.request.get('/api/inbox?filter=shared')).json() as { items: { share?: { url?: string } }[] };
   expect(inbox.items.map((i) => i.share?.url)).not.toContain('https://evil.test/x');
   const landed = other.url();
@@ -550,8 +573,8 @@ test('another website cannot post a share through the share target: the share sc
   // Only an explicit activation of Send posts: once more from the other site, then a click on Send.
   await other.goto('http://evil.test/');
   await other.waitForURL(/\/share\?pending=[0-9a-f-]{36}$/);
-  await other.waitForTimeout(1200);
-  await other.getByRole('button', { name: 'Send to the Inbox' }).click();
+  await expect(send).toHaveAttribute('aria-disabled', 'false');
+  await send.click();
   await expect(other.getByText('In your Inbox.')).toBeVisible();
   expect(posted).toEqual(['POST']);
   const after = await (await page.request.get('/api/inbox?filter=shared')).json() as { items: { id: string; share?: { url?: string } }[] };

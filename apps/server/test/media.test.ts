@@ -97,6 +97,42 @@ describe('the media client', () => {
     await withWorker(answer, async (root) => expect(await runMediaJob(root, 'image.reencode', Buffer.from('x'), { pollMs: 10 })).toMatchObject({ ok: false, error: 'failed' }));
   });
 
+  // A video's frames: JPEGs back to back in one output file, their sizes and offsets in the result.
+  const frame = (w: number) => jpeg({ width: w });
+  const videoResult = (id: string, fs: Buffer[], over: (f: object, k: number) => object = (f) => f) =>
+    ({ id, ok: true, kind: 'video.frames', frames: fs.map((b, k) => over({ width: b.readUInt16BE(b.indexOf(Buffer.from([0xff, 0xc0])) + 7), height: 1, bytes: b.length, at: k * 2 }, k)) });
+
+  it('a video: its frames come back one by one, each walked as an image is', async () => {
+    const fs = [frame(2), frame(3), frame(4)];
+    await withWorker((id) => ({ result: videoResult(id, fs), output: Buffer.concat(fs) }), async (root) => {
+      const r = await runMediaJob(root, 'video.frames', Buffer.from('video'), { pollMs: 10 });
+      expect(r).toMatchObject({ ok: true, kind: 'video.frames', frames: [{ at: 0, width: 2 }, { at: 2, width: 3 }, { at: 4, width: 4 }] });
+      expect(r.images).toEqual(fs);
+    });
+  });
+
+  it.each([
+    ['one frame with EXIF in it', (id: string) => { const fs = [frame(2), jpeg({ app1: true })]; return { result: videoResult(id, fs), output: Buffer.concat(fs) }; }],
+    ['frames of other lengths than reported', (id: string) => { const fs = [frame(2), frame(3)]; return { result: videoResult(id, fs, (f, k) => ({ ...f, bytes: (f as { bytes: number }).bytes + (k ? -1 : 1) })), output: Buffer.concat(fs) }; }],
+    ['more bytes than the frames', (id: string) => { const fs = [frame(2)]; return { result: videoResult(id, fs), output: Buffer.concat([...fs, Buffer.from('the original video')]) }; }],
+    ['a frame of another size than reported', (id: string) => { const fs = [frame(2)]; return { result: videoResult(id, fs, (f) => ({ ...f, width: 9 })), output: Buffer.concat(fs) }; }],
+    ['offsets out of order', (id: string) => { const fs = [frame(2), frame(2)]; return { result: videoResult(id, fs, (f) => ({ ...f, at: 0 })), output: Buffer.concat(fs) }; }],
+    ['an offset past the longest video', (id: string) => { const fs = [frame(2)]; return { result: videoResult(id, fs, (f) => ({ ...f, at: 181 })), output: Buffer.concat(fs) }; }],
+    ['31 frames', (id: string) => { const fs = Array.from({ length: 31 }, () => frame(2)); return { result: videoResult(id, fs), output: Buffer.concat(fs) }; }],
+    ['no frames', (id: string) => ({ result: { id, ok: true, kind: 'video.frames', frames: [] }, output: Buffer.alloc(0) })],
+    ['a frame over 1280 pixels', (id: string) => { const fs = [frame(1281)]; return { result: videoResult(id, fs), output: Buffer.concat(fs) }; }],
+    ['a frame over 2 MB (clean otherwise)', (id: string) => { const j = frame(2); const fs = [Buffer.concat([j.subarray(0, -2), Buffer.alloc(2 * 1024 * 1024, 0x11), j.subarray(-2)])]; return { result: videoResult(id, fs), output: Buffer.concat(fs) }; }],
+    ['an image result for a video job', (id: string) => ({ result: imageResult(id), output: JPEG })],
+  ])('a video: %s: failed', async (_n, answer) => {
+    await withWorker(answer, async (root) => expect(await runMediaJob(root, 'video.frames', Buffer.from('x'), { pollMs: 10 })).toMatchObject({ ok: false, error: 'failed' }));
+  });
+
+  it('a video\'s own errors pass through: too long, too many pixels, not this type', async () => {
+    for (const error of ['too_long', 'too_many_pixels', 'not_this_type'] as const) {
+      await withWorker((id) => ({ result: { id, ok: false, error } }), async (root) => expect(await runMediaJob(root, 'video.frames', Buffer.from('x'), { pollMs: 10 })).toEqual(expect.objectContaining({ ok: false, error })));
+    }
+  });
+
   it('a clean JPEG passes the marker check; progressive frames and restarts too', () => {
     expect(cleanJpeg(JPEG, 2, 1)).toBe(true);
     expect(cleanJpeg(JPEG, 1, 2)).toBe(false);

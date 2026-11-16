@@ -133,11 +133,14 @@ All outgoing requests go through one HTTP client that allows only the hosts in t
   (`Authorization: Bearer`), created in Settings and shown once with a QR code (steps in `docs/phone-share.md`). The
   token is its id and 256 random bits, stored hashed, compared in constant time, can be revoked, and is write-only: it
   is accepted by `POST /api/shares` and nothing else (ADR 0009).
-- Images only for now (JPEG, PNG, WebP, GIF, by their bytes; the Shortcut converts photos to JPEG); video arrives with
-  M3 f. Until the AI reads shares (M3 g) a share is `done` once its images are re-encoded.
+- Images (JPEG, PNG, WebP, GIF; the Shortcut converts photos to JPEG) and videos (MP4, MOV or WebM with H.264, HEVC,
+  VP8 or VP9, up to 180 s and 4K), by their bytes. A video becomes a frame every ~2 s, at most 30 (further apart past a
+  minute), each a JPEG of at most 1280 pixels a side; its sound and the video itself are never kept. Until the AI reads
+  shares (M3 g) a share is `done` once its images are re-encoded and its videos' frames taken.
 - A share carries images, the link and the caption. Shelf never logs in to Instagram and never holds an Instagram
   session (ADR 0006); the link is stored as text and fetched only through oEmbed without a login, if at all.
-- Media are size-limited (20 MB per file, 30 files), type-checked by content, and processed in the media worker.
+- Media are size-limited (an image 20 MB, a video 64 MB, 100 MB a share, 30 files), type-checked by content, and processed in
+  the media worker.
 - The server stores media, queues `extractTitles`, and the share screen polls `/api/shares/{id}` for progress.
 
 ## Wishlist import (one-off, optional)
