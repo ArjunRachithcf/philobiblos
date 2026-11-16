@@ -2,7 +2,8 @@
 ARG NODE_IMAGE=node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 
 # The media worker's ffmpeg (apps/worker/ffmpeg/build.sh): FFmpeg's own release, pinned by its SHA-256, built with only
-# the containers, decoders and the one protocol a phone's video needs. The compilers stay in this stage.
+# the containers, decoders and the one protocol a phone's video needs. Bumping it: apps/worker/ffmpeg/verify.sh (the
+# release's signature, then the SHA-256 to pin). The compilers stay in this stage.
 FROM ${NODE_IMAGE} AS ffmpeg
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends gcc libc6-dev make nasm xz-utils >/dev/null && rm -rf /var/lib/apt/lists/*
 ADD --checksum=sha256:8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz /tmp/ffmpeg.tar.xz

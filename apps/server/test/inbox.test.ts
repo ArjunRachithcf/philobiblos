@@ -12,7 +12,7 @@ import type { Db } from '../src/db/open';
 import { MAX_COPIES, PAGE, UNVERIFIED_ID, mailItemId, shareItemId } from '../src/inbox/inbox';
 import { MediaUnavailable, type MediaOutcome, type runMediaJob } from '../src/media/client';
 import { refreshMail } from '../src/mail/job';
-import { SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, ShareProcessor, imageType, shareFileType } from '../src/shares/shares';
+import { SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, SHARE_UPLOADS, ShareProcessor, imageType, shareFileType } from '../src/shares/shares';
 import { MAX_LIVE_TOKENS, findShareToken } from '../src/shares/tokens';
 import { TOKEN_FAILURES } from '../src/auth/hook';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
@@ -214,6 +214,23 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
     expect((await share(a, [{ name: 'media', file: big(MP4, 51) }, { name: 'media', file: big(MP4, 50) }])).statusCode).toBe(413);
     expect(a.db.select().from(t.share).all()).toHaveLength(1);
   }, 30_000);
+
+  it('uploads stream to disk, a few at a time: past them, 429 and nothing read; a staged file is whole or not there', async () => {
+    const w = worker(() => 'unavailable');
+    const a = await app({ media: w.media });
+    SHARE_UPLOADS.active = SHARE_UPLOADS.max;
+    try {
+      expect((await share(a, [{ name: 'media', file: JPEG }])).statusCode).toBe(429);
+    } finally { SHARE_UPLOADS.active = 0; }
+    expect(existsSync(join(a.data, 'incoming'))).toBe(false);
+    const { id } = (await share(a, [{ name: 'media', file: JPEG }, { name: 'media', file: MP4 }])).json();
+    expect(readdirSync(join(a.data, 'incoming', id)).sort()).toEqual(['00.bin', '01.bin']);
+    expect(readFileSync(join(a.data, 'incoming', id, '01.bin'))).toEqual(MP4);
+    expect(SHARE_UPLOADS.active).toBe(0);
+    // refused after part of it was written: nothing of the share stays, no half file either
+    expect((await share(a, [{ name: 'media', file: JPEG }, { name: 'media', file: Buffer.concat([JPEG, Buffer.alloc(21 * 1024 * 1024)]) }])).statusCode).toBe(413);
+    expect(readdirSync(join(a.data, 'incoming'))).toEqual([id]);
+  });
 
   it('every file goes through the worker; only its JPEG is kept, the original deleted; progress counts kept and refused', async () => {
     const w = worker((b) => (b[0] === 0x89 ? { id: 'j', ok: false, error: 'too_many_pixels' } : { id: 'j', ok: true, kind: 'image.reencode', width: 10, height: 12, format: 'jpeg', bytes: OUT.length, image: OUT }));

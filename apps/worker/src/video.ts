@@ -133,8 +133,9 @@ export function decodeArgs(c: Container, p: Plan): string[] {
     '-nostdin', '-v', 'error', '-threads', '1', '-filter_threads', '1',
     ...inputArgs(c), '-max_pixels', String(MEDIA_LIMITS.videoMaxPixels), '-t', String(p.read), '-i', 'fd:',
     '-map', '0:v:0', '-an', '-sn', '-dn',
-    // Scaled down to fit `side`, never up.
-    '-vf', `fps=1/${p.every},scale=w=min(iw\\,${side}):h=min(ih\\,${side}):force_original_aspect_ratio=decrease,format=rgb24`,
+    // Scaled down to fit `side`, never up. Rounded up and passed at the end: the first frame is always kept, even of a
+    // video shorter than `every` (a browser's WebM has no duration, so `every` is 6 s).
+    '-vf', `fps=1/${p.every}:round=up:eof_action=pass,scale=w=min(iw\\,${side}):h=min(ih\\,${side}):force_original_aspect_ratio=decrease,format=rgb24`,
     '-frames:v', String(MEDIA_LIMITS.framesMax), '-c:v', 'ppm', '-f', 'image2pipe', 'fd:',
   ];
 }

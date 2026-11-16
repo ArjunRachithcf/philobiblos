@@ -202,7 +202,7 @@ function PendingShare({ p, onSend, onDiscard }: { p: Pending; onSend: () => void
         {field('text') && <><dt>Text</dt><dd className="wrap">{field('text')}</dd></>}
         <dt>Images and videos</dt><dd>{files}</dd>
       </dl>
-      {p.dropped > 0 && <Notice kind="warn">{p.dropped} file{p.dropped === 1 ? ' was' : 's were'} over 64 MB and left out.</Notice>}
+      {p.dropped > 0 && <Notice kind="warn">{p.dropped} file{p.dropped === 1 ? ' was' : 's were'} too large and left out (an image up to 20 MB, a video up to 64 MB, 100 MB together).</Notice>}
       <p className="footnote">Only one share waits here: sharing again replaces this one.</p>
       {/* Discard first: the safe choice comes first in the tab order. */}
       <div className="btn-row">

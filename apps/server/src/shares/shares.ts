@@ -11,7 +11,7 @@
 // while, the share waits, and gives up after a day.
 //
 // A share is its sharer's: only they see it (GET /shares/{id}, the Inbox); for anyone else it does not exist.
-import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, eq, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
@@ -34,11 +34,13 @@ export const SHARE_RATE = { max: 30, windowMs: 10 * 60_000 };
 export const SHARE_PATIENCE_MS = 24 * 3600_000;
 /** A file's size by its type, and a whole share's, bytes (the multipart limit is the largest, SHARE_LIMITS in app.ts). */
 export const SHARE_BYTES = { image: 20 * 1024 * 1024, video: 64 * 1024 * 1024, total: 100 * 1024 * 1024 } as const;
+/** Uploads read at once (each streams to disk, never held whole in memory); more wait their turn as 429. */
+export const SHARE_UPLOADS = { max: 4, active: 0 };
 /** Staged files that belong to no waiting share are deleted after this. */
 export const STAGED_MAX_AGE_MS = 3600_000;
 
 export class ShareError extends Error {
-  constructor(readonly status: 400 | 413 | 415 | 503, message: string) { super(message); }
+  constructor(readonly status: 400 | 413 | 415 | 429 | 503, message: string) { super(message); }
 }
 
 /** The image type of a file, from its first bytes; null for anything else (a video, a HEIC, a PDF, a script). */
@@ -50,6 +52,8 @@ export function imageType(b: Uint8Array): 'jpeg' | 'png' | 'webp' | 'gif' | null
   if (at(0, 0x47, 0x49, 0x46, 0x38) && (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61) return 'gif';
   return null;
 }
+
+const UNTYPED = new ShareError(415, 'only images (JPEG, PNG, WebP or GIF) and videos (MP4, MOV or WebM) are taken; convert a photo to JPEG first');
 
 /** What a shared file is, from its first bytes: an image or a video Shelf takes (videoContainer), or null. */
 export function shareFileType(b: Uint8Array): 'image' | 'video' | null {
@@ -83,6 +87,12 @@ const kept = (dataDir: string, id: string) => join(dataDir, 'shares', id);
  */
 export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: string; workDir: string | null; personId: string; now?: Date }): Promise<ShareRow> {
   if (!req.isMultipart()) throw new ShareError(400, 'a share is multipart/form-data');
+  if (SHARE_UPLOADS.active >= SHARE_UPLOADS.max) throw new ShareError(429, 'too many shares arriving at once: try again in a moment');
+  SHARE_UPLOADS.active++;
+  try { return await receive(req, db, o); } finally { SHARE_UPLOADS.active--; }
+}
+
+async function receive(req: FastifyRequest, db: Db, o: { dataDir: string; workDir: string | null; personId: string; now?: Date }): Promise<ShareRow> {
   const id = ulid();
   const dir = staging(o.dataDir, id);
   const fields: Partial<Record<keyof typeof SHARE_FIELDS, string>> = {};
@@ -98,20 +108,31 @@ export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: st
       const n = files++;
       // Without a worker nothing is staged: the files are read to their end and the share refused.
       if (!o.workDir) { for await (const _ of part.file) { /* drain */ } problem ??= new ShareError(503, 'media processing is unavailable here: share the link and the caption without files'); continue; }
-      // A share's files together within its limit: past it, the rest is read and dropped, never kept in memory.
-      const chunks: Buffer[] = [];
-      for await (const c of part.file) {
-        total += (c as Buffer).length;
-        if (total <= SHARE_BYTES.total && !problem) chunks.push(c as Buffer);
-      }
-      if (total > SHARE_BYTES.total) { problem ??= new ShareError(413, `a share's files: up to ${SHARE_BYTES.total / 1024 / 1024} MB together`); continue; }
-      if (problem) continue;
-      const bytes = Buffer.concat(chunks);
-      const type = shareFileType(bytes);
-      if (!type) { problem ??= new ShareError(415, 'only images (JPEG, PNG, WebP or GIF) and videos (MP4, MOV or WebM) are taken; convert a photo to JPEG first'); continue; }
-      if (bytes.length > SHARE_BYTES[type]) { problem ??= new ShareError(413, `${type === 'image' ? 'an image' : 'a video'}: up to ${SHARE_BYTES[type] / 1024 / 1024} MB`); continue; }
+      // Streamed to a fresh file in the staging folder as it arrives, counted as it goes: the type from the first
+      // bytes, then its own limit and the share's; past either, the rest is read and dropped, and the file deleted.
+      if (problem) { for await (const _ of part.file) { /* drain */ } continue; }
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      writeAtomic(join(dir, `${String(n).padStart(2, '0')}.bin`), bytes, 0o600);
+      const name = join(dir, `${String(n).padStart(2, '0')}.bin`), tmp = `${name}.part`;
+      const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      let size = 0, head = Buffer.alloc(0), type: 'image' | 'video' | null | undefined, err: ShareError | null = null;
+      try {
+        for await (const c of part.file) {
+          const b = c as Buffer;
+          total += b.length;
+          if (err) continue;
+          size += b.length;
+          if (head.length < 64) head = Buffer.concat([head, b.subarray(0, 64 - head.length)]);
+          if (type === undefined && head.length >= 64) type = shareFileType(head);
+          if (type === null) err = UNTYPED;
+          else if (total > SHARE_BYTES.total) err = new ShareError(413, `a share's files: up to ${SHARE_BYTES.total / 1024 / 1024} MB together`);
+          else if (size > SHARE_BYTES[type ?? 'video']) err = new ShareError(413, `${type === 'image' ? 'an image' : 'a video'}: up to ${SHARE_BYTES[type ?? 'video'] / 1024 / 1024} MB`);
+          else for (let off = 0; off < b.length;) off += writeSync(fd, b, off);
+        }
+      } finally { closeSync(fd); }
+      if (!err && type === undefined) type = shareFileType(head);
+      if (!err && !type) err = UNTYPED;
+      if (err) { rmSync(tmp, { force: true }); problem = err; continue; }
+      renameSync(tmp, name);
     }
     if (problem) throw problem;
     const url = cleanUrl(fields.url ? cleanText(fields.url, 'url', SHARE_FIELDS.url) : null);

@@ -1,7 +1,7 @@
 #!/bin/sh
 # The media worker's ffmpeg and ffprobe (ADR 0009), built from FFmpeg's release tarball (pinned in the Dockerfile by its
 # SHA-256; its signature was checked against FFmpeg's release key FCF986EA15E6E293A5644F10B4322F04D67658D8 when it was
-# pinned). Everything is off but what reading a phone's video needs, so the rest cannot be reached by any input:
+# pinned; `verify.sh VERSION` does that check for the next bump). Everything is off but what reading a phone's video needs, so the rest cannot be reached by any input:
 #
 # - containers: MP4/MOV (mov) and WebM/Matroska (matroska); no HLS, DASH, concat, image2 or anything with a playlist;
 # - video: H.264, HEVC, VP8, VP9 (all of FFmpeg's own decoders; no external library at all); no audio decoder;

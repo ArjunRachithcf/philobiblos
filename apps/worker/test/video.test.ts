@@ -125,6 +125,9 @@ beforeAll(() => {
   fx.thousand = make('thousand.mp4', ['-i', fx.tiny], [...Array.from({ length: 1000 }, () => ['-map', '0:v']).flat(), '-c', 'copy']);
   fx.long60 = make('long60.mp4', src('64x64', 2, 60), x264);
   fx.busy = make('busy.mp4', src('1280x720', 30, 60), x264);
+  // A browser's recording: WebM written as a stream, so no duration in it; half a second long.
+  fx.short = join(dir, 'short.webm');
+  writeFileSync(fx.short, execFileSync(MAKER, ['-v', 'error', ...src('64x64', 30, 0.5), '-c:v', 'libvpx', '-deadline', 'realtime', '-f', 'webm', '-'], { maxBuffer: 1 << 24 }));
   fx.faststart = make('fast.mp4', src('320x240', 10, 9), [...x264, '-g', '10', '-movflags', '+faststart']);
 });
 
@@ -191,7 +194,7 @@ describe('the rules, one by one (pure)', () => {
     expect([after('-max_pixels'), after('-t'), after('-map'), after('-frames:v'), after('-c:v'), after('-f')]).toEqual([String(3840 * 2160), '10', '0:v:0', '30', 'ppm', 'mov']);
     expect(a.indexOf('-t')).toBeLessThan(a.indexOf('-i')); // an input option: it stops the reading
     expect(['-an', '-sn', '-dn'].every((k) => a.includes(k))).toBe(true);
-    expect(after('-vf')).toBe('fps=1/2,scale=w=min(iw\\,1280):h=min(ih\\,1280):force_original_aspect_ratio=decrease,format=rgb24');
+    expect(after('-vf')).toBe('fps=1/2:round=up:eof_action=pass,scale=w=min(iw\\,1280):h=min(ih\\,1280):force_original_aspect_ratio=decrease,format=rgb24');
   });
 
   it('each process under rlimits: CPU, address space, no file it can write, few descriptors, no core; a caller only lowers them', () => {
@@ -258,6 +261,10 @@ describe.skipIf(!built)('videos: a frame every ~2 s, at most 30, each a fresh JP
 
   it.each([['HEVC in a MOV', 'hevc'], ['VP9 in a WebM', 'vp9'], ['VP8 in a WebM', 'vp8']])('%s', async (_n, k) => {
     expect(at((await job(fx[k]!)).r)).toEqual([0, 2]);
+  });
+
+  it('a WebM without a duration, shorter than a frame\'s spacing (6 s then): its first frame is kept', async () => {
+    expect(at((await job(fx.short!)).r)).toEqual([0]);
   });
 
   it('a tall phone video is scaled to 1280 on its long side', async () => {

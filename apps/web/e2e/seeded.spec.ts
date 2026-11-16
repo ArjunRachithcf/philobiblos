@@ -503,6 +503,9 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
     const f = new FormData();
     f.append('title', 'A post about gardens');
     f.append('text', 'Three books on the commons https://example.org/p/9');
+    // A photo over the image limit (but under a video's): left out by itself, never failing the share (shelf#20).
+    const big = new Uint8Array(21 * 1024 * 1024); big.set([0xff, 0xd8, 0xff, 0xe0]);
+    f.append('media', new File([big], 'big.jpg', { type: 'image/jpeg' }));
     return (await fetch('/share-target', { method: 'POST', body: f })).url;
   });
   expect(landed).toMatch(/\/share\?pending=[0-9a-f-]{36}$/);
@@ -510,6 +513,7 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
   // Nothing is sent until the person taps Send.
   await expect(page.getByRole('heading', { name: 'Send this to your Inbox?' })).toBeVisible();
   await expect(page.getByText('Three books on the commons https://example.org/p/9')).toBeVisible();
+  await expect(page.getByText('1 file was too large and left out', { exact: false })).toBeVisible();
   await expectAccessible(page, 'a share waiting for the tap');
   await page.getByRole('button', { name: 'Send to the Inbox' }).click();
   await expect(page.getByText('In your Inbox.')).toBeVisible();
