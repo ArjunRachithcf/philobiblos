@@ -30,6 +30,15 @@ export interface Config {
   egress: boolean;
   /** The household's Ollama (OLLAMA_URL), the one AI host Shelf may reach without an opt-in; from the environment only. */
   ollamaUrl: string | null;
+  /**
+   * The Shelf-only mailbox (ADR 0007): IMAP over TLS on 993, read-only. The password is a secret from the environment
+   * (SHELF_IMAP_PASSWORD or SHELF_IMAP_PASSWORD_FILE), never in the database, the API or a log. null: not set up.
+   */
+  imap: { host: string; user: string; password: { value: string } | { file: string }; folder: string } | null;
+  /** Mail providers whose ARC seal Shelf trusts for a forward that broke the bookshop's DKIM (SHELF_MAIL_ARC_SEALERS). */
+  arcSealers: string[];
+  /** The household's addresses the bookshop writes to (SHELF_MAIL_RECIPIENTS); a mail to anyone else is not taken. */
+  mailRecipients: string[];
 }
 
 /**
@@ -70,6 +79,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     workDir: env.SHELF_WORK_DIR ? resolve(env.SHELF_WORK_DIR) : null,
     egress: env.SHELF_EGRESS !== 'off',
     ollamaUrl: env.OLLAMA_URL ? parseOllama(env.OLLAMA_URL) : null,
+    imap: env.SHELF_IMAP_HOST && env.SHELF_IMAP_USER && (env.SHELF_IMAP_PASSWORD || env.SHELF_IMAP_PASSWORD_FILE) ? {
+      host: parseHost(env.SHELF_IMAP_HOST),
+      user: env.SHELF_IMAP_USER,
+      password: env.SHELF_IMAP_PASSWORD ? { value: env.SHELF_IMAP_PASSWORD } : { file: env.SHELF_IMAP_PASSWORD_FILE! },
+      folder: env.SHELF_IMAP_FOLDER || 'INBOX',
+    } : null,
+    mailRecipients: (env.SHELF_MAIL_RECIPIENTS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter((d) => /^[^@\s]+@[^@\s]+$/.test(d)),
+    arcSealers: (env.SHELF_MAIL_ARC_SEALERS ?? 'google.com').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
   };
 }
 
@@ -87,4 +104,10 @@ function parseOllama(v: string): string {
   const u = new URL(v);
   if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password) throw new Error(`OLLAMA_URL must be http(s)://host[:port] without credentials`);
   return u.origin;
+}
+
+/** A host name only (no scheme, port or path): the IMAP port is always 993. */
+function parseHost(v: string): string {
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v)) throw new Error('SHELF_IMAP_HOST must be a host name, e.g. imap.gmail.com (the port is always 993)');
+  return v.toLowerCase();
 }

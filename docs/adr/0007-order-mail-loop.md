@@ -12,6 +12,11 @@ out through a **Compose** action: a `mailto:` link with the text filled in, open
 - Every mail is hostile input: the bookshop's sender and its DKIM (or the forwarder's ARC result for it) must pass
   before a mail has any effect; links in mail are never followed; PDFs are parsed in the media worker
   (`contracts/connectors.md`, ADR 0009).
+- **No mail text is stored** (2026-11-16, M3 c): only structured fields extracted from verified bookshop mail (order
+  number, date, line items, totals, status) and the headers that tie a mail to an order. Free text always holds
+  something of the household's in a spelling no filter catches; the mailbox itself keeps the mail, read-only, for a
+  parser to read again. String fields still pass a filter (the sealed delivery address, long digit runs) as a second
+  defence.
 - Parsers (versioned, with anonymised fixtures): English Bookshop quote replies, online order confirmations,
   click & collect confirmations, invoice PDFs (line items: EAN, title, qty, price).
 - Matching: EAN first, then normalised title + author. Unmatched lines go to the Inbox for a person to resolve.

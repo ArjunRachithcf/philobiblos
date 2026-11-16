@@ -1,4 +1,4 @@
--- Shelf database schema v7 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Shelf database schema v8 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -240,6 +240,14 @@ CREATE TABLE mail_seen (                   -- IMAP messages already read (ADR 00
   message_id TEXT PRIMARY KEY NOT NULL, kind TEXT NOT NULL, parsed_json TEXT, parser_version TEXT NOT NULL, seen_at TEXT NOT NULL,
   auth_json  TEXT,                         -- sender, DKIM and ARC results as checked; nothing acts on a mail that fails them
   accepted   INTEGER NOT NULL DEFAULT 0    -- 1 only if the sender and authentication checks passed
+);
+
+CREATE TABLE mail_cursor (                 -- where the mail reader stopped, per folder (ADR 0007)
+  folder       TEXT PRIMARY KEY NOT NULL,
+  uid_validity INTEGER NOT NULL,           -- the folder's UIDVALIDITY; when it changes, reading starts over (mail_seen keeps it idempotent)
+  last_uid     INTEGER NOT NULL,
+  config_key   TEXT NOT NULL,              -- the checks' settings it read under; when they change, the window is read again
+  updated_at   TEXT NOT NULL
 );
 
 CREATE TABLE share_token (                 -- phone share tokens (ADR 0009): per person, write-only to /api/shares

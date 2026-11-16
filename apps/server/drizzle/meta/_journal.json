@@ -50,6 +50,13 @@
       "when": 1794790139448,
       "tag": "0006_book_meta",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794795281246,
+      "tag": "0007_mail_cursor",
+      "breakpoints": true
     }
   ]
 }

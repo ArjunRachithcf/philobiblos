@@ -70,6 +70,16 @@ jobs:
       - run: pnpm --filter @shelf/web exec playwright install --with-deps chromium
       - run: pnpm --filter @shelf/web e2e
 
+  imap:
+    name: Mail read from a real IMAP server (GreenMail)
+    runs-on: ubuntu-24.04
+    needs: check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: ./scripts/imap-test.sh
+
   smoke:
     name: Image starts standalone and with the HomersLab manifest
     runs-on: ubuntu-24.04

@@ -13,13 +13,36 @@ as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), rea
 
 **Every mail is hostile input.** Forwarded mail can be spoofed, so before a mail has any effect:
 
-- the original sender (the forwarded `From`, and `Return-Path`/`Sender` where present) must be the bookshop's domain;
+- the original sender (the forwarded `From`, exactly one address, and `Sender` where present) must be the bookshop's
+  domain; `Return-Path` is not checked, because a forwarding filter rewrites it to the forwarder (SRS) (M3 c);
+- it must be addressed (To or Cc) to the household (`SHELF_MAIL_RECIPIENTS`, or the mailbox itself), so a genuine
+  bookshop mail to someone else cannot be replayed into Shelf;
+- what Shelf reads from the headers must be what was signed: a header that may appear once appears once, the passing
+  signature covers From, To, Subject, Date, Message-ID, MIME-Version and Content-Type (and Cc, Sender, Reply-To,
+  In-Reply-To, References and Content-Transfer-Encoding when present) and no fewer instances than the mail has, and
+  a signature over part of the body (`l=`) does not count;
 - the DKIM signature of the bookshop's domain must pass, or, for a forward that broke it, the `ARC-Authentication-Results`
   of the forwarding provider must show `dkim=pass` for that domain; a mail that fails, or has neither, is stored with
-  `accepted = 0` and shown in the Inbox as "not verified", and changes nothing;
+  `accepted = 0` and shown in the Inbox as "not verified", and changes nothing (and none of its content is kept). The
+  forwarding providers whose ARC seal counts are `SHELF_MAIL_ARC_SEALERS` (default `google.com`); DNS is asked only for
+  DKIM key records (`<selector>._domainkey.<domain>`, a few per mail), never SPF, DMARC or anything a mail names;
+- the header block must be strict RFC 5322 (every line a field, `name:` of printable ASCII, or a continuation; no NUL,
+  no lone CR): a line a parser cannot read would end the headers there and turn the signed ones into body; and the
+  Subject, Message-ID, From, Date and In-Reply-To the MIME parser read must equal those of the verified block;
+- **no mail text is stored** (decided 2026-11-16, PR #12): a mail's free text always carries something of the
+  household's (the delivery address, names, a card number quoted back) in more spellings than a filter can find. A
+  verified mail keeps its Message-ID, In-Reply-To, date, subject (through the field filter below), how many PDFs it has
+  and where it is in the mailbox (UIDVALIDITY, UID); the parsers (M3 d) read it again from the mailbox, in memory, and
+  keep only structured fields: order number, date, line items (title, author, ISBN, quantity, price), totals and
+  status. Every string field passes a filter as a second defence: after NFKC and with format characters stripped, a
+  field holding a piece of the sealed delivery address, or a run of 12 or more digits whatever separates them (other
+  than an ISBN/EAN as the whole field), is dropped;
+- only a verified mail claims its Message-ID (an unverified one is kept under a hash of its bytes, so a forgery cannot
+  shadow the genuine mail); the first run reads the last 90 days, by UID SEARCH; when the checks' settings change, that
+  window is read again;
 - links in mail are never followed, fetched or shown as clickable; images are not loaded;
-- bodies are parsed as text with size limits (1 MB per mail, 10 MB per attachment, only `application/pdf` attachments
-  are read); PDFs are parsed in the media worker (ADR 0009), never in the server process;
+- MIME is parsed with limits (25 MB per mail, depth 8, 64 parts, 256 KB of headers, no nested message); only
+  `application/pdf` attachments (by their bytes, 10 MB) are read, in the media worker (ADR 0009), never in the server;
 - what the parsers extract only proposes changes to Shelf's own records (prices, quote states, copies); it never
   creates people, settings or outgoing mail.
 

@@ -65,7 +65,9 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db) {
         }
       }
       const order = { bookshopEmail: email, hasDelivery: isSealed(db, SEALED.deliveryAddress), canSeal: problem === null, ...(problem ? { keyProblem: problem } : {}), needsReentry };
-      return { ...ex.settings, budget: getBudget(db), person: personSettings(getPerson(db, req.caller!.personId)!), order };
+      // The mailbox as configured in the environment (its password never leaves it).
+      const mail = { host: cfg.imap?.host ?? '', port: 993, user: cfg.imap?.user ?? '', folder: cfg.imap?.folder ?? 'INBOX', configured: cfg.imap != null };
+      return { ...ex.settings, budget: getBudget(db), person: personSettings(getPerson(db, req.caller!.personId)!), order, mail };
     } catch (e) { return fail(reply, e); }
   });
   app.patch<{ Body: { person?: unknown; budget?: unknown; order?: unknown } }>('/settings', async (req, reply) => {
