@@ -23,10 +23,15 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
 - **A household of one** is a whole install: one admin, no family features until a second person exists (ADR 0011).
 - **Joining** (ADR 0011): standalone, an admin invites a person or makes a join link (7 days, 5 uses, revocable, rate
   limited); who opens it enrols a passkey and waits (at most 10 waiting) for an admin to approve them, as an adult by
-  default. Rules an admin sets (a verified mail domain, the household's networks) can only narrow, and accept a match as
-  an adult with use at once, never as an admin; the default is the home network plus approval. Under HomersLab the edge
+  default (every approve and decline with a fresh sign-in). Rules an admin sets (a verified mail domain, the
+  household's networks) can only narrow, and accept a match as an adult with use at once, never as an admin; the
+  default is the home network plus approval, and with no network listed no link can be made. Under HomersLab the edge
   signs people in; only people it sends arrive, each waits for a Philobiblos admin, Homeward admins are approved
-  automatically, and nobody's role is above their Homeward role. A waiting person can use nothing. Open sign-up never.
+  automatically, and nobody's role is above their Homeward role (a promotion there never raises it by itself). A
+  waiting person can use nothing. Open sign-up never.
+- **Themes and ideas**: an adult's picked theme is an idea in their own brain, confirmed by them, with no books yet
+  (shown as a gap). It counts at once as confirmed; the weight it carries in §6's scores comes with new rows in
+  `contracts/scoring-vectors.json` (philobiblos#34 slice 5), and until then it changes no score.
 - **Visibility**: owned and read books are the household's; a person's themes, ideas, takeaways and sentences are theirs
   unless they share them.
 - **Adults** each have their own brain, picks and reading status. One shared monthly budget.

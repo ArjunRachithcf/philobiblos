@@ -10,8 +10,11 @@ Status: **Accepted** · 2026-11-15
 > - **Standalone, everyone else**: besides an admin's invites, an admin may make household join links (7 days, 5 uses,
 >   revocable); who opens one enrols a passkey and waits for an admin, unless a rule accepts them as an adult.
 > - **HomersLab**: a person the edge sends for the first time is no longer added with the role it sends. They wait for
->   a Philobiblos admin's approval, except a Homeward admin, who is approved as admin, and their role never goes above
->   the Homeward one.
+>   a Philobiblos admin's approval, except a Homeward admin, who is approved as admin. After that a person follows
+>   HomersLab's name, but not its role: the role is capped at the Homeward one, not copied, so a demotion lowers it and
+>   a promotion never raises it by itself. Household editing still answers 409 there, except approving and declining
+>   waiting people and setting a role within the ceiling (each with a fresh sign-in: the edge's recent sign-in signal,
+>   or a Philobiblos step-up).
 > - **Considered**, magic links: Philobiblos may now send mail, but only a code that proves an address for a join rule.
 >   It is never a sign-in; the passkey still is.
 
