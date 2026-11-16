@@ -61,7 +61,8 @@ CREATE TABLE household_settings (
   cycle_day         INTEGER NOT NULL DEFAULT 1,
   cycle_time        TEXT NOT NULL DEFAULT '20:17',
   timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',
-  ai_models_json    TEXT NOT NULL DEFAULT '{}'  -- the AI's models (Ollama's text and vision model, Claude's); the Claude key is sealed, never here
+  ai_models_json    TEXT NOT NULL DEFAULT '{}',  -- the AI's models (Ollama's text and vision model, Claude's); the Claude key is sealed, never here
+  ai_leaves_accepted TEXT                       -- JSON: the lines of what leaves with Claude an admin accepted; Claude runs only while they cover it
 );
 
 CREATE TABLE month_override (             -- "just this month" budget changes

@@ -249,7 +249,8 @@ test('the AI: Ollama by default; Claude only after the list of what leaves is ti
   await expect(card.getByText(/nothing leaves your home network/)).toBeVisible();
   await card.getByLabel('Provider').selectOption('claude');
   await expect(card.getByText('With Claude, this goes to Anthropic:')).toBeVisible();
-  await expect(card.getByText(/Never: names of people or kids/)).toBeVisible();
+  await expect(card.getByText(/Never: anyone's name, the delivery address/)).toBeVisible();
+  await expect(card.getByText(/One adult's read books, up to 60/)).toBeVisible();
   await card.getByLabel(/Anthropic API key/).fill('sk-ant-e2e-' + 'x'.repeat(30));
   await card.getByRole('button', { name: 'Save the AI settings' }).click();
   await expect(card.getByRole('alert')).toContainText('Tick that you read');
