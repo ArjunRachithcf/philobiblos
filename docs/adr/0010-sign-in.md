@@ -14,7 +14,7 @@ Status: **Accepted** · 2026-11-15
 >   HomersLab's name, but not its role: the role is capped at the Homeward one, not copied, so a demotion lowers it and
 >   a promotion never raises it by itself. Household editing still answers 409 there, except approving and declining
 >   waiting people and setting a role within the ceiling (each with a fresh sign-in: the edge's recent sign-in signal,
->   or a Philobiblos step-up).
+>   ArjunRachithcf/homeward#253; refused until the edge sends it).
 > - **Considered**, magic links: Philobiblos may now send mail, but only a code that proves an address for a join rule.
 >   It is never a sign-in; the passkey still is.
 

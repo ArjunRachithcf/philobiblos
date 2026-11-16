@@ -30,7 +30,8 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
   automatically, and nobody's role is above their Homeward role (a promotion there never raises it by itself). A
   waiting person can use nothing. Open sign-up never.
 - **Themes and ideas**: an adult's picked theme is an idea in their own brain, confirmed by them, with no books yet
-  (shown as a gap). It counts at once as confirmed; the weight it carries in §6's scores comes with new rows in
+  (shown as a gap). It stays private to them: not in the shared vocabulary, and nobody else sees, merges or renames
+  it until they share it. It counts at once as confirmed; the weight it carries in §6's scores comes with new rows in
   `contracts/scoring-vectors.json` (philobiblos#34 slice 5), and until then it changes no score.
 - **Visibility**: owned and read books are the household's; a person's themes, ideas, takeaways and sentences are theirs
   unless they share them.

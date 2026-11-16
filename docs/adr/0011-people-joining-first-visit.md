@@ -15,7 +15,8 @@ ADR 0010 (who is added under HomersLab, and how), which say so where they differ
 - **Kids** stay profiles run by adults and never sign in before the first release (ADR 0010).
 - **What others see** (as before): owned and read books are visible to the household; a person's themes, their ideas
   and the density of their brain, their takeaways and their sentences (below) are private unless they share them. The
-  vocabulary of idea names stays shared (ADR 0005).
+  vocabulary of idea names stays shared (ADR 0005), but a theme a person picks or types is not part of it: nobody
+  else can see, merge or rename it until its owner shares it.
 
 ## Joining, standalone
 
@@ -32,9 +33,10 @@ ADR 0010 (who is added under HomersLab, and how), which say so where they differ
   never the reason to approve. A waiting person can use nothing: one "waiting" page, no household data, nothing they
   add is stored. A decline, or 7 days unanswered, deletes the request and its passkey.
 - **Fresh sign-in**: standalone, a sign-in in the last 10 minutes (ADR 0010). Under HomersLab, where Philobiblos has no
-  sessions of its own, the edge's signal that the person signed in recently; where the edge sends none, a Philobiblos
-  step-up before the change (philobiblos#34 slice 1). Either way the request is a change and carries Philobiblos's
-  own `Origin`.
+  sessions of its own, the edge's signal that the person signed in recently (ArjunRachithcf/homeward#253).
+  Philobiblos has no step-up of its own there (its passkeys are off): until the edge sends the signal, approve and
+  decline under HomersLab are refused (fail closed; philobiblos#34 slice 1). Either way the request is a change
+  and carries Philobiblos's own `Origin`.
 - **Rate limits** on opening a link, joining and asking for a code, per client address and per link; an unknown,
   expired, revoked, used-up or out-of-network link gets the same answer (no enumeration). Revoking a link declines its
   waiting people. An admin who is removed or stops being one takes their links along, like their invites.
@@ -77,7 +79,9 @@ ADR 0010 (who is added under HomersLab, and how), which say so where they differ
   kids.
 - **Starter themes** ship with Philobiblos: about 30 adult themes and the kids' themes by age band (spec §7), in
   translatable files. Anyone may type their own.
-- **Picked themes count at once** (the person chose them; nothing to confirm).
+- **Picked themes count at once** (the person chose them; nothing to confirm). A picked or typed theme stays private to
+  its owner: it is not in the shared idea vocabulary, and nobody else can see, merge or rename it until its owner
+  shares it.
 - **Imports**: Goodreads CSV, StoryGraph CSV, a generic CSV (title, author, ISBN), and pasted ISBNs or titles. Barcode
   scanning comes later. Imported books are **read, not owned**, unless the person ticks "I own these". Unmatched rows go
   to the Inbox.
@@ -110,15 +114,20 @@ These follow from the answers above and are the maintainer's to change:
 - **Revoking a link declines its waiting people** (a revoked link is one an admin no longer trusts).
 - A link may be set to **refuse non-matches** instead of letting them wait.
 - The code: **10 minutes, 5 tries, one live code per address**, bound to the join request that asked for it, at most 3
-  codes an hour and 10 a day per address (50 tries a day at most, against a million codes), compared in constant time.
-  Its HMAC key is derived from the sealing key with its own label (`join-code`), so there is no new secret to keep.
+  codes an hour and 10 a day per address, and at most 30 a day per household and 10 a day per join link, so made-up
+  addresses at the rule's domain still get at most 150 tries a day against a household (against a million codes);
+  compared in constant time. Its HMAC key is derived from the sealing key with HKDF-SHA-256 (`info = "join-code"`), so
+  the sealing key is never an HMAC key itself and there is no new secret to keep.
 - The address being verified is kept on the join request only; once the request is decided or lapses it is deleted,
   and an accepted person keeps only the domain that matched.
 - **Homeward admins arrive as Philobiblos admins**: Q3 says "approved automatically"; the role follows from ADR 0010's
   earlier behaviour and the ceiling.
 - **A Homeward promotion never raises a Philobiblos role by itself.**
 - **Every approve and decline needs a fresh sign-in**, in both modes; under HomersLab "fresh" is the edge's recent
-  sign-in signal, or a Philobiblos step-up where it sends none.
+  sign-in signal (ArjunRachithcf/homeward#253), and without it approve and decline are refused (no step-up of
+  Philobiblos's own).
+- **A picked or typed theme stays private to its owner** until shared: not in the shared vocabulary, never merged,
+  renamed or seen by anyone else (Q6).
 
 **Considered**: open sign-up (anyone who finds the address joins); magic links by mail instead of passkeys (the mail
 would become the sign-in, ADR 0010); GPS or IP geolocation for "location" (spoofable, and more than Philobiblos needs to
