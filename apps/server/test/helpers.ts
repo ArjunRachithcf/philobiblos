@@ -78,7 +78,7 @@ export const SHARE_ID = '01JC0000000000000000000000';
 
 /** Path parameters that name something real in household() (and leave the signed-in admin alone). */
 const PARAMS: Record<string, Record<string, string>> = {
-  getBrain: { personId: 'p_alex' }, reviewLink: { fromBook: 'b_ledger', toBook: 'b_tide' }, reviewBookIdea: { bookId: 'b_tide', ideaId: 'i_markets' }, editIdea: { ideaId: 'i_markets' },
+  getBrain: { personId: 'p_alex' }, reviewLink: { fromBook: 'b_ledger', toBook: 'b_tide' }, reviewBookIdea: { bookId: 'b_tide', ideaId: 'i_markets' }, reviewIdeaProposal: { proposalId: 'ip_tide' }, editIdea: { ideaId: 'i_markets' },
   undoMerge: { mergeId: 'm_old' },
   getOrder: { id: 'o_old' }, getMonth: { month: THIS_MONTH }, setMonthBudget: { month: THIS_MONTH }, changePicks: { month: THIS_MONTH },
   renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
@@ -90,7 +90,7 @@ const PARAMS: Record<string, Record<string, string>> = {
 /** Request bodies that name something real in household() where a sample would be refused. */
 const BODIES: Record<string, unknown> = {
   bulkBacklog: { ids: ['p_alex.b_tide'], action: 'reopen' },
-  reviewLink: { state: 'confirmed' }, reviewBookIdea: { state: 'confirmed' }, editIdea: { name: 'Markets and value' },
+  reviewLink: { state: 'confirmed' }, reviewBookIdea: { state: 'confirmed' }, reviewIdeaProposal: { state: 'confirmed' }, editIdea: { name: 'Markets and value' },
   addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
   decideFound: { action: 'skip' },
   setMonthBudget: { min: 10000, max: 15000 }, changePicks: { recompute: true }, createOrderDraft: { month: THIS_MONTH },
@@ -151,6 +151,8 @@ export function household(): Db {
   db.insert(t.idea).values({ id: 'i_markets', name: 'Markets and value' }).run();
   db.insert(t.bookIdea).values({ bookId: 'b_tide', ideaId: 'i_markets', layer: 'core', confidence: 0.5, state: 'proposed' }).run();
   db.insert(t.idea).values({ id: 'i_old', name: 'Prices', mergedInto: 'i_markets' }).run();
+  // A new idea the AI proposed: a name only, no idea row.
+  db.insert(t.ideaProposal).values({ id: 'ip_tide', bookId: 'b_tide', name: 'Tides of trade', layer: 'deep', confidence: 0.6 }).run();
   db.insert(t.ideaMerge).values({ id: 'm_old', ideaId: 'i_old', intoId: 'i_markets', mergedBy: 'p_alex', mergedAt: now }).run();
   db.insert(t.order).values({ id: 'o_old', month: '2026-01', status: 'closed', createdAt: now }).run();
   db.insert(t.orderLine).values({ orderId: 'o_old', bookId: 'b_ledger', forPerson: 'p_alex', estimateC: 3000, state: 'delivered' }).run();

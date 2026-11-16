@@ -1,6 +1,7 @@
 // Waiting for a decision (ADR 0005): ideas proposed for books and links between books, until a person confirms or
 // rejects them; moving an idea to another layer confirms it there. A proposal written from someone's takeaways is
-// theirs alone: the server sends it only to them, marked "Only you see this".
+// theirs alone: the server sends it only to them, marked "Only you see this". A new idea the AI proposed is a name
+// only: it becomes one of the household's ideas when a person confirms it here, and never otherwise.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, message, type Layer, type Proposals as Data } from '../api';
 import { MenuButton, Notice, PageHead } from '../ui';
@@ -8,6 +9,7 @@ import { LAYERS } from './Brain';
 
 type IdeaP = Data['ideas'][number];
 type LinkP = Data['links'][number];
+type NewP = Data['newIdeas'][number];
 
 const authors = (b: { authors?: string[] }) => (b.authors?.length ? ` by ${b.authors.join(', ')}` : '');
 
@@ -19,6 +21,7 @@ export function Proposals() {
   const refocus = useRef<{ list: string; at: number } | null>(null);
   const ideasRef = useRef<HTMLElement>(null);
   const linksRef = useRef<HTMLElement>(null);
+  const newRef = useRef<HTMLElement>(null);
 
   const load = useCallback(() => api<Data>('/proposals').then(setData, (e) => setError(message(e))), []);
   useEffect(() => { void load(); }, [load]);
@@ -27,13 +30,13 @@ export function Proposals() {
     const r = refocus.current;
     if (!r || !data) return;
     refocus.current = null;
-    const sec = (r.list === 'ideas' ? ideasRef : linksRef).current;
+    const sec = (r.list === 'ideas' ? ideasRef : r.list === 'new' ? newRef : linksRef).current;
     const rows = sec?.querySelectorAll<HTMLElement>('[data-row]') ?? [];
     const row = rows[Math.min(r.at, rows.length - 1)];
     (row?.querySelector<HTMLElement>('.pr-confirm') ?? sec?.querySelector<HTMLElement>('h2'))?.focus();
   }, [data]);
 
-  const decide = async (list: 'ideas' | 'links', at: number, path: string, body: object, said: string) => {
+  const decide = async (list: 'ideas' | 'links' | 'new', at: number, path: string, body: object, said: string) => {
     setError(null);
     setBusy(true);
     try {
@@ -47,6 +50,11 @@ export function Proposals() {
     const what = `${p.idea.name} on ${p.book.title}`;
     const said = body.layer ? `${what}: confirmed, ${LAYERS.find(([l]) => l === body.layer)![1]} layer.` : `${what}: ${body.state}.`;
     return decide('ideas', at, `/books/${encodeURIComponent(p.book.id)}/ideas/${encodeURIComponent(p.idea.id)}`, body, said);
+  };
+  const fresh = (p: NewP, at: number, body: { state?: 'confirmed' | 'rejected'; layer?: Layer }) => {
+    const what = `the new idea ${p.name} on ${p.book.title}`;
+    const said = body.layer ? `${what}: confirmed, ${LAYERS.find(([l]) => l === body.layer)![1]} layer.` : `${what}: ${body.state}.`;
+    return decide('new', at, `/idea-proposals/${encodeURIComponent(p.id)}`, body, said);
   };
   const link = (p: LinkP, at: number, state: 'confirmed' | 'rejected') =>
     decide('links', at, `/links/${encodeURIComponent(p.from.id)}/${encodeURIComponent(p.to.id)}`, { state }, `${p.from.title} to ${p.to.title}: ${state}.`);
@@ -64,6 +72,14 @@ export function Proposals() {
               {data.ideas.length ? (
                 <ul className="group" role="list">
                   {data.ideas.map((p, at) => <IdeaRow key={`${p.book.id}:${p.idea.id}`} p={p} busy={busy} onDecide={(body) => void idea(p, at, body)} />)}
+                </ul>
+              ) : <p className="group-foot">Nothing is waiting.</p>}
+            </section>
+            <section className="group-block" ref={newRef} aria-labelledby="pr-new-h">
+              <div className="group-head"><h2 id="pr-new-h" tabIndex={-1}>New ideas</h2><span>{data.newIdeas.length}</span></div>
+              {data.newIdeas.length ? (
+                <ul className="group" role="list">
+                  {data.newIdeas.map((p, at) => <IdeaRow key={p.id} p={{ ...p, idea: { id: p.id, name: p.name } }} fresh busy={busy} onDecide={(body) => void fresh(p, at, body)} />)}
                 </ul>
               ) : <p className="group-foot">Nothing is waiting.</p>}
             </section>
@@ -92,13 +108,13 @@ function Pills({ fromAi, onlyYou }: { fromAi: boolean; onlyYou: boolean }) {
   );
 }
 
-function IdeaRow({ p, busy, onDecide }: { p: IdeaP; busy: boolean; onDecide: (b: { state?: 'confirmed' | 'rejected'; layer?: Layer }) => void }) {
+function IdeaRow({ p, busy, fresh = false, onDecide }: { p: IdeaP; busy: boolean; fresh?: boolean; onDecide: (b: { state?: 'confirmed' | 'rejected'; layer?: Layer }) => void }) {
   const what = `${p.idea.name} on ${p.book.title}`;
   return (
     <li className="row pr-row" data-row>
       <span className="row-main">
         <span className="row-title wrap">{p.book.title}<span className="row-sub">{authors(p.book)}</span></span>
-        <span className="row-sub wrap">Idea: <b>{p.idea.name}</b>, {LAYERS.find(([l]) => l === p.layer)?.[1]} layer · {Math.round(p.confidence * 100)}% sure</span>
+        <span className="row-sub wrap">{fresh ? 'A new idea' : 'Idea'}: <b>{p.idea.name}</b>, {LAYERS.find(([l]) => l === p.layer)?.[1]} layer · {Math.round(p.confidence * 100)}% sure</span>
         <Pills fromAi={p.fromAi} onlyYou={p.onlyYou} />
       </span>
       <span className="row-trail pr-trail">

@@ -37,7 +37,7 @@ export const DEFAULT_ADULT_WEIGHTS: AdultWeights = {
 };
 
 export interface AdultCandidateFacts {
-  /** Read books of the person that the candidate builds on (confirmed BookIdea or confidence ≥ 0.8). */
+  /** Read books of the person that the candidate builds on (confirmed, or one of the seed's guesses at ≥ 0.8; never an AI proposal on its own: spec §6). */
   links: number;
   /** Distinct ideas of the person touched by those links, minus one (never below 0). */
   bridge: number;

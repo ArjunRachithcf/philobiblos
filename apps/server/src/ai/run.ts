@@ -4,7 +4,8 @@
 //   `<untrusted>` blocks). Takeaways can be in it only when the caller says whose (`takeawaysOf`): the run then carries
 //   it, and what it proposes is private to that person (knowledge/from-run.ts).
 // - Bounded: the prompt's size, the images (count, bytes, JPEG only), the answer's size, a deadline per call, and the
-//   caller's budget of calls and tokens for its whole job run.
+//   caller's budget of calls and tokens for its whole job run, and with Claude the household's daily allowance across
+//   every run (ai/spend.ts): a call that could go past it is not made.
 // - The answer is data: parsed, validated against contracts/ai/<job>.schema.json, cleaned by the job (ids only from the
 //   input, one-line texts), every string through `safeField` (no piece of the delivery address, no long digit runs), and
 //   validated again. Invalid or failed: tried once more, then the run is logged as failed.
@@ -19,6 +20,8 @@ import { JOBS, ModelError, buildPrompt, holdsTakeaways, wireSchema, type JobIO, 
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { safeField } from '../mail/read';
+import { getAi } from './settings';
+import { SPEND, spentToday } from './spend';
 
 export const AI_LIMITS = {
   /** Characters of the system and user message together. */
@@ -29,6 +32,9 @@ export const AI_LIMITS = {
   imageBytes: 24 << 20,
   timeoutMs: { ollama: 180_000, claude: 90_000, fake: 5_000 } as Record<Model['provider'], number>,
 } as const;
+
+/** What calls in flight hold reserved against the allowance (ai/spend.ts), per database. */
+const reserved = new WeakMap<Db, number>();
 
 /** A job run's allowance: calls and tokens (input and output) across every AI call it makes. */
 export class AiBudget {
@@ -128,31 +134,54 @@ export async function runAi<J extends JobName>(db: Db, model: Model, job: J, inp
   }
 
   const startedAt = now().toISOString();
-  let cost = 0, error = 'no answer', served = model.model;
+  let cost = 0, tokens = 0, error = 'no answer', served = model.model;
   let out: Out<J> | null = null;
-  for (let attempt = 0; attempt < 2 && !out; attempt++) {
-    // Nothing sent yet: the budget refuses the run. A retry it refuses ends the run as failed, logged.
-    try { ctx.budget.take(); } catch (e) { if (attempt === 0) throw e; error = (e as Error).message; break; }
-    try {
-      const reply = await model.complete({
-        job, system: built.system, user: built.user, images: images.map((b) => ({ mimeType: 'image/jpeg' as const, base64: b.toString('base64') })),
-        schema: wireSchema(job), maxTokens: JOBS[job].maxTokens, timeoutMs: AI_LIMITS.timeoutMs[model.provider],
-      });
-      ctx.budget.tokens += reply.inputTokens + reply.outputTokens;
-      cost += reply.costCents;
-      served = reply.model;
-      const c = check(job, reply.text, input, images.length, address);
-      if (c.ok) out = c.out; else error = c.error;
-    } catch (e) {
-      error = e instanceof ModelError ? e.message : 'the provider call failed';
-    }
-  }
+  // The most one call can cost (SPEND), reserved against the household's allowance while it is out.
+  const bound = model.provider === 'claude' ? Buffer.byteLength(built.system) + Buffer.byteLength(built.user) + images.length * SPEND.perImage + JOBS[job].maxTokens + SPEND.overhead : 0;
+  const allowance = model.provider === 'claude' ? getAi(db).dailyTokens : Infinity;
+  // This run's spend stays reserved until its row records it, so no other run can miss it in between.
+  const hold = (n: number) => { if (n) reserved.set(db, (reserved.get(db) ?? 0) + n); };
   const id = ulid();
-  db.insert(t.aiRun).values({
-    id, job, provider: model.provider, model: served.slice(0, 100), promptVersion: built.promptVersion, inputHash,
-    outputJson: out ? JSON.stringify(out) : null, costC: cost, startedAt, finishedAt: now().toISOString(),
-    error: out ? null : error.slice(0, 300), takeawaysOf, personId,
-  }).run();
+  try {
+    for (let attempt = 0; attempt < 2 && !out; attempt++) {
+      // Nothing sent yet: the budget refuses the run. A retry it refuses ends the run as failed, logged.
+      try {
+        ctx.budget.take();
+        if (bound) {
+          const spent = spentToday(db, now()) + (reserved.get(db) ?? 0);
+          if (spent + bound > allowance) throw new AiError('budget', `the household's AI allowance for the day is spent (${spent} of ${allowance} tokens in the last 24 hours)`);
+        }
+      } catch (e) { if (attempt === 0) throw e; error = (e as Error).message; break; }
+      hold(bound);
+      // What the call counts as: the provider's count, or its bound when it failed without one (a truncated answer or
+      // a timeout may still have been billed).
+      let used = bound;
+      try {
+        const reply = await model.complete({
+          job, system: built.system, user: built.user, images: images.map((b) => ({ mimeType: 'image/jpeg' as const, base64: b.toString('base64') })),
+          schema: wireSchema(job), maxTokens: JOBS[job].maxTokens, timeoutMs: AI_LIMITS.timeoutMs[model.provider],
+        });
+        used = reply.inputTokens + reply.outputTokens;
+        ctx.budget.tokens += used;
+        cost += reply.costCents;
+        served = reply.model;
+        const c = check(job, reply.text, input, images.length, address);
+        if (c.ok) out = c.out; else error = c.error;
+      } catch (e) {
+        error = e instanceof ModelError ? e.message : 'the provider call failed';
+      } finally {
+        tokens += used;
+        if (bound) hold(used - bound);
+      }
+    }
+    db.insert(t.aiRun).values({
+      id, job, provider: model.provider, model: served.slice(0, 100), promptVersion: built.promptVersion, inputHash,
+      outputJson: out ? JSON.stringify(out) : null, costC: cost, startedAt, finishedAt: now().toISOString(),
+      error: out ? null : error.slice(0, 300), takeawaysOf, personId, tokens,
+    }).run();
+  } finally {
+    if (bound) hold(-tokens);
+  }
   if (!out) throw new AiError('failed', `${job}: ${error}`, id);
   return { runId: id, output: out, cached: false };
 }

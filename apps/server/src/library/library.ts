@@ -10,7 +10,7 @@ import type { components } from '@shelf/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson, view, type Person } from '../household/people';
-import { countedTags } from '../knowledge/tags';
+import { countedTags, type Reader } from '../knowledge/tags';
 import { personSettings } from './settings';
 
 type S = components['schemas'];
@@ -43,9 +43,9 @@ export function bookRef(b: typeof t.book.$inferSelect): S['BookRef'] {
 }
 
 /** Each book's ideas that count (ADR 0005), merged ideas read under the idea they went into (knowledge/tags.ts). */
-export function ideasOf(db: Db, ids: string[]): Map<string, string[]> {
+export function ideasOf(db: Db, ids: string[], reader?: Reader): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  for (const r of countedTags(db, ids)) out.set(r.bookId, [...(out.get(r.bookId) ?? []), r.name]);
+  for (const r of countedTags(db, ids, reader)) out.set(r.bookId, [...(out.get(r.bookId) ?? []), r.name]);
   return out;
 }
 

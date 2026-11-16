@@ -12,6 +12,15 @@ Status: **Accepted** · 2026-11-15
   never triggers an action, a request or a URL fetch, and never sets scores (ADR 0004). Inputs from mail, shares and web
   pages are marked untrusted in prompts. Ollama is the default provider; Claude is an explicit opt-in that shows what
   leaves; takeaways go to no AI (local or not) unless that person turns it on.
+  Decided 2026-11-16 (M3 g): nothing a model says counts without a person's tap. An AI tag or link stays proposed and
+  counts in no brain or score until a person confirms it, whatever its confidence (spec §6 changed: an injected model
+  controls that number). A new idea name a model proposes stays on its proposal and joins the household's ideas only
+  when a person confirms it, so it never reaches another prompt on the model's word; idea names, which a model may have
+  proposed, go to prompts in `<untrusted>` blocks, and `<input>` holds only Shelf's numbers, enums and fixed lists. With
+  Claude, the household has a daily allowance of tokens across every run (`ai_daily_tokens`, admins, 200,000 by
+  default) that a call is not made past, and the AI reads at most 20 shares a day per share token and 40 per person.
+  What Settings says leaves is built from each job's own fields, and an admin's acceptance covers only the lines it was
+  given.
 - **Phone-share tokens** are per person, write-only (`POST /api/shares` only), stored as a SHA-256 hash, shown once,
   listed by label and revocable.
 - **Identity.** In `homerslab` mode the `X-HomersLab-Person` header is trusted only from the configured proxy address

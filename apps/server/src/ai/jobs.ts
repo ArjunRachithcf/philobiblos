@@ -11,8 +11,7 @@
 // - explain: a kept plan's adult picks → the one-line why the plan shows.
 import { lstatSync, openSync, readSync, closeSync, constants, fstatSync } from 'node:fs';
 import { join } from 'node:path';
-import { and, desc, eq, gt, inArray, isNull, notInArray } from 'drizzle-orm';
-import { ulid } from 'ulid';
+import { and, count, desc, eq, gt, gte, inArray, isNull, notInArray } from 'drizzle-orm';
 import type { Image } from '@shelf/contracts';
 import { holdsTakeaways, type Model } from '@shelf/ai';
 import type { Config } from '../config';
@@ -21,9 +20,9 @@ import * as t from '../db/schema';
 import { household } from '../household/people';
 import { SealError, sealingKey, unseal } from '../household/sealed';
 import type { Outcome } from '../jobs/books';
-import { countedTags } from '../knowledge/tags';
+import { counts, countedTags, fromAi } from '../knowledge/tags';
 import { getBrain } from '../knowledge/knowledge';
-import { proposeBookIdeas, proposeLinks } from '../knowledge/from-run';
+import { knownIdea, proposeBookIdeas, proposeLinks, proposeNewIdeas } from '../knowledge/from-run';
 import { readBooksForAi } from '../library/ai-context';
 import { KIDS_THEMES, bookRef } from '../library/library';
 import { addressParts } from '../mail/read';
@@ -37,6 +36,11 @@ import { getAi } from './settings';
 export const PER_RUN = { shares: 20, books: 30, people: 20, picks: 20 } as const;
 /** Shares older than this are not read by the AI any more (turned on late, say). */
 export const SHARE_AI_DAYS = 30;
+/**
+ * Shares the AI reads in any 24 hours: per person, and per share token (a leaked token is in the threat model). The
+ * rest wait, unread, and are read once the window allows; the household's allowance (ai/spend.ts) caps them all.
+ */
+export const SHARE_AI = { perPerson: 40, perToken: 20, windowMs: 24 * 3600_000 } as const;
 /** A kept JPEG of a share, as shares.ts names it. */
 const KEPT = /^shares\/[0-9A-HJKMNP-TV-Z]{26}\/\d{2}(?:-\d{2})?\.jpg$/;
 const KEPT_MAX = 4 << 20;
@@ -104,9 +108,14 @@ export class AiJobs {
     const s = this.start('read');
     if (s.why !== undefined) return done(`shares not read: ${s.why}`);
     const since = new Date(this.now().getTime() - SHARE_AI_DAYS * 86_400_000).toISOString();
-    const rows = this.db.select().from(t.share).where(and(eq(t.share.status, 'done'), isNull(t.share.foundJson), gt(t.share.createdAt, since))).orderBy(t.share.createdAt).limit(PER_RUN.shares).all();
-    let n = 0;
+    const rows = this.db.select().from(t.share).where(and(eq(t.share.status, 'done'), isNull(t.share.foundJson), gt(t.share.createdAt, since))).orderBy(t.share.createdAt).limit(PER_RUN.shares * 10).all();
+    const day = new Date(this.now().getTime() - SHARE_AI.windowMs).toISOString();
+    const readToday = (c: ReturnType<typeof eq>) => this.db.select({ n: count() }).from(t.share).where(and(c, gte(t.share.aiReadAt, day))).get()!.n;
+    let n = 0, waiting = 0;
     for (const r of rows) {
+      if (n >= PER_RUN.shares) break;
+      // A person's, or a token's, reads for the day used up: this share waits.
+      if (readToday(eq(t.share.personId, r.personId)) >= SHARE_AI.perPerson || (r.tokenId && readToday(eq(t.share.tokenId, r.tokenId)) >= SHARE_AI.perToken)) { waiting++; continue; }
       const kept = (JSON.parse(r.mediaJson) as { path: string; at?: number }[]).slice(0, 30);
       const images = kept.map((k) => readKept(this.cfg.dataDir, k.path)).filter((b): b is Buffer => b !== null);
       const input = { images: kept.map((k): Image => ({ path: k.path, mimeType: 'image/jpeg', ...(k.at != null ? { atSeconds: k.at } : {}) })), ...(r.caption ? { caption: r.caption } : {}), ...(r.url ? { url: r.url } : {}) };
@@ -121,10 +130,10 @@ export class AiJobs {
         if (!(e instanceof AiError)) throw e;
         found = { books: [], unread: 'The AI could not read this share; add its books by hand.' };
       }
-      this.db.update(t.share).set({ foundJson: JSON.stringify(found) }).where(eq(t.share.id, r.id)).run();
+      this.db.update(t.share).set({ foundJson: JSON.stringify(found), aiReadAt: this.now().toISOString() }).where(eq(t.share.id, r.id)).run();
       n++;
     }
-    return done(`${n} shares read`);
+    return done(`${n} shares read${waiting ? `; ${waiting} wait (a person's or a share token's reads for the day are used up)` : ''}`);
   }
 
   /** tagBook, then proposeLinks and checkRedundant, on adults' backlog books with no ideas yet. */
@@ -132,20 +141,26 @@ export class AiJobs {
     const s = this.start('link');
     if (s.why !== undefined) return done(`books not tagged: ${s.why}`);
     const db = this.db;
-    const tagged = db.selectDistinct({ id: t.bookIdea.bookId }).from(t.bookIdea).all().map((r) => r.id);
+    const tagged = [...new Set([...db.selectDistinct({ id: t.bookIdea.bookId }).from(t.bookIdea).all(), ...db.selectDistinct({ id: t.ideaProposal.bookId }).from(t.ideaProposal).all()].map((r) => r.id))];
     const adults = household(db).filter((p) => p.role !== 'kid');
     const wanted = db.selectDistinct({ id: t.candidate.bookId }).from(t.candidate)
       .where(and(eq(t.candidate.state, 'active'), inArray(t.candidate.personId, adults.length ? adults.map((p) => p.id) : ['']), tagged.length ? notInArray(t.candidate.bookId, tagged) : undefined)).all().map((r) => r.id);
     const books = wanted.length ? db.select().from(t.book).where(and(inArray(t.book.id, wanted), eq(t.book.audience, 'adult'))).orderBy(t.book.id).limit(PER_RUN.books).all() : [];
+    const uses = db.select({ idea: t.bookIdea.ideaId, priv: t.bookIdea.privateTo }).from(t.bookIdea).all();
+    const onlyPrivate = new Set(uses.filter((u) => u.priv).map((u) => u.idea).filter((id) => !uses.some((u) => u.idea === id && !u.priv)));
     let n = 0, links = 0, ideas = 0;
     for (const b of books) {
       try {
-        const vocabulary = db.select({ name: t.idea.name }).from(t.idea).where(isNull(t.idea.mergedInto)).all().map((r) => r.name).sort();
+        // The household's ideas, but not one that only rows private to someone use (its name may come from their takeaways).
+        const vocabulary = db.select({ id: t.idea.id, name: t.idea.name }).from(t.idea).where(isNull(t.idea.mergedInto)).all().filter((i) => !onlyPrivate.has(i.id)).map((r) => r.name).sort();
         const blurb = db.select({ d: t.bookMeta.description }).from(t.bookMeta).where(eq(t.bookMeta.bookId, b.id)).get()?.d ?? undefined;
         const ref = bookRef(b);
         const tag = await runAi(db, s.model, 'tagBook', { book: ref, ...(blurb ? { blurb } : {}), ideaVocabulary: vocabulary, kidsThemes: [...KIDS_THEMES] }, { budget: s.budget, address: s.address });
-        const rows = (tag.output.ideas ?? []).map((x) => ({ bookId: b.id, ideaId: ideaId(db, x.name), layer: x.layer, confidence: x.confidence }));
-        ideas += proposeBookIdeas(db, tag.runId, rows);
+        // A name the household has: a proposed tag in that idea. Any other name stays a proposal by name only: no idea
+        // row, so it is in no later prompt's vocabulary unless a person confirms it (knowledge/from-run.ts).
+        const known = (tag.output.ideas ?? []).map((x) => ({ x, ideaId: knownIdea(db, x.name) }));
+        ideas += proposeBookIdeas(db, tag.runId, known.flatMap(({ x, ideaId }) => (ideaId ? [{ bookId: b.id, ideaId, layer: x.layer, confidence: x.confidence }] : [])));
+        ideas += proposeNewIdeas(db, tag.runId, known.flatMap(({ x, ideaId }) => (ideaId ? [] : [{ bookId: b.id, name: x.name, layer: x.layer, confidence: x.confidence }])));
         const candIdeas = (tag.output.ideas ?? []).map((x) => ({ name: x.name, layer: x.layer, confidence: x.confidence }));
         const names = new Set(candIdeas.map((x) => x.name));
         // Each adult whose backlog holds it: their read books, theirs only, through the one gate.
@@ -155,7 +170,7 @@ export class AiJobs {
           // The same ideas first, then the rest, at most 60.
           const ordered = [...read.filter((r) => r.ideas.some((i) => names.has(i))), ...read.filter((r) => !r.ideas.some((i) => names.has(i)))].slice(0, 60);
           if (!ordered.length) continue;
-          const layers = new Map(countedTags(db, ordered.map((r) => r.id)).map((x) => [`${x.bookId}\u0000${x.name}`, x.layer]));
+          const layers = new Map(countedTags(db, ordered.map((r) => r.id), { as: p.id }).map((x) => [`${x.bookId}\u0000${x.name}`, x.layer]));
           const readBooks = ordered.map((r) => ({ ...r, ideas: r.ideas.map((name) => ({ name, layer: layers.get(`${r.id}\u0000${name}`) ?? 'core' as const, confidence: 1 })) }));
           const input = { candidate: { ...ref, ideas: candIdeas }, readBooks };
           // Their takeaways are in it only if they turned that on (ai-context.ts); the run then says whose.
@@ -164,7 +179,7 @@ export class AiJobs {
         }
         // The household's owned books in the same ideas: does it repeat one?
         const ownedIds = db.selectDistinct({ id: t.copy.bookId }).from(t.copy).all().map((r) => r.id).filter((id) => id !== b.id);
-        const sameIdea = new Set(countedTags(db, ownedIds).filter((x) => names.has(x.name)).map((x) => x.bookId));
+        const sameIdea = new Set(countedTags(db, ownedIds, { as: null }).filter((x) => names.has(x.name)).map((x) => x.bookId));
         const owned = ownedIds.filter((id) => sameIdea.has(id));
         if (owned.length) {
           const refs = db.select().from(t.book).where(inArray(t.book.id, owned)).all().map(bookRef);
@@ -189,7 +204,8 @@ export class AiJobs {
     const ownedTitles = db.selectDistinct({ title: t.book.title }).from(t.copy).innerJoin(t.book, eq(t.book.id, t.copy.bookId)).all().map((r) => r.title);
     let n = 0;
     for (const p of household(db).filter((x) => x.role !== 'kid').slice(0, PER_RUN.people)) {
-      const brain = getBrain(db, p.id);
+      // Their run: book ideas private to anyone else are not in it.
+      const brain = getBrain(db, p.id, { as: p.id });
       const ideas = brain.ideas.map((i) => {
         const layers = i.layers as Record<string, { books?: unknown[] }>;
         const filled = (['intro', 'core', 'deep', 'counterpoint'] as const).filter((l) => (layers[l]?.books?.length ?? 0) > 0);
@@ -222,15 +238,19 @@ export class AiJobs {
     for (const l of lines) {
       const b = db.select().from(t.book).where(eq(t.book.id, l.bookId)).get();
       if (!b) continue;
-      const idea = countedTags(db, [b.id])[0]?.name ?? 'a new idea';
-      // The read books it builds on, by the links that count, as the person sees them.
+      // Its idea and the read books it builds on, by the tags and links that count, as the person sees them (theirs
+      // private to them included). A why built on something private to them is shown to them only (why_audience).
+      const tag = countedTags(db, [b.id], { as: l.forPerson })[0];
+      const idea = tag?.name ?? 'a new idea';
       const read = new Set(readBooksForAi(db, l.forPerson).map((r) => r.id));
-      const to = db.select({ to: t.bookLink.toBook, state: t.bookLink.state, c: t.bookLink.confidence, priv: t.bookLink.privateTo }).from(t.bookLink).where(eq(t.bookLink.fromBook, b.id)).all()
-        .filter((x) => read.has(x.to) && x.state !== 'rejected' && (x.state === 'confirmed' || x.c >= 0.8) && (!x.priv || x.priv === l.forPerson)).map((x) => x.to);
+      const used = db.select({ to: t.bookLink.toBook, state: t.bookLink.state, confidence: t.bookLink.confidence, aiRunId: t.bookLink.aiRunId, privateTo: t.bookLink.privateTo }).from(t.bookLink).where(eq(t.bookLink.fromBook, b.id)).all()
+        .filter((x) => read.has(x.to) && counts({ ...x, fromAi: fromAi(x) }) && (!x.privateTo || x.privateTo === l.forPerson));
+      const to = used.map((x) => x.to);
+      const audience = tag?.privateTo || used.some((x) => x.privateTo) ? l.forPerson : null;
       const buildsOn = to.length ? db.select({ title: t.book.title }).from(t.book).where(inArray(t.book.id, to)).all().map((x) => x.title) : [];
       try {
         const { output } = await runAi(db, s.model, 'explainPick', { pick: bookRef(b), move: (l.move ?? 'intro') as never, buildsOn, idea }, { budget: s.budget, personId: l.forPerson, address: s.address });
-        db.update(t.orderLine).set({ why: output.why }).where(and(eq(t.orderLine.orderId, order.id), eq(t.orderLine.bookId, b.id))).run();
+        db.update(t.orderLine).set({ why: output.why, whyAudience: audience }).where(and(eq(t.orderLine.orderId, order.id), eq(t.orderLine.bookId, b.id))).run();
         n++;
       } catch (e) {
         const stop = stopped(e, `${n} picks explained`);
@@ -240,15 +260,4 @@ export class AiJobs {
     }
     return done(`${n} picks explained`);
   }
-}
-
-/** The idea of that name (as it reads now, merges followed), or a new one: a proposal names it, a person confirms it. */
-function ideaId(db: Db, name: string): string {
-  const all = db.select().from(t.idea).all();
-  const norm = (s: string) => s.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-  const hit = all.find((i) => norm(i.name) === norm(name));
-  if (hit) return hit.mergedInto ?? hit.id;
-  const id = ulid();
-  db.insert(t.idea).values({ id, name }).run();
-  return id;
 }

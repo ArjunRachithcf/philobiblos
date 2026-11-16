@@ -481,6 +481,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/idea-proposals/{proposalId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposalId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** A person confirms a new idea the AI proposed for a book (it becomes an idea, or the existing one of that name, with the book confirmed in it), moves it to another layer (which confirms it), or rejects it (no idea is made). Same privacy as links; 409 once decided. */
+        put: operations["reviewIdeaProposal"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ideas/{ideaId}": {
         parameters: {
             query?: never;
@@ -961,6 +980,17 @@ export interface components {
                 /** @description written from your own takeaways: nobody else sees it */
                 onlyYou: boolean;
             }[];
+            /** @description new ideas the AI proposed for a book: a name only, no idea exists until a person confirms one (PUT /idea-proposals/{id}) */
+            newIdeas: {
+                id: string;
+                book: components["schemas"]["BookRef"];
+                name: string;
+                layer: components["schemas"]["Layer"];
+                confidence: number;
+                fromAi: boolean;
+                /** @description written from your own takeaways: nobody else sees it */
+                onlyYou: boolean;
+            }[];
         };
         Brain: {
             ideas: {
@@ -1162,6 +1192,10 @@ export interface components {
                 readonly leaves?: string[];
                 /** @description what would leave with Claude and these jobs, shown before opting in: built from the fields each job's requests may hold */
                 readonly leavesWithClaude?: string[];
+                /** @description the household's allowance with Claude: tokens (input and output) in any 24 hours, every run together (default 200000); a call that could go past it is not made and its job stops as blocked */
+                dailyLimit?: number;
+                /** @description tokens Claude counted in the last 24 hours */
+                readonly usedToday?: number;
                 /** @description Claude is on and an admin accepted every line of leaves; while false Claude is not called */
                 readonly leavesAccepted?: boolean;
                 jobs?: {
@@ -2545,6 +2579,73 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             /** @description No such idea on that book */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    reviewIdeaProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {unknown} */
+                    state?: "confirmed" | "rejected";
+                    layer?: components["schemas"]["Layer"];
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {unknown} */
+                        state: "confirmed" | "rejected";
+                        layer: components["schemas"]["Layer"];
+                        idea?: {
+                            id: string;
+                            name: string;
+                        };
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such proposal */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already decided */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -9,7 +9,7 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { household, view } from '../household/people';
 import { visibleReason } from '../knowledge/knowledge';
-import { COUNTED, countedTags } from '../knowledge/tags';
+import { COUNTED, countedTags, fromAi } from '../knowledge/tags';
 import { bookRef } from '../library/library';
 
 type S = components['schemas'];
@@ -63,7 +63,7 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
   // A reason from someone's takeaways is theirs (shelf#3): everyone else sees a neutral one.
   const linksFrom = new Map<string, { to: string; reason: string; confidence: number; state: string }[]>();
   for (const l of db.select().from(t.bookLink).all()) {
-    if (l.state === 'confirmed' || (l.state === 'proposed' && l.confidence >= COUNTED)) linksFrom.set(l.fromBook, [...(linksFrom.get(l.fromBook) ?? []), { to: l.toBook, reason: visibleReason(l, viewer), confidence: l.confidence, state: l.state }]);
+    if (l.state === 'confirmed' || (l.state === 'proposed' && !fromAi(l) && l.confidence >= COUNTED)) linksFrom.set(l.fromBook, [...(linksFrom.get(l.fromBook) ?? []), { to: l.toBook, reason: visibleReason(l, viewer), confidence: l.confidence, state: l.state }]);
   }
   // Each person's readings: what they have read (with when), and kids' feedback.
   const readBy = new Map<string, Map<string, { finished: string; feedback: string | null }>>();

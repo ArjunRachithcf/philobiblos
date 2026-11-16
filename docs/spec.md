@@ -73,7 +73,7 @@ Shelf plans and buys. It is not an ebook reader or a daily reading log; Kavita, 
 Adult candidate *c* for person *p* (weights editable, defaults shown):
 
 ```
-links      = read books of p that c builds on (confirmed BookIdea or confidence ≥ 0.8)
+links      = read books of p that c builds on (a confirmed link or BookIdea; or one of the seed's guesses at confidence ≥ 0.8)
 bridge     = distinct ideas of p touched by links − 1   (≥ 0)
 layerFill  = 12 if c fills an empty core layer, 10 deep, 14 counterpoint (only if intro+core read), 0 otherwise
 stale      = min(months since p last finished a book in c's main idea, 4)
@@ -102,6 +102,13 @@ score     = 20 + themeNew + themeThin + author + source + waiting + price
 ```
 
 Test vectors: `contracts/scoring-vectors.json`.
+
+What counts (changed 2026-11-16, M3 g): a link or a book's idea counts once a person confirmed it. A proposal written by
+the AI never counts on its own, whatever confidence the model gave it, because the model chooses that number: one that
+read a hostile blurb, mail line or caption could answer `confidence: 1` and put an injected idea or link into the brain
+and the scores straight away. Only the seed's own guesses (proposed rows without an AI run) still count from 0.8, as the
+prototype did. A new idea the AI names is a proposal by name only (`idea_proposal`): it becomes one of the household's
+ideas when a person confirms it, and never otherwise (ADR 0009).
 
 ## 7. Kids' themes
 

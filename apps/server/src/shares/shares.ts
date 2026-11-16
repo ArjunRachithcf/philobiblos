@@ -81,7 +81,7 @@ const kept = (dataDir: string, id: string) => join(dataDir, 'shares', id);
  * and records the share. Every part is read to its end, so a refusal never leaves a request half read; on any refusal
  * nothing is kept.
  */
-export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: string; workDir: string | null; personId: string; now?: Date }): Promise<ShareRow> {
+export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: string; workDir: string | null; personId: string; tokenId?: string | null; now?: Date }): Promise<ShareRow> {
   if (!req.isMultipart()) throw new ShareError(400, 'a share is multipart/form-data');
   const id = ulid();
   const dir = staging(o.dataDir, id);
@@ -123,6 +123,7 @@ export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: st
       id, personId: o.personId, url, note, title, caption, mediaJson: '[]', mediaTotal: files, mediaRefused: 0,
       // A share is done once its images are re-encoded and its videos' frames taken; the AI reads it then (ai/jobs.ts).
       status: files ? 'received' : 'done', foundJson: null, error: null, createdAt: (o.now ?? new Date()).toISOString(),
+      tokenId: o.tokenId ?? null, aiReadAt: null,
     };
     db.insert(t.share).values(row).run();
     return row;
