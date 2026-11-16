@@ -134,6 +134,7 @@ function BudgetBar({ budget, total, override, admin, count, onApply }: { budget:
           <h2 className="card-title" id={`${id}-h`}>Order total</h2>
           <p className={`mo-total${over ? ' is-over' : ''}`}>{chf(total)}</p>
           <p className="card-meta">{count}</p>
+          <p className="card-meta">An estimate: a price we don't know counts as CHF 25. The bookshop's quote is the real one.</p>
         </div>
         <div className="mo-budget-range">
           <span className="card-meta">{override ? 'This month only' : 'Monthly budget'}</span>
@@ -237,7 +238,7 @@ function PickList({ title, note, picks, canChange, kid, onRemove }: { title: str
                 </span>
                 <span className="row-trail mo-trail">
                   {kid ? (p.idea && <span className="pill">{p.idea}</span>) : <MovePill move={p.move} />}
-                  <span className="bl-price">{p.candidate!.price != null ? chf(p.candidate!.price) : 'Price to come'}</span>
+                  <span className="bl-price">{p.candidate!.price != null ? chf(p.candidate!.price) : 'Price unknown'}</span>
                   {canChange && <button type="button" className="btn btn-sm" aria-label={`Remove ${b.title} from this month`} onClick={() => onRemove(p)}>Remove</button>}
                 </span>
               </li>

@@ -183,7 +183,7 @@ function Row({ c, me, checked, onCheck, onAdd }: { c: Candidate; me: Me; checked
         )}
       </span>
       <span className="row-trail bl-trail">
-        {c.price != null && <span className="bl-price">{chf(c.price)}</span>}
+        <span className="bl-price">{c.price != null ? chf(c.price) : 'Price unknown'}</span>
         <button type="button" className="btn btn-sm bl-score" aria-expanded={open} aria-controls={partsId} onClick={() => setOpen(!open)}>
           {c.score != null ? <>Score {Math.round(c.score)}</> : 'Over the price limit'}<span className="sr-only">: show its parts for {title}</span>
         </button>

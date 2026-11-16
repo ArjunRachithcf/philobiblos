@@ -1,4 +1,4 @@
--- Shelf database schema v6 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
+-- Shelf database schema v7 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
 -- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
 
 PRAGMA foreign_keys = ON;
@@ -93,6 +93,17 @@ CREATE TABLE book_offer (                  -- price estimates and retailer ids
   availability TEXT,                       -- raw text, informational only
   seen_at     TEXT NOT NULL,
   PRIMARY KEY (book_id, source)
+);
+
+CREATE TABLE book_meta (                   -- Open Library's facts about a book; looked up once, refreshed by hand
+  book_id       TEXT PRIMARY KEY NOT NULL REFERENCES book(id) ON DELETE CASCADE,
+  source        TEXT NOT NULL,             -- 'openlibrary'
+  external_id   TEXT,                      -- e.g. /works/OL0000000W
+  description   TEXT,                      -- at most 2000 characters
+  subjects_json TEXT NOT NULL DEFAULT '[]',
+  cover_id      TEXT,                      -- the source's cover id; the image is fetched, re-encoded and kept as book.cover_path
+  status        TEXT NOT NULL CHECK (status IN ('found','not_found')),
+  fetched_at    TEXT NOT NULL
 );
 
 CREATE TABLE copy (                        -- the household owns it

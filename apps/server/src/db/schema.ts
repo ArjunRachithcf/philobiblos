@@ -100,6 +100,18 @@ export const bookOffer = sqliteTable('book_offer', {
   seenAt: text('seen_at').notNull(),
 }, (t) => [primaryKey({ columns: [t.bookId, t.source] })]);
 
+// What Open Library says about a book (contracts/connectors.md "Metadata"): looked up once, refreshed by hand.
+export const bookMeta = sqliteTable('book_meta', {
+  bookId: text('book_id').primaryKey().references(() => book.id, { onDelete: 'cascade' }),
+  source: text('source').notNull(),
+  externalId: text('external_id'),
+  description: text('description'),
+  subjectsJson: text('subjects_json').notNull().default('[]'),
+  coverId: text('cover_id'),
+  status: text('status', { enum: ['found', 'not_found'] }).notNull(),
+  fetchedAt: text('fetched_at').notNull(),
+}, (t) => [check('book_meta_status', sql`${t.status} IN ('found','not_found')`)]);
+
 export const copy = sqliteTable('copy', {
   id: text('id').primaryKey(),
   bookId: text('book_id').notNull().references(() => book.id),

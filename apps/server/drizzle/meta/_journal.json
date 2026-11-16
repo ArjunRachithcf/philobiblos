@@ -43,6 +43,13 @@
       "when": 1794778750874,
       "tag": "0005_private_to_follows_the_run",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794790139448,
+      "tag": "0006_book_meta",
+      "breakpoints": true
     }
   ]
 }

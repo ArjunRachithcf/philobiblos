@@ -26,6 +26,10 @@ export interface Config {
   sealingKey: { value: string } | { file: string; create: boolean } | null;
   /** The folder shared with the media worker (ADR 0009); null: no worker, media jobs are unavailable. */
   workDir: string | null;
+  /** false: nothing leaves the server (SHELF_EGRESS=off); prices and metadata then stay as they are. */
+  egress: boolean;
+  /** The household's Ollama (OLLAMA_URL), the one AI host Shelf may reach without an opt-in; from the environment only. */
+  ollamaUrl: string | null;
 }
 
 /**
@@ -64,6 +68,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       : env.SHELF_SEALING_KEY_FILE ? { file: env.SHELF_SEALING_KEY_FILE, create: false }
       : mode === 'standalone' ? { file: join(resolve(env.SHELF_KEYS_DIR ?? './keys'), 'sealing.key'), create: true } : null,
     workDir: env.SHELF_WORK_DIR ? resolve(env.SHELF_WORK_DIR) : null,
+    egress: env.SHELF_EGRESS !== 'off',
+    ollamaUrl: env.OLLAMA_URL ? parseOllama(env.OLLAMA_URL) : null,
   };
 }
 
@@ -75,4 +81,10 @@ function parseOrigin(v: string): URL {
     throw new Error(`SHELF_ORIGIN must be https (or http://localhost), not ${v}`);
   }
   return u;
+}
+
+function parseOllama(v: string): string {
+  const u = new URL(v);
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password) throw new Error(`OLLAMA_URL must be http(s)://host[:port] without credentials`);
+  return u.origin;
 }

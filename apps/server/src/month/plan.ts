@@ -2,6 +2,7 @@
 // the month's budget; then Compose (order-mail.ts). Until a person changes something the plan is computed on each look;
 // the first change keeps it as the month's order (status `picked`), and Compose turns it into `drafted`. Who may
 // change what follows the Backlog: your own picks and the kids' (adults act for them), not another adult's.
+import { UNKNOWN_PRICE_C } from '../books/prices';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { components } from '@shelf/contracts/openapi';
@@ -56,7 +57,8 @@ export function monthBudget(db: Db, month: string): { budget: Budget; isOverride
 const adults = (db: Db) => household(db).filter((p) => p.role !== 'kid');
 const kids = (db: Db) => household(db).filter((p) => p.role === 'kid');
 const orderOf = (db: Db, month: string) => db.select().from(t.order).where(eq(t.order.month, month)).get();
-const lineOf = (r: Row): Line => ({ bookId: r.book.id, forPerson: r.personId, move: r.move ?? null, estimateC: r.price ?? null });
+// A price nobody knows counts as CHF 25 for the budget (ADR 0008); the screen still says it is unknown.
+const lineOf = (r: Row): Line => ({ bookId: r.book.id, forPerson: r.personId, move: r.move ?? null, estimateC: r.price ?? UNKNOWN_PRICE_C });
 
 /** Rows that may be picked: open, and not already in another month's composed order. */
 function pickable(db: Db, month: string, viewer: string): Row[] {
@@ -86,11 +88,11 @@ function compute(db: Db, month: string, viewer: string, o: { keep?: Line[]; pick
   }
   const ownedAuthors = new Set(db.selectDistinct({ a: t.book.authorsJson }).from(t.copy).innerJoin(t.book, eq(t.book.id, t.copy.bookId)).all()
     .map((r) => (JSON.parse(r.a) as string[])[0]?.toLowerCase()).filter(Boolean));
-  const kidRows = rows.filter((r) => r.role === 'kid' && r.price != null && r.score != null && !taken.has(r.book.id));
+  const kidRows = rows.filter((r) => r.role === 'kid' && r.score != null && !taken.has(r.book.id));
   const total = out.reduce((n, l) => n + (l.estimateC ?? 0), 0);
   const { ids } = pickKids(kidRows.map((r) => ({
     id: r.id, kidId: r.personId, score: r.score!, theme: r.themes[0] ?? `none:${r.book.id}`, author: r.authors[0] ?? `none:${r.book.id}`,
-    priceC: r.price!, authorOnShelf: Boolean(r.authors[0]) && ownedAuthors.has(r.authors[0]!),
+    priceC: r.price ?? UNKNOWN_PRICE_C, authorOnShelf: Boolean(r.authors[0]) && ownedAuthors.has(r.authors[0]!),
   })), { kids: kids(db).map((k) => k.id), totalC: total, minC: budget.min, maxC: budget.max, skipShelfAuthors: (hh?.newAuthorsOnly ?? 1) === 1 });
   out.push(...ids.map((id) => lineOf(kidRows.find((r) => r.id === id)!)));
   return out;

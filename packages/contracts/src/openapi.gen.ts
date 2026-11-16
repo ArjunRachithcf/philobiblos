@@ -736,6 +736,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Admins only. prices, metadata and covers run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
         post: operations["runJob"];
         delete?: never;
         options?: never;
@@ -3028,10 +3029,13 @@ export interface operations {
     };
     runJob: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description metadata: look up every book again, not only those never looked up */
+                again?: "true" | "false";
+            };
             header?: never;
             path: {
-                job: "monthly" | "mail" | "shares" | "prices" | "ai_suggest";
+                job: "monthly" | "mail" | "shares" | "prices" | "metadata" | "covers" | "ai_suggest";
             };
             cookie?: never;
         };
@@ -3042,10 +3046,24 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @description the job_run row */
+                        id?: string;
+                    };
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description That job is running already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
 }
