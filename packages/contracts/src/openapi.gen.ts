@@ -701,6 +701,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/push/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Web Push: the household's application server key (VAPID, P-256), public half only, for PushManager.subscribe; made and sealed the first time */
+        get: operations["pushKey"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your own devices that get notifications (the endpoint is never answered) */
+        get: operations["listPushSubscriptions"];
+        put?: never;
+        /** This browser's subscription (PushSubscription.toJSON()), for you: https at a browser's push service, a P-256 key and a 16-byte secret; at most 10 a person (409); the same endpoint moves to you; 10 saves in 10 minutes */
+        post: operations["addPushSubscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["removePushSubscription"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A test notification to your own devices (3 in 10 minutes); its text is the service worker's own */
+        post: operations["testPush"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/shares/{id}": {
         parameters: {
             query?: never;
@@ -777,7 +845,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult's Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month's kept picks) run through the AI provider in Settings; monthly is the monthly refresh (spec §5 step 1: mail, shares, prices, the month's plan kept, ai_suggest, ai_explain), which also runs by itself on the household's day (Settings.cycle), once a month; by hand it does every step again for this month. */
+        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult's Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month's kept picks) run through the AI provider in Settings; monthly is the monthly refresh (spec §5 step 1: mail, shares, prices, the month's plan kept, ai_suggest, ai_explain), which also runs by itself on the household's day (Settings.cycle), once a month, and then notifies the adults (Web Push, /push); by hand it does every step again for this month and notifies no one. */
         post: operations["runJob"];
         delete?: never;
         options?: never;
@@ -1271,6 +1339,13 @@ export interface components {
                 folder: string;
                 readonly configured?: boolean;
             };
+        };
+        PushSubscription: {
+            id: string;
+            /** @description the push service's host name */
+            service: string;
+            createdAt: string;
+            lastSentAt?: string | null;
         };
         ShareToken: {
             id: string;
@@ -3176,6 +3251,199 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    pushKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description base64url, 65 bytes uncompressed */
+                        publicKey: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No usable sealing key: no notifications */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listPushSubscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscription"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addPushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    endpoint: string;
+                    expirationTime?: number | null;
+                    keys: {
+                        p256dh: string;
+                        auth: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Saved */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description At most 10 devices a person */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many saves */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No usable sealing key */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removePushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Not one of yours */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    testPush: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sent (or why not) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {unknown} */
+                        status?: "done" | "blocked" | "failed";
+                        detail?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Too many tests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getShare: {

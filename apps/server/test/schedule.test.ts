@@ -1,6 +1,7 @@
 // The scheduler and the monthly refresh (spec §5 step 1, shelf#8 h): a period runs once whatever restarts, overlaps,
 // clocks and time zones do; failures are tried again with a backoff, then given up; a retry does only the steps left;
 // nothing new starts past the run's deadline. The clock is a fake one throughout; no request leaves (egress off).
+import { createECDH } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { fakeModel } from '@shelf/ai';
@@ -14,7 +15,8 @@ import { refreshPrices } from '../src/jobs/books';
 import { startJob } from '../src/jobs/run';
 import { SCHEDULE, Scheduler, backoff, claim, cycleView, dueAt, finish, releaseInterrupted, setCycle, stepDone, zonedInstant, type Cycle } from '../src/jobs/schedule';
 import { monthlyRefresh } from '../src/month/refresh';
-import { POST_TIMEOUT_MAX_MS } from '../src/net/egress';
+import { POST_TIMEOUT_MAX_MS, type Egress } from '../src/net/egress';
+import { subscribe } from '../src/push/push';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
 
 const Z = 'Europe/Zurich';
@@ -177,6 +179,7 @@ describe('the scheduler', () => {
 
   it('a month the server was off for is not made up; the month it comes back in runs', async () => {
     const db = household();
+    setCycle(db, { timezone: Z });
     const clock = { now: at('2026-12-01T20:00:00Z') };
     const s = sched(db, clock, async () => ok);
     await Promise.all(await s.tick());
@@ -187,6 +190,7 @@ describe('the scheduler', () => {
 
   it('never next to a run of the same job, by hand or not', async () => {
     const db = household();
+    setCycle(db, { timezone: Z });
     let release = () => {};
     const gate = new Promise<void>((r) => { release = r; });
     const byHand = startJob(db, 'monthly', async () => { await gate; return ok; })!;
@@ -209,7 +213,7 @@ describe('the scheduler', () => {
 });
 
 describe('the monthly refresh', () => {
-  const steps = (log: string[], fail: string[] = []) => Object.fromEntries(['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain'].map((s) => [s, async () => { log.push(s); return fail.includes(s) ? { status: 'failed' as const, detail: 'down' } : ok; }]));
+  const steps = (log: string[], fail: string[] = []) => Object.fromEntries(['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain', 'push'].map((s) => [s, async () => { log.push(s); return fail.includes(s) ? { status: 'failed' as const, detail: 'down' } : ok; }]));
 
   it('every step in order; a failed one does not stop the rest; a retry does only the steps left', async () => {
     const log: string[] = [];
@@ -217,8 +221,8 @@ describe('the monthly refresh', () => {
     const deadline = new Date(Date.now() + 60_000);
     const first = await monthlyRefresh(steps(log, ['mail', 'prices']), { deadline, step: (s) => done.push(s) });
     expect(first.status).toBe('failed');
-    expect(log).toEqual(['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain']);
-    expect(done).toEqual(['shares', 'plan', 'ai_suggest', 'ai_explain']);
+    expect(log).toEqual(['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain', 'push']);
+    expect(done).toEqual(['shares', 'plan', 'ai_suggest', 'ai_explain', 'push']);
     log.length = 0;
     const second = await monthlyRefresh(steps(log), { deadline, done, step: (s) => done.push(s) });
     expect(log).toEqual(['mail', 'prices']);
@@ -283,11 +287,19 @@ describe('the monthly refresh', () => {
 describe('through the app', () => {
   const app = async (clock: { now: Date }, find: PriceSource['find'] = async () => null) => {
     const db = household();
+    setCycle(db, { timezone: Z });
+    const pushed: string[] = [];
+    const byHand: Promise<void>[] = [];
+    const push: Egress = {
+      get: async () => { throw new Error('no'); }, post: async () => { throw new Error('no'); },
+      push: async (url) => { pushed.push(url); return { status: 201, type: '', body: Buffer.alloc(0), url }; },
+    };
     let scheduler: Scheduler | undefined;
     const built = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY, SHELF_EGRESS: 'off' }), db, {
-      jobs: { prices: { id: 'orellfuessli', find }, env: { sleep: async () => {} }, schedule: { now: () => clock.now, start: false, onScheduler: (s) => { scheduler = s; } } },
+      push,
+      jobs: { prices: { id: 'orellfuessli', find }, env: { sleep: async () => {} }, started: (_j, d) => byHand.push(d), schedule: { now: () => clock.now, start: false, onScheduler: (s) => { scheduler = s; } } },
     });
-    return { db, app: built.app, scheduler: scheduler!, admin: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN }, adult: { cookie: sessionCookie(db, 'p_sam'), origin: ORIGIN } };
+    return { db, pushed, byHand, app: built.app, scheduler: scheduler!, admin: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN }, adult: { cookie: sessionCookie(db, 'p_sam'), origin: ORIGIN } };
   };
 
   it('on the day: the month\'s plan is kept with no one\'s view, every step logged in job_run with its period', async () => {
@@ -298,7 +310,7 @@ describe('through the app', () => {
     expect(run).toMatchObject({ status: 'done', period: '2026-12' });
     for (const s of ['mail:', 'prices:', 'plan: kept, 1 picks']) expect(run.detail).toContain(s);
     expect(a.db.select().from(t.order).where(eq(t.order.month, '2026-12')).get()).toMatchObject({ status: 'picked' });
-    expect(JSON.parse(row(a.db, '2026-12')!.stepsJson)).toEqual(['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain']);
+    expect(JSON.parse(row(a.db, '2026-12')!.stepsJson)).toEqual(['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain', 'push']);
   });
 
   it('the month is the household\'s: the plan kept and its picks explained for the month in its zone', async () => {
@@ -316,6 +328,27 @@ describe('through the app', () => {
     const nov = db.select().from(t.order).where(eq(t.order.month, '2026-11')).get()!;
     expect(db.select().from(t.orderLine).where(eq(t.orderLine.orderId, nov.id)).all()).toEqual([expect.objectContaining({ why: 'Deepens Markets and value.' })]);
     expect(db.select().from(t.order).where(eq(t.order.month, '2026-12')).get()).toBeUndefined();
+  });
+
+  it('the adults hear once a month that the plan is ready: by the scheduled run, not by hand, not by its retry', async () => {
+    const clock = { now: at('2026-12-01T20:00:00Z') };
+    let fail = true;
+    const a = await app(clock, async () => { if (fail) throw new Error('down'); return null; });
+    const b = createECDH('prime256v1'); b.generateKeys();
+    const keys = { p256dh: b.getPublicKey().toString('base64url'), auth: Buffer.alloc(16, 3).toString('base64url') };
+    subscribe(a.db, 'p_sam', { endpoint: 'https://fcm.googleapis.com/fcm/send/sam', keys });
+    await Promise.all(await a.scheduler.tick());
+    expect(a.pushed).toEqual(['https://fcm.googleapis.com/fcm/send/sam']);
+    expect(row(a.db, '2026-12')).toMatchObject({ status: 'retry' });
+    fail = false;
+    clock.now = new Date(clock.now.getTime() + backoff(1));
+    await Promise.all(await a.scheduler.tick());
+    expect(row(a.db, '2026-12')).toMatchObject({ status: 'done' });
+    const r = await a.app.inject({ method: 'POST', url: '/api/jobs/monthly/run', headers: a.admin });
+    expect(r.statusCode).toBe(202);
+    await Promise.all(a.byHand);
+    expect(a.db.select().from(t.jobRun).where(eq(t.jobRun.id, r.json().id)).get()).toMatchObject({ status: 'done', detail: expect.stringContaining('ai_explain') });
+    expect(a.pushed).toHaveLength(1);
   });
 
   it('a step that failed is done again by the retry, and only it', async () => {

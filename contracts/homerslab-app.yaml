@@ -45,6 +45,10 @@ network:
   # Only as redirect targets of covers.openlibrary.org (https, at most two hops, src/net/egress.ts): the Internet Archive
   # keeps Open Library's covers on archive.org and its data nodes ia<number>.us.archive.org.
   egress_redirects: [archive.org, 'ia<number>.us.archive.org']
+  # Web Push (Settings → Notifications): the push services, https on 443, through the push client alone; only the
+  # encrypted "plan ready" message, once a month, to the devices adults added. The default list (src/push/hosts.ts) is the
+  # browsers' services; SHELF_PUSH_HOSTS replaces it (host names or *.domain), so no vendor is built in.
+  push_egress: [fcm.googleapis.com, updates.push.services.mozilla.com, web.push.apple.com, '*.notify.windows.com']
   optional_egress: [api.anthropic.com]
   optional_egress_note: api.anthropic.com only when the household opts in to Claude in Settings; with Ollama nothing leaves for AI.
 # NEEDS HomersLab (shelf#8): the media worker is a second container from the same image, `node /app/worker/dist/main.js`,

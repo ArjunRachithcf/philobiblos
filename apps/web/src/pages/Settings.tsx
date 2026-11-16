@@ -1,12 +1,13 @@
 // Settings (spec §4): the household's monthly budget (one shared budget for the month's order; admins set it, everyone
 // sees it; no rollover) and where orders go (the bookshop's address and the delivery address, sealed on the server; the
-// delivery address is never shown back), when the monthly refresh runs, the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
+// delivery address is never shown back), when the monthly refresh runs, notifications (Notifications.tsx), the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
 // arrives with its parts.
 import { useEffect, useId, useState } from 'react';
 import { api, message, type Me, type Settings as S } from '../api';
 import { Notice, PageHead } from '../ui';
 import { ShareTokens } from './ShareTokens';
 import { AiSettings } from './AiSettings';
+import { Notifications } from './Notifications';
 
 const toChf = (c: number) => (c / 100).toFixed(0);
 
@@ -73,6 +74,7 @@ export function Settings({ me }: { me: Me }) {
         </section>
         <OrderPlaces admin={admin} />
         <MonthlyRefresh admin={admin} />
+        <Notifications />
         <AiSettings admin={admin} />
         <ShareTokens />
       </div>
@@ -170,7 +172,7 @@ function MonthlyRefresh({ admin }: { admin: boolean }) {
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <div>
         <h2 className="card-title" id={`${id}-h`}>Monthly refresh</h2>
-        <p className="footnote">Once a month Shelf reads the bookshop’s mail, refreshes prices, and keeps the month’s picks. A month the server was off for is not made up.</p>
+        <p className="footnote">Once a month Shelf reads the bookshop’s mail, refreshes prices, keeps the month’s picks and tells the adults. A month the server was off for is not made up.</p>
       </div>
       {!cycle ? (error ? <Notice kind="error">{error}</Notice> : <p className="sr-only" role="status">Loading</p>) : (
         <>

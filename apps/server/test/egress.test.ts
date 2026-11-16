@@ -8,6 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DEFAULT_PUSH_HOSTS } from '../src/push/push';
 import { ARCHIVE_NODE, EgressError, LIMITS, USER_AGENT, createEgress, egressRules, isPublicAddress, type Rule } from '../src/net/egress';
 
 const tls = (f: string) => readFileSync(new URL(`./fixtures/tls/${f}`, import.meta.url), 'utf8');
@@ -58,6 +59,9 @@ describe('what may be reached', () => {
     const manifest = readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8');
     for (const h of egressRules({}).map((r) => r.host)) expect(manifest).toContain(h);
     expect(manifest).toMatch(/egress_redirects: \[archive\.org, 'ia<number>\.us\.archive\.org'\]/);
+    // The push client's default hosts (push/hosts.ts) are named too, and nothing more.
+    const push = /push_egress: \[([^\]]*)\]/.exec(manifest)![1]!.split(',').map((h) => h.trim().replace(/'/g, ''));
+    expect(push).toEqual(DEFAULT_PUSH_HOSTS);
   });
 
   it.each([
@@ -165,6 +169,28 @@ describe('bodies nobody wants are never read', () => {
     const t = Date.now();
     await fails(c.get(`http://books.test:${hport}/`, 'json'), 'timeout');
     expect(Date.now() - t).toBeLessThan(1000);
+  });
+});
+
+describe('a push message (Web Push)', () => {
+  const pushRule = (): Rule => ({ host: 'other.test' });
+  const pusher = (timeoutMs?: number) => client([pushRule()], { isPublic: () => true, httpsPort: sport }, timeoutMs);
+  it('its bytes as application/octet-stream; only the status comes back, the body is never read', async () => {
+    reset({ '/p': (q, r) => { let n = 0; q.on('data', (c: Buffer) => { n += c.length; }); q.on('end', () => { r.statusCode = 201; r.setHeader('x-got', String(n)); r.end('x'.repeat(5 << 20)); }); } });
+    const res = await pusher().push('https://other.test/p', Buffer.from('cipher'), { headers: { ttl: '60' } });
+    expect(res).toMatchObject({ status: 201, body: Buffer.alloc(0) });
+    expect(seen[0]!.headers).toMatchObject({ 'content-type': 'application/octet-stream', 'content-length': '6', ttl: '60', 'user-agent': USER_AGENT });
+  });
+  it('an error status carries its status (404, 410: the device is gone); a redirect is refused', async () => {
+    reset({ '/gone': (_q, r) => { r.statusCode = 410; r.end(); }, '/moved': redirect('https://other.test/p') });
+    expect((await fails(pusher().push('https://other.test/gone', Buffer.from('x'), { headers: {} }), 'status')).status).toBe(410);
+    await fails(pusher().push('https://other.test/moved', Buffer.from('x'), { headers: {} }), 'redirect');
+  });
+  it('the same deadline as a GET: a push service that never answers is cut off', async () => {
+    reset({ '/hang': () => {} });
+    const t = Date.now();
+    await fails(pusher(300).push('https://other.test/hang', Buffer.from('x'), { headers: {} }), 'timeout');
+    expect(Date.now() - t).toBeLessThan(2000);
   });
 });
 

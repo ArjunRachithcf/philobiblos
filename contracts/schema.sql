@@ -319,6 +319,19 @@ CREATE TABLE job_run (
   period TEXT                                -- a scheduled run's period ('YYYY-MM' for the monthly refresh); null when run by hand
 );
 
+-- Web Push (push/push.ts): an adult's browsers. The endpoint is a known push service's (https); the keys are the
+-- browser's (P-256 point, 16-byte secret). The application server key is sealed (sealed_secret 'vapid_private_key').
+CREATE TABLE push_subscription (
+  id           TEXT PRIMARY KEY NOT NULL,
+  person_id    TEXT NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+  endpoint     TEXT NOT NULL UNIQUE,
+  p256dh       TEXT NOT NULL,
+  auth         TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  last_sent_at TEXT
+);
+CREATE INDEX push_subscription_person ON push_subscription(person_id);
+
 -- The scheduler's claim on a period (jobs/schedule.ts): one row per job and period, so a period runs once whatever
 -- restarts, overlaps or clocks do. A claim holds a lease; a retry waits for next_try_at; steps_json lists the steps
 -- done, so a retry resumes after them.

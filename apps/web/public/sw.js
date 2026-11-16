@@ -1,5 +1,5 @@
 /* global self, caches, Response, FormData, File, Headers, crypto */
-// Shelf's service worker does one thing: the phone's share target (contracts/connectors.md "Phone share"). The
+// Shelf's service worker does two things. Notifications: see the end of this file. And the phone's share target (contracts/connectors.md "Phone share"). The
 // operating system POSTs a share to /share-target; that request never reaches the server. The parts are kept in the
 // browser's cache for a moment and the share screen opens, which reads them and posts them to /api/shares itself,
 // as Shelf's own page: with Shelf's Origin and the session, like every other change (ADR 0010). Nothing else is
@@ -52,5 +52,31 @@ self.addEventListener('fetch', (e) => {
     headers.set('x-shelf-dropped', String(dropped));
     await cache.put(`/share-pending/${id}`, new Response(await r.blob(), { headers }));
     return Response.redirect(`/share?pending=${id}`, 303);
+  })());
+});
+
+// Notifications (Web Push, the server's push/push.ts): a push carries only its kind, no words, so the text is the
+// device's language's (PUSH_TEXT, English when there is none yet; shelf#27 adds the household's locale) and never text
+// from the message; a tap opens This month on Shelf's own origin, whatever the message says.
+const PUSH_TEXT = {
+  en: { plan: 'This month’s plan is ready.', test: 'Notifications from Shelf work on this device.', other: 'Shelf has something new.' },
+};
+const own = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
+self.addEventListener('push', (e) => {
+  let kind;
+  try { kind = e.data ? e.data.json().kind : null; } catch { kind = null; }
+  const lang = String((self.navigator && self.navigator.language) || 'en').toLowerCase().split('-')[0];
+  const text = own(PUSH_TEXT, lang) ? PUSH_TEXT[lang] : PUSH_TEXT.en;
+  const body = kind !== 'other' && own(text, kind) ? text[kind] : text.other;
+  e.waitUntil(self.registration.showNotification('Shelf', { body, tag: 'shelf', icon: '/favicon.svg' }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL('/month', self.location.origin).href;
+  e.waitUntil((async () => {
+    for (const c of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) {
+      if (new URL(c.url).origin === self.location.origin && 'focus' in c) { await c.focus(); if ('navigate' in c) await c.navigate(url); return; }
+    }
+    await self.clients.openWindow(url);
   })());
 });

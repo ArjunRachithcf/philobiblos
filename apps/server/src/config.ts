@@ -1,6 +1,7 @@
 // Settings from the environment (contracts/homerslab-app.yaml, docker-compose.yml). Secrets are read here and
 // nowhere else, and never logged.
 import { join, resolve } from 'node:path';
+import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY } from './push/hosts';
 
 export type Mode = 'homerslab' | 'standalone';
 
@@ -37,6 +38,11 @@ export interface Config {
   imap: { host: string; user: string; password: { value: string } | { file: string }; folder: string } | null;
   /** Mail providers whose ARC seal Shelf trusts for a forward that broke the bookshop's DKIM (SHELF_MAIL_ARC_SEALERS). */
   arcSealers: string[];
+  /**
+   * The push services a device's subscription may name (SHELF_PUSH_HOSTS, comma-separated host names or `*.domain`;
+   * default the browsers' own, push/push.ts DEFAULT_PUSH_HOSTS). Every send still goes to public addresses over https only.
+   */
+  pushHosts: string[];
   /** The household's addresses the bookshop writes to (SHELF_MAIL_RECIPIENTS); a mail to anyone else is not taken. */
   mailRecipients: string[];
 }
@@ -86,8 +92,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       folder: env.SHELF_IMAP_FOLDER || 'INBOX',
     } : null,
     mailRecipients: (env.SHELF_MAIL_RECIPIENTS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter((d) => /^[^@\s]+@[^@\s]+$/.test(d)),
+    pushHosts: parsePushHosts(env.SHELF_PUSH_HOSTS),
     arcSealers: (env.SHELF_MAIL_ARC_SEALERS ?? 'google.com').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
   };
+}
+
+function parsePushHosts(v: string | undefined): string[] {
+  if (v === undefined || !v.trim()) return [...DEFAULT_PUSH_HOSTS];
+  const hosts = v.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  for (const h of hosts) if (!PUSH_HOST_ENTRY.test(h)) throw new Error(`SHELF_PUSH_HOSTS: host names or *.domain, comma-separated, not ${h.slice(0, 80)}`);
+  return hosts;
 }
 
 function parseOrigin(v: string): URL {

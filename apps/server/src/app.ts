@@ -22,6 +22,9 @@ import { inboxRoutes } from './routes/inbox';
 import { SHARE_BYTES, SHARE_UPLOADS, ShareProcessor } from './shares/shares';
 import type { runMediaJob } from './media/client';
 import { AiJobs, type AiJobOptions } from './ai/jobs';
+import { pushRoutes } from './routes/push';
+import { pushClient } from './push/push';
+import type { Egress } from './net/egress';
 
 /** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md); a
  * file up to the largest by type (SHARE_BYTES: a video), each type and the whole share checked in shares.ts. */
@@ -29,7 +32,7 @@ export const SHARE_LIMITS = { files: 30, fileSize: SHARE_BYTES.video, fields: 10
 
 export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; url: string }[] }
 
-export interface AppOptions { ai?: AiJobOptions; logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
+export interface AppOptions { ai?: AiJobOptions; push?: Egress; logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   const app = Fastify({
@@ -77,7 +80,10 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     await inboxRoutes(api, cfg, db, shares);
     // The one HTTP client (ADR 0009) for the book jobs: the manifest's hosts. The AI's calls have their own clients, one
     // host each (ai/model.ts): Ollama's, or Claude's after the opt-in.
-    await jobRoutes(api, cfg, db, { egress: createEgress({ rules: egressRules({ ollamaUrl: cfg.ollamaUrl }), enabled: cfg.egress }), shares, ai, ...opts.jobs });
+    // Web Push has its own client too: the browsers' push services and nothing else (push/push.ts).
+    const push = opts.push ?? pushClient(cfg);
+    await pushRoutes(api, cfg, db, push);
+    await jobRoutes(api, cfg, db, { egress: createEgress({ rules: egressRules({ ollamaUrl: cfg.ollamaUrl }), enabled: cfg.egress }), shares, ai, push, ...opts.jobs });
   }, { prefix: '/api' });
   if (cfg.webDir && existsSync(cfg.webDir)) {
     await app.register(fastifyStatic, { root: cfg.webDir });

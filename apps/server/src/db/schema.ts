@@ -391,6 +391,17 @@ export const jobRun = sqliteTable('job_run', {
   period: text('period'),
 });
 
+// Web Push (push/push.ts): an adult's browsers, at known push services; the application server key is sealed.
+export const pushSubscription = sqliteTable('push_subscription', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: text('created_at').notNull(),
+  lastSentAt: text('last_sent_at'),
+}, (t) => [index('push_subscription_person').on(t.personId)]);
+
 // The scheduler's claim on a period (jobs/schedule.ts): a period runs once, whatever restarts, overlaps or clocks do.
 export const jobPeriod = sqliteTable('job_period', {
   job: text('job').notNull(),

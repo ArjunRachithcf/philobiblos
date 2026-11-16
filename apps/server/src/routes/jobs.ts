@@ -13,13 +13,14 @@ import type { Egress } from '../net/egress';
 import { refreshMail, type MailDeps } from '../mail/job';
 import { keepPlan } from '../month/plan';
 import { monthlyRefresh, type MonthlyWork } from '../month/refresh';
+import { notify } from '../push/push';
 import type { ShareProcessor } from '../shares/shares';
 import type { AiJobs } from '../ai/jobs';
 
 export const JOBS = ['monthly', 'mail', 'shares', 'prices', 'metadata', 'covers', 'ai_suggest', 'ai_tag', 'ai_explain'] as const;
 
 export interface JobDeps {
-  egress: Egress; shares?: ShareProcessor; ai?: AiJobs; prices?: PriceSource; env?: JobEnv; mail?: MailDeps; started?: (job: string, done: Promise<void>) => void;
+  egress: Egress; push?: Egress; shares?: ShareProcessor; ai?: AiJobs; prices?: PriceSource; env?: JobEnv; mail?: MailDeps; started?: (job: string, done: Promise<void>) => void;
   /** The scheduler: off unless asked for (main.ts); tests drive it by hand with `scheduler.tick()`. */
   schedule?: { now?: () => Date; tickMs?: number; onScheduler?: (s: Scheduler) => void; start?: boolean };
 }
@@ -51,7 +52,11 @@ export async function jobRoutes(app: FastifyInstance, cfg: Config, db: Db, deps:
   if (deps.schedule) {
     const scheduler = new Scheduler(db, [{
       job: 'monthly',
-      run: (ctl) => monthlyRefresh(monthlyWork(ctl.claim.period, ctl.deadline), { deadline: ctl.deadline, done: ctl.claim.steps, step: ctl.step, now }),
+      // Only the scheduled run lets the adults know, once a period (its step is kept done); by hand it does not.
+      run: (ctl) => monthlyRefresh({
+        ...monthlyWork(ctl.claim.period, ctl.deadline),
+        ...(deps.push ? { push: () => notify(db, cfg, deps.push!, 'plan', { now }) } : {}),
+      }, { deadline: ctl.deadline, done: ctl.claim.steps, step: ctl.step, now }),
     }], deps.schedule);
     deps.schedule.onScheduler?.(scheduler);
     if (deps.schedule.start !== false) app.addHook('onReady', async () => { scheduler.start(); });

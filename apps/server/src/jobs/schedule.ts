@@ -34,7 +34,8 @@ export const SCHEDULE = {
 } as const;
 
 export interface Cycle { day: number; time: string; timezone: string }
-export const DEFAULT_CYCLE: Cycle = { day: 1, time: '20:17', timezone: 'Europe/Zurich' };
+/** Before the household has its settings row (its column defaults apply after): UTC, no place assumed. */
+export const DEFAULT_CYCLE: Cycle = { day: 1, time: '20:17', timezone: 'UTC' };
 
 export class CycleError extends Error {}
 

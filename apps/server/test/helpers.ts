@@ -8,6 +8,7 @@ import { expect } from 'vitest';
 import { createSession } from '../src/auth/sessions';
 import type { WebAuthn } from '../src/auth/webauthn';
 import { openDb, type Db } from '../src/db/open';
+import { EgressError, type Egress } from '../src/net/egress';
 import * as t from '../src/db/schema';
 import { currentMonth } from '../src/month/plan';
 import { UNVERIFIED_ID, mailItemId } from '../src/inbox/inbox';
@@ -82,9 +83,18 @@ const PARAMS: Record<string, Record<string, string>> = {
   undoMerge: { mergeId: 'm_old' },
   getOrder: { id: 'o_old' }, getMonth: { month: THIS_MONTH }, setMonthBudget: { month: THIS_MONTH }, changePicks: { month: THIS_MONTH },
   renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
-  getShare: { id: SHARE_ID }, decideFound: { itemId: mailItemId('<inv-1@bookshop.example>'), index: '0' }, dismissInboxItem: { itemId: UNVERIFIED_ID },
+  getShare: { id: SHARE_ID }, removePushSubscription: { id: 'ps_alex' }, decideFound: { itemId: mailItemId('<inv-1@bookshop.example>'), index: '0' }, dismissInboxItem: { itemId: UNVERIFIED_ID },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
+};
+
+/** A browser's push key (RFC 8291 §5's example's receiver: a point on P-256 nobody's browser holds). */
+export const RFC8291_UA_KEY = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
+
+/** A push client that sends nothing anywhere (the tests never reach a real push service). */
+export const nowherePush: Egress = {
+  get: () => Promise.reject(new EgressError('not-allowed', 'no')), post: () => Promise.reject(new EgressError('not-allowed', 'no')),
+  push: async (url) => ({ status: 201, type: '', body: Buffer.alloc(0), url }),
 };
 
 /** Request bodies that name something real in household() where a sample would be refused. */
@@ -93,6 +103,7 @@ const BODIES: Record<string, unknown> = {
   reviewLink: { state: 'confirmed' }, reviewBookIdea: { state: 'confirmed' }, reviewIdeaProposal: { state: 'confirmed' }, editIdea: { name: 'Markets and value' },
   addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
   decideFound: { action: 'skip' },
+  addPushSubscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/contract-new', keys: { p256dh: RFC8291_UA_KEY, auth: 'BTBZMqHH6r4Tts7J_aSIgg' } },
   setMonthBudget: { min: 10000, max: 15000 }, changePicks: { recompute: true }, createOrderDraft: { month: THIS_MONTH },
 };
 

@@ -1,6 +1,7 @@
 // The monthly refresh (spec §5 step 1, shelf#8 h): new invoices → copies (the mail), new shares read, prices refreshed
 // for the candidates, the month's plan kept (scored by packages/scoring as it is made), the AI's suggestions and its one
-// line of why for the picks. Run by the scheduler on the household's day (jobs/schedule.ts), or by an admin by hand.
+// line of why for the picks, then a push to the adults (push/push.ts: "this month's plan is ready", the scheduled run
+// only, once a period). Run by the scheduler on the household's day (jobs/schedule.ts), or by an admin by hand.
 //
 // - No request identity: each step is a job that runs for the household, as by hand, with what that job needs and no
 //   more (the mail its mailbox, the prices the book sites' client, the AI its provider's own client, the plan no one's
@@ -11,7 +12,7 @@
 import type { Outcome } from '../jobs/books';
 import { inSlot } from '../jobs/run';
 
-export const MONTHLY_STEPS = ['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain'] as const;
+export const MONTHLY_STEPS = ['mail', 'shares', 'prices', 'plan', 'ai_suggest', 'ai_explain', 'push'] as const;
 export type MonthlyStep = (typeof MONTHLY_STEPS)[number];
 
 /** The steps this server can do; one it lacks (no AI, no media worker) is nothing to do. */
