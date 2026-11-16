@@ -64,7 +64,7 @@ describe('what may be reached', () => {
     ['93.184.215.14', true], ['2606:4700::1111', true], ['10.1.2.3', false], ['127.0.0.1', false], ['169.254.169.254', false],
     ['172.21.1.11', false], ['192.168.1.1', false], ['100.64.0.1', false], ['0.0.0.0', false], ['224.0.0.1', false],
     ['::1', false], ['fe80::1', false], ['fd00::1', false], ['::ffff:10.0.0.1', false], ['::ffff:93.184.215.14', true], ['2001:db8::1', false],
-    ['2002:a00:1::', false], ['not an address', false],
+    ['2002:a00:1::', false], ['3fff::1', false], ['2001:2::1', false], ['2001:0:4136:e378::1', false], ['2001:20::1', false], ['not an address', false],
   ])('%s public: %s', (a, want) => expect(isPublicAddress(a)).toBe(want));
 
   it('a host not on the list, another scheme or port, credentials in the URL: refused before any lookup', async () => {
@@ -131,6 +131,43 @@ describe('answers are held to limits', () => {
   });
 });
 
+describe('bodies nobody wants are never read', () => {
+  /** A server that answers `status` and then sends forever; how much it sent, and whether the connection closed. */
+  const endless = (status: number, headers: Record<string, string> = {}) => {
+    const st = { sent: 0, closed: false };
+    const h: Handler = (_q, r) => {
+      r.writeHead(status, { 'content-type': 'text/html', ...headers });
+      const chunk = Buffer.alloc(64 * 1024, 0x61);
+      const send = () => { if (r.destroyed) return; st.sent += chunk.length; if (r.write(chunk)) setImmediate(send); else r.once('drain', send); };
+      r.on('close', () => { st.closed = true; });
+      send();
+    };
+    return { st, h };
+  };
+
+  it.each([
+    ['an error status (the bookshop\'s 403)', () => endless(403)],
+    ['a redirect off the host', () => endless(302, { location: 'http://other.test/' })],
+  ])('%s with an endless body: the connection is closed, not drained', async (_n, make) => {
+    const { st, h } = make();
+    reset({ '/e': h });
+    await client([books()]).get(`http://books.test:${hport}/e`, 'html').catch(() => null);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(st.closed).toBe(true);
+    const at = st.sent;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(st.sent).toBe(at);
+    expect(st.sent).toBeLessThan(16 << 20);
+  });
+
+  it('a lookup that never answers is cut off by the same deadline', async () => {
+    const c = createEgress({ rules: [books()], resolve: () => new Promise(() => {}), timeoutMs: 200 });
+    const t = Date.now();
+    await fails(c.get(`http://books.test:${hport}/`, 'json'), 'timeout');
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
+});
+
 describe('redirects', () => {
   it('on the same host: followed, at most 3', async () => {
     reset({ '/1': redirect('/2'), '/2': json({ at: 2 }), '/r0': redirect('/r1'), '/r1': redirect('/r2'), '/r2': redirect('/r3'), '/r3': redirect('/r4'), '/r4': json({}) });
@@ -159,6 +196,7 @@ describe('redirects', () => {
   it.each([
     ['a host off the list', { 'covers.test/c': redirect('https://other.test/x') }],
     ['over http', { 'covers.test/c': redirect(`http://archive.test:${hport}/x`) }],
+    ['over http on its default port', { 'covers.test/c': redirect('http://archive.test/x') }],
     ['on another port', { 'covers.test/c': redirect(`https://archive.test:${sport}/x`) }],
     ['a third host', { 'covers.test/c': redirect('https://archive.test/a'), 'archive.test/a': redirect('https://ia123.us.archive.test/b'), 'ia123.us.archive.test/b': redirect('https://archive.test/c') }],
   ])('covers: %s is refused', async (_n, r) => {
@@ -179,7 +217,7 @@ describe('redirects', () => {
     expect(rule.crossHost).toBe(2);
     expect(rule.redirectTo).toEqual(['archive.org', ARCHIVE_NODE]);
     for (const h of ['ia902809.us.archive.org', 'ia800.us.archive.org']) expect(ARCHIVE_NODE.test(h)).toBe(true);
-    for (const h of ['evil.archive.org', 'ia1.us.archive.org.evil.test', 'xia902809.us.archive.org', 'ia902809.eu.archive.org', 'web.archive.org']) expect(ARCHIVE_NODE.test(h), h).toBe(false);
+    for (const h of ['evil.archive.org', 'ia1.us.archive.org.evil.test', 'ia123.us.archive.org.evil.test', 'xia902809.us.archive.org', 'ia902809.eu.archive.org', 'web.archive.org']) expect(ARCHIVE_NODE.test(h), h).toBe(false);
   });
 });
 

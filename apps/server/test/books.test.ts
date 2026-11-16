@@ -1,8 +1,9 @@
 // Prices (ADR 0008), Open Library's metadata and covers: the parsers against invented pages and answers (no real
 // page or book is in here), the jobs with a stand-in egress client, and POST /jobs/{job}/run's rules.
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
@@ -69,13 +70,44 @@ describe('the price page, read as text', () => {
   it('a hostile page: no links to the shop\'s articles, huge or broken, gives nothing', () => {
     expect(parseTiles('<a href="https://evil.example/shop/home/artikeldetails/A1">x</a>')).toEqual([]);
     expect(parseTiles('<'.repeat(3_000_000))).toEqual([]);
+    expect(textOf('a <b>c</b> <script>x()</script>d<style>p{}</style>e <unclosed')).toBe('a c d e');
     expect(parseTiles('<a href="/shop/home/artikeldetails/A1234567"')).toHaveLength(1);
+  });
+
+  it.each([
+    ['80 KB of <', () => '<'.repeat(80_000)],
+    ['an unclosed script', () => `<script>${'<'.repeat(500_000)}`],
+    ['many unclosed tags and scripts', () => '<script <style <a '.repeat(50_000)],
+  ])('linear on hostile input: %s', (_n, make) => {
+    const html = make();
+    const t = Date.now();
+    textOf(html);
+    expect(Date.now() - t).toBeLessThan(200);
+  });
+
+  it('a page with 2 MB of < between two tiles, or thousands of unclosed article links, parses in well under a second', () => {
+    const link = (id: string) => `<a href="/shop/home/artikeldetails/${id}">The Grand Ledger</a> Buch (Taschenbuch) Fr. 18.50`;
+    for (const html of [link('A5000000001') + '<'.repeat(2 << 20) + link('A5000000002'), 'href="/shop/home/artikeldetails/A1234567'.repeat(30_000)]) {
+      const t = Date.now();
+      parseTiles(html);
+      expect(Date.now() - t).toBeLessThan(1000);
+    }
   });
 
   it('the source asks the shop\'s search page, title and first author, and nothing else', async () => {
     const e = fakeEgress(() => page([{ id: 'A3000000001', title: 'The Grand Ledger', author: 'Mira Okafor', format: 'Buch (Taschenbuch)', price: 'Fr. 18.50' }]));
     expect(await orellFuessli(e).find({ title: 'The Grand Ledger', authors: ['Mira Okafor'] })).toMatchObject({ priceC: 1850 });
     expect(e.asked).toEqual(['https://www.orellfuessli.ch/suche?sq=The+Grand+Ledger+Mira+Okafor']);
+  });
+});
+
+describe('Open Library\'s words reach the screen as text only', () => {
+  it('no web code renders HTML from data: no dangerouslySetInnerHTML, innerHTML or outerHTML but the icons', () => {
+    const web = fileURLToPath(new URL('../../web/src/', import.meta.url));
+    const files = (d: string): string[] => readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? files(p) : /\.(ts|tsx)$/.test(f) ? [p] : []; });
+    // The one exception: the design system's icons (ui.tsx), SVG from its own fixed set by name, never from data.
+    const hits = files(web).flatMap((f) => readFileSync(f, 'utf8').split('\n').filter((l) => /dangerouslySetInnerHTML|\.innerHTML\s*=|\.outerHTML\s*=|insertAdjacentHTML/.test(l)).map((l) => `${relative(web, f)}: ${l.trim()}`));
+    expect(hits).toEqual(["ui.tsx: return <span aria-hidden=\"true\" style={{ display: 'contents' }} dangerouslySetInnerHTML={{ __html: window.I(name, className) }} />;"]);
   });
 });
 

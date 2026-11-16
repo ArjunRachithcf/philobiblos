@@ -33,7 +33,7 @@ export interface Rule {
 }
 
 export type Want = 'json' | 'html' | 'image';
-export const LIMITS: Record<Want, number> = { json: 1 << 20, html: 2 << 20, image: 5 << 20 };
+export const LIMITS: Record<Want, number> = { json: 1 << 20, html: 1 << 20, image: 5 << 20 };
 export const TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
 const TYPES: Record<Want, RegExp> = { json: /^application\/(?:[a-z.+-]*\+)?json$/, html: /^text\/html$/, image: /^image\/(?:jpeg|png|webp|gif)$/ };
@@ -76,7 +76,9 @@ for (const [net, bits] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], 
 const globalV6 = new BlockList();
 globalV6.addSubnet('2000::', 3, 'ipv6');
 const blockedV6 = new BlockList();
-for (const [net, bits] of [['2001:db8::', 32], ['2002::', 16], ['2001::', 32], ['2001:10::', 28], ['2001:20::', 28]] as const) blockedV6.addSubnet(net, bits, 'ipv6');
+// IANA's IPv6 special-purpose registry within 2000::/3: the IETF protocol assignments (2001::/23: Teredo, benchmarking
+// 2001:2::/48, ORCHID, AMT, …), documentation (2001:db8::/32 and 3fff::/20, RFC 9637) and 6to4 (2002::/16).
+for (const [net, bits] of [['2001::', 23], ['2001:db8::', 32], ['2002::', 16], ['3fff::', 20]] as const) blockedV6.addSubnet(net, bits, 'ipv6');
 
 /** True for an address on the public internet. IPv6 must be global unicast; a v4-mapped address counts as its v4. */
 export function isPublicAddress(addr: string): boolean {
@@ -115,9 +117,15 @@ export function createEgress(o: EgressOptions): Egress {
     return o.rules.find((r) => r.host === u.hostname && (r.scheme ?? 'https') === scheme && (r.port == null ? u.port === '' : Number(u.port || (scheme === 'https' ? 443 : 80)) === r.port)) ?? null;
   }
 
-  async function addressFor(host: string, privateOk: boolean): Promise<LookupAddress> {
+  async function addressFor(host: string, privateOk: boolean, signal: AbortSignal): Promise<LookupAddress> {
     let all: LookupAddress[];
-    try { all = await resolve(host); } catch { throw new EgressError('network', `cannot resolve ${host}`); }
+    // The lookup is inside the deadline too: a resolver that never answers is cut off with the rest.
+    const aborted = new Promise<never>((_, fail) => {
+      if (signal.aborted) fail(new EgressError('timeout', `${host} took longer than ${timeoutMs} ms`));
+      signal.addEventListener('abort', () => fail(new EgressError('timeout', `${host} took longer than ${timeoutMs} ms`)), { once: true });
+    });
+    aborted.catch(() => {});
+    try { all = await Promise.race([resolve(host), aborted]); } catch (e) { throw e instanceof EgressError ? e : new EgressError('network', `cannot resolve ${host}`); }
     if (!all.length) throw new EgressError('network', `cannot resolve ${host}`);
     // Every answer must be public, not just the first: a mixed answer is a rebinding attempt.
     if (!privateOk && all.some((a) => !isPublic(a.address))) throw new EgressError('private-address', `${host} resolves to a private address`);
@@ -125,7 +133,7 @@ export function createEgress(o: EgressOptions): Egress {
   }
 
   function once(u: URL, rule: Rule, want: Want, headers: Record<string, string>, signal: AbortSignal): Promise<{ res: http.IncomingMessage; addr: LookupAddress }> {
-    return addressFor(u.hostname, rule.privateOk === true).then((addr) => new Promise((ok, fail) => {
+    return addressFor(u.hostname, rule.privateOk === true, signal).then((addr) => new Promise((ok, fail) => {
       // The connection goes to the address checked above; the name stays for TLS (SNI and the certificate).
       const lookup: LookupFunction = (_h, opts, cb) => {
         if ((opts as { all?: boolean }).all) (cb as unknown as (e: null, a: LookupAddress[]) => void)(null, [addr]);
@@ -157,7 +165,8 @@ export function createEgress(o: EgressOptions): Egress {
           const { res } = await once(u, rule, want, opts.headers ?? {}, ctl.signal);
           const status = res.statusCode ?? 0;
           if (status >= 300 && status < 400 && res.headers.location) {
-            res.resume();
+            // Never read a body nobody wants: the connection is closed, not drained.
+            res.destroy();
             if (hop >= MAX_REDIRECTS) throw new EgressError('redirect', `more than ${MAX_REDIRECTS} redirects`);
             const next = new URL(res.headers.location, u);
             const sameHost = next.hostname === u.hostname && next.protocol === u.protocol && next.port === u.port;
@@ -170,7 +179,7 @@ export function createEgress(o: EgressOptions): Egress {
           const encoding = String(res.headers['content-encoding'] ?? 'identity').toLowerCase();
           if (encoding !== 'identity') { res.destroy(); throw new EgressError('encoding', `${u.hostname} sent ${encoding} content`); }
           const type = String(res.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
-          if (status < 200 || status >= 300) { res.resume(); throw new EgressError('status', `${u.hostname} answered ${status}`, status); }
+          if (status < 200 || status >= 300) { res.destroy(); throw new EgressError('status', `${u.hostname} answered ${status}`, status); }
           if (!TYPES[want].test(type)) { res.destroy(); throw new EgressError('type', `${u.hostname} sent ${type || 'no content type'}, not ${want}`); }
           const limit = LIMITS[want];
           if (Number(res.headers['content-length'] ?? 0) > limit) { res.destroy(); throw new EgressError('too-large', `${u.hostname} sent more than ${limit} bytes`); }

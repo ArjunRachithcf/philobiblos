@@ -19,26 +19,53 @@ export interface PriceSource {
   find(b: { title: string; authors: string[] }): Promise<Offer | null>;
 }
 
-const ARTICLE = /href="(?:https:\/\/www\.orellfuessli\.ch)?\/shop\/home\/artikeldetails\/(A\d{6,14})[^"]*"/g;
+const ARTICLE = /href="(?:https:\/\/www\.orellfuessli\.ch)?\/shop\/home\/artikeldetails\/(A\d{6,14})[^"<>]{0,200}"/g;
 const PRINT = /\bBuch \((?:Taschenbuch|Gebundene Ausgabe)\)/;
 const PRICE = /(?:Fr\.|CHF)\s*(\d{1,4}[.,]\d{2})/;
 const ENGLISH = /\b(?:Englisch|English)\b/;
 const AVAILABILITY = /\b((?:Sofort lieferbar|Lieferbar|Versandfertig|Nicht lieferbar|Vorbestellbar|Erscheint)(?: (?:in|innerhalb|ab|am) [\d.\- ]{1,12}(?:Werktagen|Tagen|Tag|Wochen|Woche)?)?)/;
 
-/** Text of an HTML fragment: tags dropped, the common entities decoded, whitespace folded. */
+/** The most of a search page that is read, and of each result tile (the egress client stops at its own 1 MB). */
+export const PAGE_MAX = 1 << 20;
+export const TILE_MAX = 4000;
+const SKIP = ['script', 'style', 'template', 'noscript'];
+
+/**
+ * Text of an HTML fragment: tags dropped, the content of script, style, template and noscript dropped, the common
+ * entities decoded, whitespace folded. One pass with indexOf, each search starting where the last one ended, so the
+ * work is linear in the input whatever it holds (no regular expression that can backtrack over a tag).
+ */
 export function textOf(html: string): string {
-  return html
-    .replace(/<(script|style|template|noscript)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<[^>]*>/g, ' ')
+  const lower = html.toLowerCase();
+  let out = '';
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) { out += html.slice(i); break; }
+    out += html.slice(i, lt) + ' ';
+    const gt = html.indexOf('>', lt + 1);
+    if (gt < 0) break; // an unclosed tag: nothing after it is text
+    const name = /^<([a-z]+)/.exec(lower.slice(lt, lt + 12))?.[1];
+    if (name && SKIP.includes(name)) {
+      const close = lower.indexOf(`</${name}`, gt + 1);
+      if (close < 0) break; // unclosed script or style: the rest is its content
+      const after = html.indexOf('>', close);
+      if (after < 0) break;
+      i = after + 1;
+    } else {
+      i = gt + 1;
+    }
+  }
+  return out
     .replace(/&nbsp;|&#160;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ').trim();
 }
 
 export interface Tile { externalId: string; title: string; text: string }
 
-/** The result tiles of a search page: each article link and the page text up to the next one. */
+/** The result tiles of a search page: each article link and the page text after it (up to the next one, 4000 characters at most). */
 export function parseTiles(html: string): Tile[] {
-  const page = html.slice(0, 2 << 20);
+  const page = html.slice(0, PAGE_MAX);
   const hits = [...page.matchAll(ARTICLE)];
   const tiles: Tile[] = [];
   for (let i = 0; i < hits.length && tiles.length < 48; i++) {
@@ -46,10 +73,10 @@ export function parseTiles(html: string): Tile[] {
     const id = h[1]!;
     if (tiles.some((t) => t.externalId === id)) continue;
     const end = page.indexOf('>', h.index) + 1;
-    const close = page.indexOf('</a>', end);
-    const title = close > 0 ? textOf(page.slice(end, close)).slice(0, 300) : '';
+    const close = end > 0 ? page.indexOf('</a>', end) : -1;
+    const title = close > 0 && close - end < 2000 ? textOf(page.slice(end, close)).slice(0, 300) : '';
     const next = hits.slice(i + 1).find((x) => x[1] !== id);
-    const text = textOf(page.slice(h.index, next ? next.index : Math.min(page.length, h.index + 4000))).slice(0, 2000);
+    const text = textOf(page.slice(h.index, Math.min(next ? next.index : page.length, h.index + TILE_MAX))).slice(0, 2000);
     tiles.push({ externalId: id, title, text });
   }
   return tiles;
