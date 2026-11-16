@@ -31,7 +31,7 @@ COPY --from=build /out-worker ./worker
 COPY LICENSE NOTICE ./
 # `docker exec <container> shelf recover <admin handle>` (ADR 0010)
 RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/shelf && chmod 755 /usr/local/bin/shelf
-RUN mkdir -p /data /keys /work && chown node:node /data /keys /work && chmod 700 /keys /work
+RUN mkdir -p /data /keys /work && chown node:node /data /keys /work && chmod 700 /keys && chmod 755 /work
 USER node
 VOLUME /data /keys /work
 EXPOSE 8080

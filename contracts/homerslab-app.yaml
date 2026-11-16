@@ -42,8 +42,8 @@ network:
   optional_egress: [api.anthropic.com]
   optional_egress_note: api.anthropic.com only when the household opts in to Claude in Settings; with Ollama nothing leaves for AI.
 # NEEDS HomersLab (shelf#8): the media worker is a second container from the same image, `node /app/worker/dist/main.js`,
-# with no network, a read-only root, no capabilities, 768 MB and 64 processes, sharing only a job volume at /work
-# with the app (docker-compose.yml shows it). Until HomersLab runs it, media jobs answer "unavailable"; the app never
+# as its own user in the app's group, with no network, a read-only root, no capabilities, 768 MB and 64 processes,
+# sharing only the job volume with the app: its in/ read-only at /work/in, its out/ at /work/out (docker-compose.yml). Until HomersLab runs it, media jobs answer "unavailable"; the app never
 # decodes media itself.
 health: /api/health
 resources: { memory: 512Mi, cpu: 0.5 }

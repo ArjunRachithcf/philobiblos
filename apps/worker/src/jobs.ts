@@ -7,14 +7,25 @@ export class JobError extends Error {
   constructor(readonly code: MediaError) { super(code); }
 }
 
+/** The buffer loaders libvips may use: these four, and no other (SVG, HEIC, AVIF, TIFF, PDF, … are refused by libvips). */
+export const LOADERS = ['VipsForeignLoadJpegBuffer', 'VipsForeignLoadPngBuffer', 'VipsForeignLoadWebpBuffer', 'VipsForeignLoadNsgifBuffer'];
+
+/** sharp with every libvips loader blocked but `LOADERS`: sniffing is not the only gate in front of the decoders. */
+export async function loadSharp() {
+  const { default: sharp } = await import('sharp');
+  sharp.cache(false);
+  sharp.concurrency(1);
+  sharp.block({ operation: ['VipsForeignLoad'] });
+  sharp.unblock({ operation: LOADERS });
+  return sharp;
+}
+
 /** Decodes an image (within the pixel limit), drops every metadata block, and writes a fresh JPEG. */
 export async function reencodeImage(input: Uint8Array): Promise<{ data: Buffer; width: number; height: number }> {
   if (input.length > MEDIA_LIMITS.maxInput['image.reencode']) throw new JobError('too_large');
   const type = sniff(input);
   if (!['jpeg', 'png', 'webp', 'gif'].includes(type)) throw new JobError('not_this_type');
-  const { default: sharp } = await import('sharp');
-  sharp.cache(false);
-  sharp.concurrency(1);
+  const sharp = await loadSharp();
   const img = sharp(input, { limitInputPixels: MEDIA_LIMITS.maxPixels, failOn: 'error', sequentialRead: true, pages: 1, animated: false });
   let meta;
   try { meta = await img.metadata(); } catch (e) { throw new JobError(/pixel limit/i.test(String((e as Error).message)) ? 'too_many_pixels' : 'unreadable'); }
@@ -31,7 +42,7 @@ export async function reencodeImage(input: Uint8Array): Promise<{ data: Buffer; 
   }
 }
 
-/** The text of a PDF, as rows of cells (items on one line, split where the gap is wide), within the limits. */
+/** The text of a PDF, as rows of cells (items on one line, split where the gap is wide), within the limits (characters, rows, cells). */
 export async function pdfText(input: Uint8Array): Promise<{ pages: number; rows: string[][]; truncated: boolean }> {
   if (input.length > MEDIA_LIMITS.maxInput['pdf.text']) throw new JobError('too_large');
   if (sniff(input) !== 'pdf') throw new JobError('not_this_type');
@@ -48,6 +59,7 @@ export async function pdfText(input: Uint8Array): Promise<{ pages: number; rows:
   const pages = Math.min(doc.numPages, MEDIA_LIMITS.pdfMaxPages);
   const rows: string[][] = [];
   let chars = 0;
+  let cellCount = 0;
   let truncated = false;
   try {
     for (let n = 1; n <= pages && !truncated; n++) {
@@ -68,7 +80,8 @@ export async function pdfText(input: Uint8Array): Promise<{ pages: number; rows:
           end = p.x + p.w;
         }
         chars += cells.reduce((k, c) => k + c.length, 0);
-        if (chars > MEDIA_LIMITS.pdfMaxText) { truncated = true; break; }
+        cellCount += cells.length;
+        if (chars > MEDIA_LIMITS.pdfMaxText || cellCount > MEDIA_LIMITS.pdfMaxCells || rows.length >= MEDIA_LIMITS.pdfMaxRows) { truncated = true; break; }
         rows.push(cells);
       }
       page.cleanup();
