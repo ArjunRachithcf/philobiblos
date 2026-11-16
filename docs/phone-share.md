@@ -8,8 +8,10 @@ share") and `docs/security.md`.
 
 1. Open Shelf in Chrome and sign in once.
 2. Chrome's menu → **Add to home screen** (Install). Shelf now appears in the share sheet.
-3. In Instagram: save the post's images (or share the post), then **Share** → **Shelf**. The share screen opens, sends the
-   share and shows the media worker's progress. If it says to open Shelf once, open it and share again (the share target
+3. In Instagram: save the post's images (or share the post), then **Share** → **Shelf**. The share screen opens and shows
+   what arrived; tap **Send to the Inbox** (or **Discard**). Shelf never sends a share without that tap, because any
+   website could open the share screen too. An untouched share is gone after an hour, and sharing again replaces it.
+   Then the screen shows the media worker's progress. If it says to open Shelf once, open it and share again (the share target
    needs Shelf to have been opened in that browser before).
 
 ## iPhone: the "Send to Shelf" Shortcut
@@ -33,5 +35,5 @@ once, and you can revoke it in Settings at any time (do so when a phone is lost)
    hash). Lost it? Revoke it and make another.
 6. Try it: in Instagram, **Share** → **Send to Shelf**. The share is in your Inbox a moment later.
 
-Limits: 30 files of 20 MB a share, 30 shares in ten minutes. Ten wrong tokens from one address make every token from it
-wait ten minutes.
+Limits: 30 files of 20 MB a share, 30 shares in ten minutes. A valid token always works; after ten wrong ones from one
+address, or naming one token, in ten minutes, Shelf answers further wrong ones with "wait" (429).

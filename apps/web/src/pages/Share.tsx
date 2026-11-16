@@ -1,6 +1,8 @@
 // The phone share screen (spec §4 "Phone share", contracts/connectors.md). A share from the phone's share sheet lands
-// in the service worker (public/sw.js), which keeps it for a moment and opens this screen; this screen posts it to
-// /api/shares as Shelf's own page (with Shelf's Origin and the session) and then shows how the media worker gets on.
+// in the service worker (public/sw.js), which keeps it for a moment and opens this screen. Any website can make the
+// browser POST to the share target, so this screen never sends on its own: it shows what arrived, and only the
+// person's tap on "Send to the Inbox" posts it to /api/shares (as Shelf's own page, with Shelf's Origin and the
+// session). An untouched share expires after an hour. Then it shows how the media worker gets on.
 // Without a pending share it is a form: a link, a note and images, by hand.
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, message, type Share as ShareView } from '../api';
@@ -28,16 +30,21 @@ function upload(form: FormData, onProgress: (sent: number, total: number) => voi
   });
 }
 
-async function takePending(id: string): Promise<FormData | null> {
+/** A share waits for the person's tap at most this long. */
+export const PENDING_MAX_AGE_MS = 3600_000;
+interface Pending { id: string; form: FormData; dropped: number }
+
+async function readPending(id: string): Promise<Pending | null> {
   if (!PENDING.test(id) || !('caches' in window)) return null;
   const cache = await caches.open(CACHE);
   const key = `/share-pending/${id}`;
   const r = await cache.match(key);
   if (!r) return null;
-  const form = await r.formData();
-  await cache.delete(key);
-  return form;
+  const at = Number(r.headers.get('x-shelf-at'));
+  if (!Number.isFinite(at) || Date.now() - at > PENDING_MAX_AGE_MS) { await cache.delete(key); return null; }
+  return { id, form: await r.formData(), dropped: Number(r.headers.get('x-shelf-dropped')) || 0 };
 }
+const forget = async (id: string) => { if ('caches' in window) await (await caches.open(CACHE)).delete(`/share-pending/${id}`); };
 
 export function Share({ go }: { go: (to: string) => void }) {
   const id = useId();
@@ -50,6 +57,7 @@ export function Share({ go }: { go: (to: string) => void }) {
   const [note, setNote] = useState('');
   const files = useRef<HTMLInputElement>(null);
   const started = useRef(false);
+  const [pending, setPending] = useState<Pending | null>(null);
 
   const send = async (form: FormData) => {
     setError(null);
@@ -61,16 +69,18 @@ export function Share({ go }: { go: (to: string) => void }) {
     } catch (e) { setError(message(e)); setSent(null); }
   };
 
-  // A share from the phone's share sheet: sent at once, then forgotten by the browser.
+  // A share from the share target: shown, never sent until the person taps Send.
   useEffect(() => {
     const p = params.get('pending');
     if (!p || started.current) return;
     started.current = true;
-    takePending(p).then((form) => {
-      if (form) void send(form);
-      else { history.replaceState(null, '', '/share'); setError('That share was sent already, or it is gone. Share it again from your phone.'); }
+    readPending(p).then((x) => {
+      if (x) setPending(x);
+      else { history.replaceState(null, '', '/share'); setError('That share was sent or discarded already, or it is more than an hour old. Share it again from your phone.'); }
     }, () => setError('The phone’s share could not be read.'));
   }, []);
+  const sendPending = async () => { if (!pending) return; const p = pending; setPending(null); await forget(p.id); await send(p.form); };
+  const discard = async () => { if (!pending) return; await forget(pending.id); setPending(null); history.replaceState(null, '', '/share'); setError(null); };
 
   // How the media worker gets on: asked every second, then less often.
   useEffect(() => {
@@ -131,7 +141,8 @@ export function Share({ go }: { go: (to: string) => void }) {
             )}
           </section>
         )}
-        {!sent && !shareId && (
+        {pending && !sent && <PendingShare p={pending} onSend={() => void sendPending()} onDiscard={() => void discard()} />}
+        {!pending && !sent && !shareId && (
           <form className="card stack" onSubmit={byHand} noValidate aria-labelledby={`${id}-h`}>
             <h2 className="card-title" id={`${id}-h`}>Share by hand</h2>
             <div className="field">
@@ -151,5 +162,31 @@ export function Share({ go }: { go: (to: string) => void }) {
         )}
       </div>
     </>
+  );
+}
+
+function PendingShare({ p, onSend, onDiscard }: { p: Pending; onSend: () => void; onDiscard: () => void }) {
+  const id = useId();
+  const field = (k: string) => { const v = p.form.get(k); return typeof v === 'string' ? v : null; };
+  const images = p.form.getAll('media').filter((f) => typeof f !== 'string').length;
+  const send = useRef<HTMLButtonElement>(null);
+  useEffect(() => { send.current?.focus(); }, []);
+  return (
+    <section className="card stack" aria-labelledby={`${id}-h`}>
+      <h2 className="card-title" id={`${id}-h`}>Send this to your Inbox?</h2>
+      <p className="footnote">It arrived through Shelf’s share target. Send it only if you shared it just now: another website can open this screen too.</p>
+      <dl className="kv">
+        {field('title') && <><dt>Title</dt><dd className="wrap">{field('title')}</dd></>}
+        {field('url') && <><dt>Link</dt><dd className="wrap mono">{field('url')}</dd></>}
+        {field('text') && <><dt>Text</dt><dd className="wrap">{field('text')}</dd></>}
+        <dt>Images</dt><dd>{images}</dd>
+      </dl>
+      {p.dropped > 0 && <Notice kind="warn">{p.dropped} file{p.dropped === 1 ? ' was' : 's were'} over 20 MB and left out.</Notice>}
+      <p className="footnote">Only one share waits here: sharing again replaces this one.</p>
+      <div className="btn-row">
+        <button ref={send} type="button" className="btn btn-primary" onClick={onSend}>Send to the Inbox</button>
+        <button type="button" className="btn" onClick={onDiscard}>Discard</button>
+      </div>
+    </section>
   );
 }

@@ -456,7 +456,8 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
   await expect(page.getByRole('button', { name: 'Skip Wooden Train Set' })).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Invoice 99001122' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Dismiss A mail that was not verified' }).click();
+  await expect(page.getByRole('heading', { name: '1 mail not verified' })).toBeVisible();
+  await page.getByRole('button', { name: 'Dismiss 1 mail not verified' }).click();
   // The sample seed's shares are in the backlog already: nothing is left to ask.
   await expect(page.getByRole('heading', { name: 'Nothing waiting' })).toBeVisible();
 
@@ -505,6 +506,11 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
   });
   expect(landed).toMatch(/\/share\?pending=[0-9a-f-]{36}$/);
   await page.goto(landed);
+  // Nothing is sent until the person taps Send.
+  await expect(page.getByRole('heading', { name: 'Send this to your Inbox?' })).toBeVisible();
+  await expect(page.getByText('Three books on the commons https://example.org/p/9')).toBeVisible();
+  await expectAccessible(page, 'a share waiting for the tap');
+  await page.getByRole('button', { name: 'Send to the Inbox' }).click();
   await expect(page.getByText('In your Inbox.')).toBeVisible();
   await expect(page).toHaveURL(/\/share\?id=[0-9A-Z]{26}$/);
 
@@ -514,4 +520,28 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
   await expect(page.getByText('A caption from the Shortcut')).toBeVisible();
   await expectAccessible(page, 'inbox with shares');
   done();
+});
+
+test('another website cannot post a share through the share target: the share screen waits for the tap (PR #17 review)', async () => {
+  // The service worker is installed (the test before). A page of another origin submits a form to the share target.
+  const other = await page.context().newPage();
+  await other.route('http://evil.test/**', (r) => r.fulfill({ contentType: 'text/html', body: `<!doctype html><form id="f" method="post" enctype="multipart/form-data" action="${ORIGIN}/share-target"><input name="text" value="A share nobody made https://evil.test/x"><input name="url" value="https://evil.test/x"></form><script>document.getElementById('f').submit()</script>` }));
+  const posted: string[] = [];
+  other.on('request', (r) => { if (r.url().startsWith(`${ORIGIN}/api/shares`)) posted.push(r.method()); });
+  await other.goto('http://evil.test/');
+  await other.waitForURL(/\/share\?pending=[0-9a-f-]{36}$/);
+  await expect(other.getByRole('heading', { name: 'Send this to your Inbox?' })).toBeVisible();
+  await expect(other.getByText('A share nobody made https://evil.test/x')).toBeVisible();
+  await other.waitForTimeout(1500);
+  expect(posted).toEqual([]);
+  const inbox = await (await page.request.get('/api/inbox?filter=shared')).json() as { items: { share?: { url?: string } }[] };
+  expect(inbox.items.map((i) => i.share?.url)).not.toContain('https://evil.test/x');
+  const landed = other.url();
+  await other.getByRole('button', { name: 'Discard' }).click();
+  await expect(other.getByRole('heading', { name: 'Send this to your Inbox?' })).toHaveCount(0);
+  // Discarded: the same link opens nothing.
+  await other.goto(landed);
+  await expect(other.getByText(/sent or discarded already/)).toBeVisible();
+  expect(posted).toEqual([]);
+  await other.close();
 });
