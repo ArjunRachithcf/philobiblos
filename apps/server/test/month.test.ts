@@ -9,7 +9,7 @@ import { loadConfig } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { SealError, seal, unseal } from '../src/household/sealed';
-import { CARD_LINE, EMAIL, MAILTO_MAX, mailto, monthName, orderText } from '../src/month/order-mail';
+import { EMAIL, MAILTO_MAX, mailto, monthName, orderText } from '../src/month/order-mail';
 import { broadenMonth, currentMonth, nextMonth } from '../src/month/plan';
 import { importSeed } from '../src/seed/import';
 import { ORIGIN, TEST_SEALING_KEY, THIS_MONTH, sessionCookie } from './helpers';
@@ -147,9 +147,7 @@ describe('Compose (ADR 0007)', () => {
     expect(o.composeText).toContain('Example Street 1');
     expect(o.composeText).toContain('prices and delivery times');
     expect(o.composeText).not.toMatch(/\b(?:\d[ -]?){13,19}\b/); // nothing shaped like a card number
-    // The card number is the person's to type: one blank line for it, and nothing after its colon.
-    expect(o.composeText.split('\n').filter((l: string) => /card|cvc|cvv/i.test(l))).toEqual([CARD_LINE]);
-    expect(CARD_LINE).toBe('Premium Card number: ');
+    expect(o.composeText).not.toMatch(/card number|cvc|cvv/i);
     expect(o.lines.length).toBeGreaterThan(0);
     expect((await get('alex', `/api/orders/${o.id}`)).json()).toMatchObject({ id: o.id, status: 'drafted' });
     // a change after Compose: compose again
@@ -207,8 +205,9 @@ describe('a replaced sealing key', () => {
     const o = await other.app.inject({ method: 'POST', url: '/api/orders', headers: h, payload: JSON.stringify({ month: THIS_MONTH }) });
     expect(o.statusCode, o.body).toBe(201);
     expect(o.json().composeText).toContain('Alex Example\nExample Street 1');
-    // With a mailbox set up, Shelf's own address goes in Bcc, so the request sits beside the bookshop's replies.
-    expect(o.json().composeUrl.startsWith('mailto:orders@bookshop.example?bcc=shelf.box%40example.org&subject=')).toBe(true);
+    // Even with a mailbox set up, the request never goes to it: no Bcc (the person's mail stays theirs; PR #14 review).
+    expect(o.json().composeUrl.startsWith('mailto:orders@bookshop.example?subject=')).toBe(true);
+    expect(decodeURIComponent(o.json().composeUrl)).not.toMatch(/bcc|shelf\.box@/i);
     await other.app.close();
   });
 });
@@ -235,10 +234,6 @@ describe('the order mail (pure)', () => {
     expect(EMAIL.test('orders@bookshop.example')).toBe(true);
     for (const bad of ['a@b.example?bcc=c@d.example', 'a@b.example%0ABcc', 'a b@c.example', 'a@b', '<a@b.example>', 'a@b.example&body=x']) expect(EMAIL.test(bad), bad).toBe(false);
     expect(() => mailto('a@b.example?x', 's', 'b')).toThrow();
-    // The Bcc is held to the same rule: one plain address, or none.
-    expect(mailto('a@b.example', 's', 'b', 'shelf@c.example').url).toBe('mailto:a@b.example?bcc=shelf%40c.example&subject=s&body=b');
-    expect(mailto('a@b.example', 's', 'b').url).toBe('mailto:a@b.example?subject=s&body=b');
-    for (const bad of ['x@c.example&cc=y@d.example', 'x@c.example\r\nTo: y@d.example', 'x@c.example,y@d.example']) expect(() => mailto('a@b.example', 's', 'b', bad), bad).toThrow();
   });
 
   it('a long order keeps the link short and says so; the text holds it all', () => {

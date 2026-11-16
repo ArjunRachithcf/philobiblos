@@ -93,11 +93,28 @@ export interface MailRead {
   pdfs: Uint8Array[];
   /** In-Reply-To as signed, unfiltered (it is compared with the order's thread, never shown or kept). */
   threadRef: string | null;
+  /** The Subject as signed, unfiltered: only to tell the kind of mail (a 12-digit order number would drop the kept one). */
+  signedSubject: string | null;
 }
 
-/** HTML's words, a line per block element (br, p, div, tr, li, headings), through the linear `textOf` (#10). */
+/**
+ * HTML's words, a line per block element (br, and the ends of p, div, tr, li, headings, table), through the linear
+ * `textOf` (#10). One pass with indexOf, each search starting where the last one ended: an unclosed tag ends the text
+ * there, as in textOf, so `<br ` a million times costs one scan, never one per position.
+ */
 export function htmlLines(html: string): string {
-  return html.split(/<(?:br|\/p|\/div|\/tr|\/li|\/h[1-6]|\/table)\b[^>]*>/i).map(textOf).join('\n');
+  const chunks: string[] = [];
+  let start = 0, i = 0;
+  for (;;) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) break;
+    const gt = html.indexOf('>', lt + 1);
+    if (gt < 0) break;
+    if (/^<(?:br|\/(?:p|div|tr|li|h[1-6]|table))(?![a-z0-9])/i.test(html.slice(lt, lt + 9))) { chunks.push(html.slice(start, lt)); start = gt + 1; }
+    i = gt + 1;
+  }
+  chunks.push(html.slice(start));
+  return chunks.map(textOf).join('\n');
 }
 
 /**
@@ -128,7 +145,7 @@ export async function readMail(raw: Buffer, headerBlock: Buffer, address: string
       date: one(mail.date, 64), messageId: safeField(one(mail.messageId, 300), address), inReplyTo: safeField(one(mail.inReplyTo, 300), address),
       pdfs: pdfs.length,
     },
-    text: text.length > TEXT_MAX ? '' : text, tooLong: text.length > TEXT_MAX, pdfs, threadRef: one(mail.inReplyTo, 300),
+    text: text.length > TEXT_MAX ? '' : text, tooLong: text.length > TEXT_MAX, pdfs, threadRef: one(mail.inReplyTo, 300), signedSubject: one(mail.subject, 300),
   };
 }
 

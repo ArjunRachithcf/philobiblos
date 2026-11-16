@@ -67,7 +67,6 @@ postage), or a PDF the worker cut short.
 
 | Kind | How to recognise | What to extract | Effect |
 |---|---|---|---|
-| `bookshop_request` | the person's request, in Shelf's mailbox through the Bcc the Compose link adds | nothing: it is the household's mail, not verified as the bookshop's | none; it sits beside the replies in the mailbox |
 | `bookshop_quote` | from english-orders@, with prices | per title: ISBN, price, delivery; "not in stock / backorder" | order lines quoted / unavailable; order total = the quoted lines; status quoted |
 | `bookshop_confirm` | from english-orders@: "We have now ordered…", order number | order number | order status drafted → quoted |
 | `online_order` | subject "Ihre Orell Füssli Bestellung (n)" | items: title, author, price; skip non-books (Spielwaren) | lines matched and kept; no Shelf order is made (the month's order is Compose's), the invoice makes the copies |
@@ -76,8 +75,8 @@ postage), or a PDF the worker cut short.
 
 A quote or confirmation belongs to a composed order (status drafted or quoted): the one whose `mail_thread_ref` holds
 the mail's signed In-Reply-To (the bookshop's own earlier mail in that thread), or else the one of the month its signed
-Subject names as Compose writes it ("Re: Book order, November 2026"). The request copied in by Bcc is not verified,
-so it ties nothing (decided by default, 2026-11-16: effects come only from verified mail). Each tied mail's Message-ID
+Subject names as Compose writes it ("Re: Book order, November 2026"). The person's request never reaches Shelf
+(Compose adds no Bcc), so only the bookshop's own signed mail ties a reply to an order. Each tied mail's Message-ID
 joins the order's thread (at most 20). Lines match books by EAN first, then by normalised title and author (the full
 name, "Surname, First" or the surname alone; the title alone on an invoice); a line that matches no book, or more
 than one, is kept with its structured fields and shown in the Inbox (M3 e) for a person to resolve.
@@ -93,10 +92,11 @@ Layouts (quotes, all must parse; the shop's mails as the fixtures write them):
   are read for the sum; the PDF's text is never stored
 
 **Compose** (instead of drafts): Shelf builds a `mailto:` link to english-orders@orellfuessli.ch with the subject and
-the text filled in, in the person's style ("Dear English Bookshop Team, … Premium Card number: … delivered to:
-{address}"), and Shelf's mailbox in Bcc (the IMAP user, when it is one plain address, held to the same rule as the
-bookshop's). The person's own mail app opens it; Shelf never sends. **Shelf never stores the card number**: the text
-leaves a "Premium Card number: " line with nothing after the colon, for the person to fill in. The delivery address is sealed
+the text filled in (the books, the delivery address, a request for prices and delivery times). The person's own mail
+app opens it; Shelf never sends, and the link has no Cc or Bcc: the request, and whatever the person adds to it, goes
+to the bookshop alone, never to Shelf's mailbox (decided 2026-11-16, PR #14 review). **Shelf never sees the card
+number**: the text holds no card line at all, and the person adds the number in their own mail app if the bookshop
+needs it. The delivery address is sealed
 at rest with a key outside the database (`sealed_secret`, ADR 0009).
 
 ## Price lookup (ADR 0008)

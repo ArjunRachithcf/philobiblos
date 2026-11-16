@@ -1039,7 +1039,7 @@ export interface components {
             month?: string;
             /** @enum {unknown} */
             status?: "picked" | "drafted" | "quoted" | "invoiced" | "closed";
-            /** @description mailto: link to the bookshop with the order text filled in (never the card number: the text leaves it for the person to fill in) */
+            /** @description mailto: link to the bookshop with the order text filled in (never the card number, and no Cc or Bcc: the person adds the card number in their own mail app) */
             composeUrl?: string;
             /** @description false when the whole text would make the link too long for mail apps: the link then asks the person to paste composeText */
             composeComplete?: boolean;

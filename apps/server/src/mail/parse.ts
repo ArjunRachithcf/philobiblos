@@ -25,21 +25,29 @@ export type Parsed =
   | { kind: 'unknown_layout'; parser: string; expected: string; reason: string }
   | { kind: 'other'; parser: string };
 
-/** What the mail is, from its signed sender and subject; an invoice waits for its PDF rows (`parseInvoice`). */
-export type Kind = { kind: 'quote_or_confirm' } | { kind: 'online_order' | 'click_collect'; number: string } | { kind: 'invoice'; number: string } | { kind: 'other' };
+/**
+ * What the mail is, from its signed sender and subject; an invoice waits for its PDF rows (`parseInvoice`). A shop
+ * subject whose number is not 4 to 11 digits is `number_unreadable` (a longer one could not be kept: safeField drops a
+ * run of 12 digits), so the mail fails closed as an unknown layout instead of passing as `other`.
+ */
+export type Kind = { kind: 'quote_or_confirm' } | { kind: 'online_order' | 'click_collect'; number: string } | { kind: 'invoice'; number: string }
+  | { kind: 'number_unreadable'; expected: 'online_order' | 'click_collect' | 'invoice' } | { kind: 'other' };
 
 const QUOTE_SENDER = 'english-orders@orellfuessli.ch';
-// The subject as kept: through safeField, so diacritics are folded (Füssli, Fuessli or Fussli).
+// Füssli, Fuessli or Fussli (a kept subject has its diacritics folded).
 const SHOP = 'Orell ?F(?:ü|ue|u)ssli';
-const SUBJECTS: [Exclude<Kind['kind'], 'quote_or_confirm' | 'other'>, RegExp][] = [
-  ['online_order', new RegExp(`^Ihre ${SHOP} Bestellung \\((\\d{4,12})\\)$`, 'i')],
-  ['click_collect', /^Wir bearbeiten Ihre Bestellung \((\d{4,12})\)$/i],
-  ['invoice', new RegExp(`^Ihre ${SHOP.replace(' ?', '-? ?')}-Rechnung Nr\\.? ?(\\d{4,12})$`, 'i')],
+const SUBJECTS: ['online_order' | 'click_collect' | 'invoice', RegExp][] = [
+  ['online_order', new RegExp(`^Ihre ${SHOP} Bestellung \\((\\d{1,40})\\)$`, 'i')],
+  ['click_collect', /^Wir bearbeiten Ihre Bestellung \((\d{1,40})\)$/i],
+  ['invoice', new RegExp(`^Ihre ${SHOP.replace(' ?', '-? ?')}-Rechnung Nr\\.? ?(\\d{1,40})$`, 'i')],
 ];
 
 export function classify(from: string, subject: string | null): Kind {
   const s = (subject ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
-  for (const [kind, re] of SUBJECTS) { const m = re.exec(s); if (m) return { kind, number: m[1]! } as Kind; }
+  for (const [kind, re] of SUBJECTS) {
+    const m = re.exec(s);
+    if (m) return /^\d{4,11}$/.test(m[1]!) ? { kind, number: m[1]! } : { kind: 'number_unreadable', expected: kind };
+  }
   if (from === QUOTE_SENDER) return { kind: 'quote_or_confirm' };
   return { kind: 'other' };
 }
@@ -111,6 +119,9 @@ export function parseQuote(text: string, address: string[]): Parsed {
     if (ean != null && !EAN.test(ean)) { problem = 'an ISBN Shelf cannot read'; return; }
     out.push({ title: field(b.title, address), author: field(b.author, address, 120), ean: field(ean, address), priceC: unavailable ? null : p, delivery: field(b.delivery, address, 80), available: !unavailable });
   };
+  // The next non-empty line after each, found in one backward pass (not a search per line: linear).
+  const next: (string | undefined)[] = new Array(ls.length);
+  for (let i = ls.length - 1, n: string | undefined; i >= 0; i--) { next[i] = n; if (ls[i]) n = ls[i]; }
   for (let i = 0; i < ls.length && !problem; i++) {
     const l = ls[i]!;
     if (!l) continue;
@@ -145,9 +156,8 @@ export function parseQuote(text: string, address: string[]): Parsed {
       continue;
     }
     // "Paulsen, The Quiet Hedgehog" above an ISBN line
-    const next = ls.slice(i + 1).find((x) => x);
     const head = /^([^,:]{1,80}),\s?([^:]{1,200})$/.exec(l);
-    if (head && next && /^isbn\b/i.test(next)) {
+    if (head && next[i] && /^isbn\b/i.test(next[i]!)) {
       flush();
       cur = { author: head[1], title: head[2] };
       continue;

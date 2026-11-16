@@ -30,7 +30,7 @@ shared posts, PDFs, videos and web pages it did not write. Security comes before
 | **A malicious book page** (price lookup, Open Library) | oversized or script-laden pages, decompression bombs, redirects elsewhere | one HTTP client (`src/net/egress.ts`; an architecture test keeps every other connection out): allowlisted hosts by name, https only (Ollama on the home network the exception); resolved once, connected to the address checked, public hosts to public addresses only (no SSRF to the router, the edge or a neighbour container, no DNS rebinding); redirects on the same host only (at most 3), except covers: `archive.org` and `ia<number>.us.archive.org`, https on 443, at most 2 hops, each checked again; no compression; 1 MB JSON, 2 MB page, 5 MB image, 10 s for the whole exchange; the content type checked; an honest User-Agent and no cookies; pages parsed as text, Open Library's JSON field by field (a work key must look like one before it is followed); covers re-encoded by the media worker, never stored as fetched; `SHELF_EGRESS=off` turns it all off. Jobs that use it are admins-only and one at a time |
 | **Someone with a copy of the database** (a backup) | read the address | sealed with a key that is not in the database or its backup: standalone keeps it in `keys/`, apart from `data/` (back it up somewhere else, a password manager say); under HomersLab it is the app's secret `SHELF_SEALING_KEY`, kept and backed up by HomersLab with its secrets, not with the app's data |
 
-| **Whoever writes the order mail** (Compose) | add recipients or headers through the bookshop's address; make Shelf send mail | Shelf never sends mail: Compose is a `mailto:` the person opens; the address must be one plain address (no `?`, `&`, `%`, commas, spaces or line breaks), and the text never holds a card number (`month/order-mail.ts`); the delivery address is write-only in Settings and appears only in the Compose text |
+| **Whoever writes the order mail** (Compose) | add recipients or headers through the bookshop's address; make Shelf send mail | Shelf never sends mail: Compose is a `mailto:` the person opens; the address must be one plain address (no `?`, `&`, `%`, commas, spaces or line breaks), the link carries no Cc or Bcc, and the text never holds a card number or a line for one (`month/order-mail.ts`; the person adds it in their own mail app); the delivery address is write-only in Settings and appears only in the Compose text |
 | **Another website the person visits** | make the browser change something in Shelf (CSRF) | SameSite=Strict session cookie; every change must carry Shelf's own `Origin`; CSP `frame-ancestors 'none'` |
 | **Whoever reads Shelf's data folder** | the setup link | the same person could replace the database; the link works once, for 24 hours, and only while no admin can sign in |
 
@@ -41,9 +41,10 @@ applies; a feature that cannot meet them waits.
 
 ## Open points
 
-- The request Compose copies to Shelf's mailbox (Bcc) is the household's own mail, so it is never verified and ties
-  nothing: a bookshop reply belongs to an order by its signed Subject ("Book order, <month>") or by the In-Reply-To of
-  a bookshop mail already tied. A reply whose subject the bookshop rewrites goes to the Inbox unmatched.
+- Compose copies the request to no one (no Bcc to Shelf's mailbox, which would then hold the address and whatever card
+  number the person typed): a bookshop reply belongs to an order by its signed Subject ("Book order, <month>") or by
+  the In-Reply-To of a bookshop mail already tied. A reply whose subject the bookshop rewrites goes to the Inbox
+  unmatched.
 - The parsers' layouts are written from `contracts/connectors.md`, with invented fixtures. Real mails may differ (an
   online order's line, an invoice's cells); they then fail closed as `unknown_layout` until a parser version reads
   them. A private test against real mails kept outside the repository can confirm the layouts.

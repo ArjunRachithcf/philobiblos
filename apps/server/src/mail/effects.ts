@@ -51,7 +51,8 @@ export function matchBook(books: BookKey[], l: { ean: string | null; title: stri
   }
   const title = l.title ? norm(l.title) : '';
   if (!title) return null;
-  const same = books.filter((b) => norm(b.title) === title);
+  // A line with an EAN never names, by its title, a book that has another ISBN (another edition, or another book).
+  const same = books.filter((b) => norm(b.title) === title && !(l.ean && b.isbn13 && b.isbn13 !== l.ean));
   const hits = l.author ? same.filter((b) => b.authors.some((a) => authorIs(a, l.author!))) : same;
   return hits.length === 1 ? hits[0]!.id : null;
 }

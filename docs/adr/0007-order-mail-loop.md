@@ -21,8 +21,9 @@ out through a **Compose** action: a `mailto:` link with the text filled in, open
   online order confirmations, click & collect confirmations, invoice PDFs (line items: EAN, title, qty, price; rows
   from the media worker). Each is bounded and linear and fails closed on a layout it does not know (kept as
   `unknown_layout` with its version, changing nothing). Effects come only from verified mail, read again from the
-  mailbox through every check; replies tie to a composed order by their signed Subject or In-Reply-To, never by the
-  household's own Bcc copy of the request. Web orders (online, click & collect) make no Shelf order; their invoice
+  mailbox through every check; replies tie to a composed order by their signed Subject or In-Reply-To.
+- Compose adds no Bcc and no card line (PR #14 review, 2026-11-16): the request goes to the bookshop alone, and the
+  person adds the card number in their own mail app, so it never reaches Shelf or its mailbox. Web orders (online, click & collect) make no Shelf order; their invoice
   makes the copies.
 - Matching: EAN first, then normalised title + author. Unmatched lines go to the Inbox for a person to resolve.
 - **Changed** (2026-11-15): the first version used the Gmail API with `gmail.readonly` and `gmail.compose` per adult.

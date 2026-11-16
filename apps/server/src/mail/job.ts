@@ -28,6 +28,8 @@ import { applyMail } from './effects';
 export const PARSER_VERSION = 'm3d-1';
 /** Kinds of a verified mail that is not finished, read again from the mailbox. */
 export const UNFINISHED = ['unclassified', 'pending_pdf', 'unknown_layout'] as const;
+/** Kinds the window reads in full when it meets the mail again (nothing of theirs was applied). */
+const NOT_KNOWN = [...UNFINISHED, 'reread_refused'] as const;
 /** At most this many unfinished mails read again per run; a PDF is tried this many times before its mail is given up. */
 export const REREAD_PER_RUN = 20;
 export const PDF_TRIES = 5;
@@ -49,12 +51,13 @@ export type MailJobConfig = Pick<Config, 'arcSealers' | 'mailRecipients' | 'seal
 
 /** The kind and fields of a verified mail; an invoice's PDFs through the media worker (null: not now, try later). */
 async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Array) => Promise<MediaOutcome>): Promise<Parsed | null> {
-  const k = classify(m.auth.from, m.content.subject);
+  const k = classify(m.auth.from, m.signedSubject);
   if (m.tooLong) return { kind: 'unknown_layout', parser: PARSERS.classify, expected: k.kind, reason: 'too long' };
   switch (k.kind) {
     case 'quote_or_confirm': return parseQuote(m.text, address);
     case 'online_order': case 'click_collect': return parseShop(k.kind, k.number, m.text, address);
     case 'other': return { kind: 'other', parser: PARSERS.classify };
+    case 'number_unreadable': return { kind: 'unknown_layout', parser: PARSERS.classify, expected: k.expected, reason: 'its order or invoice number is not 4 to 11 digits' };
     case 'invoice': {
       if (!m.pdfs.length) return { kind: 'unknown_layout', parser: PARSERS.invoice, expected: 'invoice', reason: 'no PDF' };
       const rows: string[][] = [];
@@ -126,23 +129,28 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
    */
   const reread = async () => {
     let n = 0;
-    const rows = db.select().from(t.mailSeen).where(and(eq(t.mailSeen.accepted, 1), inArray(t.mailSeen.kind, [...UNFINISHED]))).all()
-      .filter((r) => !done.has(r.messageId) && (r.kind !== 'unknown_layout' || !r.parserVersion.startsWith(`${PARSER_VERSION}/`)));
-    for (const r of rows.slice(0, REREAD_PER_RUN)) {
+    const refused = (r: typeof t.mailSeen.$inferSelect, tries: number, reason: string, giveUp: boolean) => row(r.messageId, {
+      kind: giveUp ? 'reread_refused' : r.kind, accepted: 1, authJson: JSON.stringify({ accepted: false, reason: `read again: ${reason}` }),
+      parsedJson: JSON.stringify({ ...JSON.parse(r.parsedJson ?? '{}'), tries: tries + 1 }),
+    });
+    const ready: { r: typeof t.mailSeen.$inferSelect; uid: number; tries: number }[] = [];
+    for (const r of db.select().from(t.mailSeen).where(and(eq(t.mailSeen.accepted, 1), inArray(t.mailSeen.kind, [...UNFINISHED]))).all()) {
+      if (done.has(r.messageId) || (r.kind === 'unknown_layout' && r.parserVersion.startsWith(`${PARSER_VERSION}/`))) continue;
       const p = JSON.parse(r.parsedJson ?? '{}') as { uid?: unknown; uidValidity?: unknown; tries?: unknown };
-      if (typeof p.uid !== 'number' || p.uidValidity !== box.uidValidity) continue;
       const tries = typeof p.tries === 'number' ? p.tries : 0;
-      const raw = await box.source(p.uid, MAIL_LIMITS.message);
-      if (!raw) continue;
+      // Its place is gone (the folder renumbered): never read by an old UID. Given up here, so it holds no slot; the
+      // window still reads it afresh if it is there (reread_refused is not "known").
+      if (typeof p.uid !== 'number' || p.uidValidity !== box.uidValidity) { refused(r, tries, 'the folder was renumbered (UIDVALIDITY)', true); continue; }
+      ready.push({ r, uid: p.uid, tries });
+    }
+    for (const { r, uid, tries } of ready.slice(0, REREAD_PER_RUN)) {
+      const raw = await box.source(uid, MAIL_LIMITS.message);
+      // Gone from the mailbox (moved or deleted: a UID is never used again under the same UIDVALIDITY), for good.
+      if (!raw) { refused(r, tries, 'it is no longer in the mailbox', true); continue; }
       const opened = await openVerified(raw, { arcSealers: cfg.arcSealers, recipients, resolver: deps.resolver, address });
-      const same = opened.ok && opened.mail.auth.messageId === r.messageId;
-      if (!opened.ok || !same) {
-        const reason = !opened.ok ? `read again: ${opened.auth.reason}${opened.unreadable ? `; ${opened.unreadable}` : ''}` : 'read again: another mail is at its place in the mailbox';
-        const giveUp = opened.ok || tries + 1 >= PDF_TRIES;
-        row(r.messageId, { kind: giveUp ? 'reread_refused' : r.kind, parsedJson: JSON.stringify({ ...JSON.parse(r.parsedJson ?? '{}'), tries: tries + 1 }), authJson: JSON.stringify({ accepted: false, reason }), accepted: 1 });
-        continue;
-      }
-      await finish(opened.mail, r.messageId, p.uid, tries);
+      if (!opened.ok) { refused(r, tries, `${opened.auth.reason}${opened.unreadable ? `; ${opened.unreadable}` : ''}`, tries + 1 >= PDF_TRIES); continue; }
+      if (opened.mail.auth.messageId !== r.messageId) { refused(r, tries, 'another mail is at its place in the mailbox', true); continue; }
+      await finish(opened.mail, r.messageId, uid, tries);
       n++;
     }
     return n;
@@ -161,7 +169,7 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
       const id = m.messageId?.trim().slice(0, 300) || null;
       // Known only as a verified mail: an unverified row never stands for a Message-ID.
       // A mail not finished (waiting for its PDF, say) is read again here in full.
-      const known = id && db.select({ id: t.mailSeen.messageId }).from(t.mailSeen).where(and(eq(t.mailSeen.messageId, id), eq(t.mailSeen.accepted, 1), ...UNFINISHED.map((k) => ne(t.mailSeen.kind, k)))).get();
+      const known = id && db.select({ id: t.mailSeen.messageId }).from(t.mailSeen).where(and(eq(t.mailSeen.messageId, id), eq(t.mailSeen.accepted, 1), ...NOT_KNOWN.map((k) => ne(t.mailSeen.kind, k)))).get();
       if (known) { already++; advance(m.uid); continue; }
       const raw = m.size <= MAIL_LIMITS.message ? await box.source(m.uid, MAIL_LIMITS.message) : null;
       const unverifiedKey = `unverified:${raw ? hash(raw) : `uid:${box.uidValidity}:${m.uid}`}`;

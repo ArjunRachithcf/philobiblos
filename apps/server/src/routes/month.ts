@@ -5,7 +5,6 @@ import { requireAdmin } from '../auth/hook';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import { SealError, isSealed, keyProblem, sealingKey, unseal } from '../household/sealed';
-import { EMAIL } from '../month/order-mail';
 import { MonthError, changePicks, checkWindow, composeOrder, currentMonth, getMonth, getOrder, setMonthBudget } from '../month/plan';
 
 export const SEALED = { bookshopEmail: 'bookshop_email', deliveryAddress: 'delivery_address' } as const;
@@ -41,9 +40,7 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db) {
       const problem = keyProblem(cfg);
       if (problem && (isSealed(db, SEALED.bookshopEmail) || isSealed(db, SEALED.deliveryAddress))) throw new MonthError(409, `the sealing key is ${problem}: the server's SHELF_SEALING_KEY needs fixing`);
       const open = (name: string) => (isSealed(db, name) ? unseal(db, sealingKey(cfg), name) : null);
-      // Shelf's mailbox in Bcc, so the request is in the mailbox beside the bookshop's replies.
-      const bcc = cfg.imap && EMAIL.test(cfg.imap.user) ? cfg.imap.user : null;
-      const places = { bookshopEmail: open(SEALED.bookshopEmail), deliveryAddress: open(SEALED.deliveryAddress), bcc };
+      const places = { bookshopEmail: open(SEALED.bookshopEmail), deliveryAddress: open(SEALED.deliveryAddress) };
       return reply.code(201).send(composeOrder(db, month, req.caller!.personId, places));
     } catch (e) { return fail(reply, e); }
   });

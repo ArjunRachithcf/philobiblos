@@ -9,7 +9,7 @@ import { seal } from '../src/household/sealed';
 import { applyMail, matchBook, monthOfSubject, unmatchedLines } from '../src/mail/effects';
 import { PARSER_VERSION, PDF_TRIES, refreshMail, type MailDeps } from '../src/mail/job';
 import { PARSERS, classify, ownLines, parseInvoice, parseQuote, parseShop } from '../src/mail/parse';
-import { addressParts, openVerified, type VerifiedMail } from '../src/mail/read';
+import { addressParts, htmlLines, openVerified, type VerifiedMail } from '../src/mail/read';
 import { SEALED } from '../src/routes/month';
 import type { MediaOutcome } from '../src/media/client';
 import { MediaUnavailable } from '../src/media/client';
@@ -165,6 +165,17 @@ describe('the shop\'s order mails and invoices', () => {
     expect(parseInvoice('1', Array.from({ length: 20_000 }, () => ['9780000000002', ...Array(80).fill('ST')]), false, [])).toMatchObject({ kind: 'unknown_layout' });
     expect(Date.now() - t0).toBeLessThan(1500);
     expect(ownLines('x\n'.repeat(5001))).toBeNull();
+  });
+
+  it('linear where the review found it quadratic: 5,000 lines of " / " pieces, and HTML with unclosed tags (PR #14 review)', () => {
+    let t0 = Date.now();
+    expect(parseQuote(`${' / title x'.repeat(99)}\n`.repeat(5000), [])).toMatchObject({ kind: 'unknown_layout' });
+    expect(Date.now() - t0).toBeLessThan(1500);
+    t0 = Date.now();
+    expect(htmlLines('<br '.repeat(1_000_000))).toBe('');
+    expect(htmlLines('<br>'.repeat(1_000_000)).length).toBe(1_000_000);
+    expect(Date.now() - t0).toBeLessThan(1500);
+    expect(htmlLines('a<br>b</p>c<brx>d<BR/>e')).toBe('a\nb\nc d\ne');
     expect(ownLines(`CHF 1.00 ${'x'.repeat(1001)}`)).toBeNull();
   });
 });
@@ -208,6 +219,15 @@ describe('effects, only from verified mail', () => {
     expect(kept(db, '<q1@orellfuessli.ch>')).toMatchObject({ kind: 'bookshop_quote', accepted: 1, parserVersion: `${PARSER_VERSION}/${PARSERS.quote}` });
     expect(unmatchedLines(db)).toEqual([{ mail: '<q1@orellfuessli.ch>', kind: 'bookshop_quote', index: 3, title: 'A Map of Small Rivers', author: 'Reed', ean: null }]);
     expect(kept(db, '<q1@orellfuessli.ch>').parsedJson).not.toMatch(/4111|Premium|Dear customer/);
+  });
+
+  it('a quote matches only the order\'s own books: a title in the library but not on the order stays unmatched (PR #14 review)', async () => {
+    const db = world();
+    const body = '- Okafor, Value Beyond Price, CHF 18.90\n- Okafor, The Grand Ledger, CHF 30.00';
+    await run(db, fakeBox([{ uid: 1, raw: await signed(message({ id: 'q9', subject: 'Re: Book order, November 2026', body })) }]));
+    expect(unmatchedLines(db).map((l) => l.title)).toEqual(['The Grand Ledger']);
+    expect(db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_ledger')).all()).toEqual([]);
+    expect(order(db).quotedC).toBe(1890);
   });
 
   it('a quote that names another month, or none, ties to no order: nothing changes, every line to the Inbox', async () => {
@@ -342,7 +362,9 @@ describe('invoices: copies, through the media worker only', () => {
     // The window is read afresh (UID 4 there is another mail, read as a new one); the old row's UID is not asked for.
     await run(db, renumbered, { pdfText: async () => invoiceRows() });
     expect(renumbered.read).toEqual([4]);
-    expect(kept(db, '<i8@orellfuessli.ch>')).toMatchObject({ kind: 'pending_pdf' });
+    // Its old place is gone: given up for the re-read (the window still reads it in full if it is there).
+    expect(kept(db, '<i8@orellfuessli.ch>')).toMatchObject({ kind: 'reread_refused' });
+    expect(JSON.parse(kept(db, '<i8@orellfuessli.ch>').authJson!).reason).toMatch(/renumbered/);
     expect(kept(db, '<i9@orellfuessli.ch>')).toMatchObject({ kind: 'invoice' });
   });
 
@@ -361,6 +383,46 @@ describe('invoices: copies, through the media worker only', () => {
     for (let i = 0; i < PDF_TRIES; i++) await run(db, box, { pdfText: async () => ({ id: '', ok: false, error: 'busy' }) });
     expect(kept(db, '<i11@orellfuessli.ch>')).toMatchObject({ kind: 'unknown_layout' });
     expect(JSON.parse(kept(db, '<i11@orellfuessli.ch>').parsedJson!)).toMatchObject({ reason: 'the media worker did not read the PDF' });
+    expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
+  });
+
+  it('mails that can no longer be read again never hold the slots: a renumbered or a vanished one is given up, the rest go on (PR #14 review)', async () => {
+    const db = world();
+    const box = fakeBox([{ uid: 50, raw: await invoice('i20') }]);
+    await run(db, box, { pdfText: async () => { throw new MediaUnavailable(); } });
+    // Behind it in the table: 20 rows from an old UIDVALIDITY and 20 whose mail has left the mailbox.
+    const pending = (id: string, uid: number, uidValidity: number) => ({ messageId: `<${id}@orellfuessli.ch>`, kind: 'pending_pdf', parsedJson: JSON.stringify({ uid, uidValidity, tries: 1 }), parserVersion: PARSER_VERSION, seenAt: NOW, authJson: '{}', accepted: 1 });
+    const rows = [...Array.from({ length: 20 }, (_, i) => pending(`old${i}`, i + 1, 6)), ...Array.from({ length: 20 }, (_, i) => pending(`gone${i}`, 100 + i, 7))];
+    db.delete(t.mailSeen).where(eq(t.mailSeen.messageId, '<i20@orellfuessli.ch>')).run();
+    db.insert(t.mailSeen).values([...rows, pending('i20', 50, 7)]).run();
+    await run(db, box, { pdfText: async () => invoiceRows() });
+    await run(db, box, { pdfText: async () => invoiceRows() });
+    expect(kept(db, '<i20@orellfuessli.ch>').kind).toBe('invoice');
+    expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(3);
+    for (const id of ['<old0@orellfuessli.ch>', '<gone0@orellfuessli.ch>']) {
+      expect(kept(db, id)).toMatchObject({ kind: 'reread_refused' });
+      expect(JSON.parse(kept(db, id).parsedJson!).tries).toBe(2);
+    }
+    expect(JSON.parse(kept(db, '<gone0@orellfuessli.ch>').authJson!).reason).toMatch(/no longer in the mailbox/);
+  });
+
+  it('an invoice row with an EAN no book has is never matched by its title to a book with another ISBN (PR #14 review)', async () => {
+    const db = world();
+    db.update(t.order).set({ status: 'quoted' }).where(eq(t.order.id, 'o_nov')).run();
+    const rows = (): MediaOutcome => ({ id: 'j', ok: true, kind: 'pdf.text', pages: 1, truncated: false, rows: [
+      ['9781111111111', 'The Long Tide of Markets', '1 ST', '19.90', '19.90 CHF', '2.6 %'], ['Total', '19.90 CHF'],
+    ] });
+    await run(db, fakeBox([{ uid: 1, raw: await invoice('i21') }]), { pdfText: async () => rows() });
+    expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
+    expect(lines(db).b_tide!.state).toBe('planned');
+    expect(unmatchedLines(db).map((l) => l.ean)).toEqual(['9781111111111']);
+  });
+
+  it('an invoice number too long to keep (12 digits) fails closed as an unknown layout, never "other" (PR #14 review)', async () => {
+    const db = world();
+    await run(db, fakeBox([{ uid: 1, raw: await invoice('i22', '990011223344') }]), { pdfText: async () => invoiceRows() });
+    expect(kept(db, '<i22@orellfuessli.ch>')).toMatchObject({ kind: 'unknown_layout' });
+    expect(JSON.parse(kept(db, '<i22@orellfuessli.ch>').parsedJson!)).toMatchObject({ expected: 'invoice', reason: 'its order or invoice number is not 4 to 11 digits' });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
   });
 
