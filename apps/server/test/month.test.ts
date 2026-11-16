@@ -189,7 +189,8 @@ describe('which months', () => {
 
 describe('a replaced sealing key', () => {
   it('Settings still answers (the budget too) and asks for the addresses again; re-entering them works', async () => {
-    const other = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64') }), db);
+    const imap = { SHELF_IMAP_HOST: 'imap.example.org', SHELF_IMAP_USER: 'shelf.box@example.org', SHELF_IMAP_PASSWORD: 'not-a-real-password' };
+    const other = await buildApp(loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: Buffer.alloc(32, 9).toString('base64'), ...imap }), db);
     await other.app.ready();
     const h = { cookie: cookie.alex!, origin: ORIGIN, 'content-type': 'application/json' };
     const s = await other.app.inject({ url: '/api/settings', headers: h });
@@ -204,6 +205,9 @@ describe('a replaced sealing key', () => {
     const o = await other.app.inject({ method: 'POST', url: '/api/orders', headers: h, payload: JSON.stringify({ month: THIS_MONTH }) });
     expect(o.statusCode, o.body).toBe(201);
     expect(o.json().composeText).toContain('Alex Example\nExample Street 1');
+    // Even with a mailbox set up, the request never goes to it: no Bcc (the person's mail stays theirs; PR #14 review).
+    expect(o.json().composeUrl.startsWith('mailto:orders@bookshop.example?subject=')).toBe(true);
+    expect(decodeURIComponent(o.json().composeUrl)).not.toMatch(/bcc|shelf\.box@/i);
     await other.app.close();
   });
 });

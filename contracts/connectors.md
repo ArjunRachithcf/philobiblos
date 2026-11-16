@@ -27,16 +27,21 @@ as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), rea
   forwarding providers whose ARC seal counts are `SHELF_MAIL_ARC_SEALERS` (default `google.com`); DNS is asked only for
   DKIM key records (`<selector>._domainkey.<domain>`, a few per mail), never SPF, DMARC or anything a mail names;
 - the header block must be strict RFC 5322 (every line a field, `name:` of printable ASCII, or a continuation; no NUL,
-  no lone CR): a line a parser cannot read would end the headers there and turn the signed ones into body; and the
+  no lone CR, no other control character but tab, no continuation that is only white space, no encoded word in a
+  name): a line a parser cannot read would end the headers there and turn the signed ones into body; and the
   Subject, Message-ID, From, Date and In-Reply-To the MIME parser read must equal those of the verified block;
 - **no mail text is stored** (decided 2026-11-16, PR #12): a mail's free text always carries something of the
   household's (the delivery address, names, a card number quoted back) in more spellings than a filter can find. A
   verified mail keeps its Message-ID, In-Reply-To, date, subject (through the field filter below), how many PDFs it has
-  and where it is in the mailbox (UIDVALIDITY, UID); the parsers (M3 d) read it again from the mailbox, in memory, and
+  and where it is in the mailbox (UIDVALIDITY, UID); the parsers read it again from the mailbox, in memory, and
   keep only structured fields: order number, date, line items (title, author, ISBN, quantity, price), totals and
-  status. Every string field passes a filter as a second defence: after NFKC and with format characters stripped, a
-  field holding a piece of the sealed delivery address, or a run of 12 or more digits whatever separates them (other
-  than an ISBN/EAN as the whole field), is dropped;
+  status. A mail is read again only by the UID kept for it under the same UIDVALIDITY (a renumbered folder is read
+  afresh by the window instead), only if the mail there has the same signed Message-ID, and only through every check
+  above once more (`openVerified`, the one way a mail is read). Every string field kept, the Message-ID and
+  In-Reply-To too, passes a filter as a second defence: after NFKC and with format characters stripped, diacritics
+  and their transliterations (ue, oe, ae) folded and `…str.` read as `…strasse`, a field holding a piece of the sealed
+  delivery address (a line, a comma part, or a word of five letters or more, common street words aside), or a run of
+  12 or more digits whatever separates them (other than an ISBN/EAN as the whole field), is dropped;
 - only a verified mail claims its Message-ID (an unverified one is kept under a hash of its bytes, so a forgery cannot
   shadow the genuine mail); the first run reads the last 90 days, by UID SEARCH; when the checks' settings change, that
   window is read again;
@@ -46,27 +51,55 @@ as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), rea
 - what the parsers extract only proposes changes to Shelf's own records (prices, quote states, copies); it never
   creates people, settings or outgoing mail.
 
-Parsers are versioned (`parserVersion`) and tested against anonymised fixtures (to be added from real mails with
-address, card and customer numbers removed; real ones stay out of the repository).
+Parsers are versioned (`apps/server/src/mail/parse.ts`; `mail_seen.parser_version` is the reader's and the parser's,
+e.g. `m3d-1/quote-1`) and tested against invented fixtures in the layouts below; real mails stay out of the
+repository. The kind comes from the signed headers: the subject for the shop's mails, the sender
+`english-orders@orellfuessli.ch` for quotes and confirmations; any other mail of the bookshop is `other` and changes
+nothing. Each parser is bounded (5,000 lines of at most 1,000 characters, 100 books, 1 MB of text) and linear (lines
+split and matched by anchored expressions, never one pattern over the whole text), reads only the bookshop's own lines
+(nothing from the first reply marker on, no `>` line: the household's quoted request is never read), and **fails
+closed**: a recognised mail whose layout is not one it knows is `unknown_layout`, keeps the parser's version and its
+reason, changes nothing, waits in the Inbox, and is read again only under a new parser version. Unknown means: an
+amount Shelf cannot place (anything but a book's price, a total, postage, a discount or VAT), a book without a title,
+without a price or a status, or with two prices, an ISBN that is not 13 digits, an article of a kind it does not know,
+an invoice row that begins with an EAN and does not read whole, a stated total that is not the rows' sum (with
+postage), or a PDF the worker cut short.
 
 | Kind | How to recognise | What to extract | Effect |
 |---|---|---|---|
-| `bookshop_request` | the person's request, when they keep Shelf's address in Bcc (the Compose link adds it) | Message-ID | ties the replies to the order (`mail_thread_ref`) |
-| `bookshop_quote` | reply from english-orders@ with prices | per title: ISBN, price, delivery; "not in stock / backorder" | order lines quoted / unavailable; order total = quote |
-| `bookshop_confirm` | "We have now ordered…", order number | order number | order status drafted → quoted |
-| `online_order` | subject "Ihre Orell Füssli Bestellung (n)" | items: title, author, price; skip non-books (Spielwaren) | order + lines |
-| `click_collect` | "Wir bearbeiten Ihre Bestellung (n)" | "Buch <title> von <author> EAN: <ean> \| Fr. <price>" | order + lines |
-| `invoice` | "Ihre OrellFüssli-Rechnung Nr. n" + PDF | PDF rows: `EAN  Title  qty ST  price  [discount %]  total CHF  VAT %` | copies (owned); order invoiced |
+| `bookshop_quote` | from english-orders@, with prices | per title: ISBN, price, delivery; "not in stock / backorder" | order lines quoted / unavailable; order total = the quoted lines; status quoted |
+| `bookshop_confirm` | from english-orders@: "We have now ordered…", order number | order number | order status drafted → quoted |
+| `online_order` | subject "Ihre Orell Füssli Bestellung (n)" | items: title, author, price; skip non-books (Spielwaren) | lines matched and kept; no Shelf order is made (the month's order is Compose's), the invoice makes the copies |
+| `click_collect` | subject "Wir bearbeiten Ihre Bestellung (n)" | "Buch <title> von <author> EAN: <ean> \| Fr. <price>" | as `online_order` |
+| `invoice` | subject "Ihre OrellFüssli-Rechnung Nr. n" + PDF | PDF rows: `EAN  Title  qty ST  price  [discount %]  total CHF  VAT %` | a copy per unit (owned), priced; its order's lines delivered, the order invoiced; the same invoice number again counts once |
 
-Quote formats seen (all must parse):
-- `Author: X / Title: Y / ISBN: n / Price: CHF 19.90 / Delivery due: 3 – 4 days` blocks
+A quote or confirmation belongs to a composed order (status drafted or quoted): the one whose `mail_thread_ref` holds
+the mail's signed In-Reply-To (the bookshop's own earlier mail in that thread), or else the one of the month its signed
+Subject names as Compose writes it ("Re: Book order, November 2026"). The person's request never reaches Shelf
+(Compose adds no Bcc), so only the bookshop's own signed mail ties a reply to an order. Each tied mail's Message-ID
+joins the order's thread (at most 20). Lines match books by EAN first, then by normalised title and author (the full
+name, "Surname, First" or the surname alone; the title alone on an invoice), never by its title to a book with another
+ISBN, and never at all when its EAN is no ISBN (not 978/979: a toy, a game, a Tonie, decided from the digits before the
+field filter); a line that matches no book, or more than one, is kept with its structured fields and shown in the
+Inbox (M3 e) for a person to resolve. A shop subject whose number is not one run of 4 to 11 digits (spaced, or longer
+than a kept field allows) is an unknown layout.
+
+Layouts (quotes, all must parse; the shop's mails as the fixtures write them):
+- `Author: X / Title: Y / ISBN: n / Price: CHF 19.90 / Delivery due: 3 – 4 days` blocks, a field a line (or on one line
+  with ` / `)
 - `Paulsen, The Quiet Hedgehog / ISBN: n / Price. CHF 16.90 / delivery due: 2-3 days`
-- one line per book: `- Okafor, Value Beyond Price, CHF 18.90, delivery time 1-3 days`
+- one line per book: `- Okafor, Value Beyond Price, CHF 18.90, delivery time 1-3 days` (or `…, not in stock`)
+- online order and click & collect, a line per article: `<kind> <title> von <author> [EAN: <ean>] | [<n> x ]Fr. <price>`,
+  where the kind is `Buch` or `Taschenbuch` (books) or one Shelf knows to skip (`Spielwaren`, `Kalender`, …)
+- invoice rows as the media worker splits the PDF (cells at wide gaps); `Versandkosten`/`Porto` and `Total` rows
+  are read for the sum; the PDF's text is never stored
 
 **Compose** (instead of drafts): Shelf builds a `mailto:` link to english-orders@orellfuessli.ch with the subject and
-the text filled in, in the person's style ("Dear English Bookshop Team, … Premium Card number: … delivered to:
-{address}"), and Shelf's mailbox in Bcc. The person's own mail app opens it; Shelf never sends. **Shelf never stores
-the card number**: the text leaves "Premium Card number: " for the person to fill in. The delivery address is sealed
+the text filled in (the books, the delivery address, a request for prices and delivery times). The person's own mail
+app opens it; Shelf never sends, and the link has no Cc or Bcc: the request, and whatever the person adds to it, goes
+to the bookshop alone, never to Shelf's mailbox (decided 2026-11-16, PR #14 review). **Shelf never sees the card
+number**: the text holds no card line at all, and the person adds the number in their own mail app if the bookshop
+needs it. The delivery address is sealed
 at rest with a key outside the database (`sealed_secret`, ADR 0009).
 
 ## Price lookup (ADR 0008)

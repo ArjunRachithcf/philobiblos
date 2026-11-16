@@ -17,8 +17,14 @@ out through a **Compose** action: a `mailto:` link with the text filled in, open
   something of the household's in a spelling no filter catches; the mailbox itself keeps the mail, read-only, for a
   parser to read again. String fields still pass a filter (the sealed delivery address, long digit runs) as a second
   defence.
-- Parsers (versioned, with anonymised fixtures): English Bookshop quote replies, online order confirmations,
-  click & collect confirmations, invoice PDFs (line items: EAN, title, qty, price).
+- Parsers (versioned, with invented fixtures; M3 d, 2026-11-16): English Bookshop quote replies and confirmations,
+  online order confirmations, click & collect confirmations, invoice PDFs (line items: EAN, title, qty, price; rows
+  from the media worker). Each is bounded and linear and fails closed on a layout it does not know (kept as
+  `unknown_layout` with its version, changing nothing). Effects come only from verified mail, read again from the
+  mailbox through every check; replies tie to a composed order by their signed Subject or In-Reply-To.
+- Compose adds no Bcc and no card line (PR #14 review, 2026-11-16): the request goes to the bookshop alone, and the
+  person adds the card number in their own mail app, so it never reaches Shelf or its mailbox. Web orders (online, click & collect) make no Shelf order; their invoice
+  makes the copies.
 - Matching: EAN first, then normalised title + author. Unmatched lines go to the Inbox for a person to resolve.
 - **Changed** (2026-11-15): the first version used the Gmail API with `gmail.readonly` and `gmail.compose` per adult.
   A `gmail.readonly` token reads a person's whole mailbox, and a leak of the server would leak it; `gmail.compose` can

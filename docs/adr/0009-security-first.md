@@ -17,8 +17,8 @@ Status: **Accepted** · 2026-11-15
 - **Identity.** In `homerslab` mode the `X-HomersLab-Person` header is trusted only from the configured proxy address
   (`SHELF_TRUSTED_PROXY`); from anywhere else it is ignored and the request is unauthenticated. In `standalone` mode
   Shelf binds to `127.0.0.1` by default and signs in with passkeys; there are no passwords.
-- **Secrets at rest.** Shelf never stores the bookshop card number (the order text leaves it for the person to fill
-  in). The delivery address is sealed (AES-256-GCM) with a key kept outside the database (`SHELF_SEALING_KEY_FILE`, a
+- **Secrets at rest.** Shelf never sees the bookshop card number: the order text has no card line, the person adds it
+  in their own mail app, and Compose copies the request to no one (no Cc, no Bcc). The delivery address is sealed (AES-256-GCM) with a key kept outside the database (`SHELF_SEALING_KEY_FILE`, a
   secret or credential file); a copy of the database alone does not reveal it.
   The IMAP app password and the Claude API key are secrets from the environment or files, never stored in SQLite.
 - **Egress allowlist.** One HTTP client for the whole app allows only the hosts in the manifest's egress list (plus the

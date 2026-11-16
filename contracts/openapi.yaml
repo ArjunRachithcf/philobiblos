@@ -373,7 +373,7 @@ components:
         id: {type: string}
         month: {type: string}
         status: { enum: [picked, drafted, quoted, invoiced, closed] }
-        composeUrl: { type: string, description: 'mailto: link to the bookshop with the order text filled in (never the card number: the text leaves it for the person to fill in)' }
+        composeUrl: { type: string, description: 'mailto: link to the bookshop with the order text filled in (never the card number, and no Cc or Bcc: the person adds the card number in their own mail app)' }
         composeComplete: { type: boolean, description: 'false when the whole text would make the link too long for mail apps: the link then asks the person to paste composeText' }
         composeTo: { type: string, description: 'the bookshop''s address the link writes to (shown next to the link)' }
         composeSubject: {type: string}

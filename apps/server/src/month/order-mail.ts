@@ -9,7 +9,7 @@ export const MAILTO_MAX = 1800;
 
 export interface OrderLineText { title: string; authors: string[]; isbn13?: string | null }
 
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 export const monthName = (month: string) => `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
 
 export function orderText(o: { month: string; lines: OrderLineText[]; deliveryAddress: string | null; signedBy: string }) {
