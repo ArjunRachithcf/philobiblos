@@ -10,6 +10,7 @@ import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { newToken } from '../auth/tokens';
+import { cutUploads } from './shares';
 
 export const SHARE_TOKEN = /^([0-9A-HJKMNP-TV-Z]{26})([A-Za-z0-9_-]{43})$/;
 /** Live (not revoked) tokens a person may hold. */
@@ -47,9 +48,11 @@ export function findShareToken(db: Db, presented: string): TokenRow | null {
   return row && same ? row : null;
 }
 
+/** Revokes one of `personId`'s tokens; the uploads it has open are cut at once (auth is decided when a request starts). */
 export function revokeShareToken(db: Db, personId: string, id: string, now = new Date()): void {
-  db.update(t.shareToken).set({ revokedAt: now.toISOString() })
+  const r = db.update(t.shareToken).set({ revokedAt: now.toISOString() })
     .where(and(eq(t.shareToken.id, id), eq(t.shareToken.personId, personId), isNull(t.shareToken.revokedAt))).run();
+  if (r.changes) cutUploads((u) => u.tokenId === id);
 }
 
 /**

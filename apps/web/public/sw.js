@@ -31,11 +31,15 @@ self.addEventListener('fetch', (e) => {
       const v = form.get(k);
       if (typeof v === 'string' && v.trim()) out.append(k, v.slice(0, max));
     }
-    let dropped = 0, total = 0;
-    for (const f of form.getAll('media').slice(0, MAX_FILES)) {
+    // Left out, and counted for the share screen's notice: a file past its type's limit or the share's, and every file
+    // once MAX_FILES are kept.
+    let dropped = 0, total = 0, files = 0;
+    for (const f of form.getAll('media')) {
       if (!(f instanceof File)) continue;
+      if (files >= MAX_FILES) { dropped++; continue; }
       if (f.size > ((await isImage(f)) ? MAX_BYTES.image : MAX_BYTES.video) || total + f.size > MAX_BYTES.total) { dropped++; continue; }
       total += f.size;
+      files++;
       out.append('media', f, 'shared');
     }
     const id = crypto.randomUUID();

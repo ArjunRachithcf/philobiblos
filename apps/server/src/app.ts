@@ -19,7 +19,7 @@ import { stubRoutes } from './routes/stubs';
 import { jobRoutes, type JobDeps } from './routes/jobs';
 import { createEgress, egressRules } from './net/egress';
 import { inboxRoutes } from './routes/inbox';
-import { SHARE_BYTES, ShareProcessor } from './shares/shares';
+import { SHARE_BYTES, SHARE_UPLOADS, ShareProcessor } from './shares/shares';
 import type { runMediaJob } from './media/client';
 
 /** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md); a
@@ -35,6 +35,10 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     logger: opts.logger ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]'] } : false,
     trustProxy: false,
     bodyLimit: 1024 * 1024,
+    // No request may take longer than a share's upload may (SHARE_UPLOADS.deadlineMs, which shares.ts enforces to the
+    // second), plus a margin: Node checks this only every 30 s. Fastify has no per-route form of it; every other route's
+    // body is at most 1 MB.
+    requestTimeout: SHARE_UPLOADS.deadlineMs + 60_000,
   });
   // Every response: no framing, no sniffing, no referrer, scripts and styles from Shelf only, nothing from the network
   // on page render (ADR 0003, ADR 0009).

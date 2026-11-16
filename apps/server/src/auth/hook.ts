@@ -19,7 +19,7 @@ import { Limiter, findShareToken } from '../shares/tokens';
 
 export type AuthMode = 'public' | 'person' | 'person-or-share-token';
 
-export interface Caller { personId: string; role: 'admin' | 'adult'; via: 'homerslab' | 'session' | 'share-token'; session?: Session }
+export interface Caller { personId: string; role: 'admin' | 'adult'; via: 'homerslab' | 'session' | 'share-token'; session?: Session; tokenId?: string }
 
 declare module 'fastify' {
   interface FastifyContextConfig { auth?: AuthMode }
@@ -57,7 +57,7 @@ export function authHook(cfg: Config, db: Db) {
         return byAddress && byId ? reply.code(401).send({ error: 'sign in required' }) : reply.code(429).send({ error: 'too many wrong share tokens: wait a few minutes' });
       }
       db.update(t.shareToken).set({ lastUsedAt: new Date().toISOString() }).where(eq(t.shareToken.id, row.id)).run();
-      req.caller = { personId: p.id, role: p.role, via: 'share-token' };
+      req.caller = { personId: p.id, role: p.role, via: 'share-token', tokenId: row.id };
       return;
     }
 

@@ -513,7 +513,7 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
   // Nothing is sent until the person taps Send.
   await expect(page.getByRole('heading', { name: 'Send this to your Inbox?' })).toBeVisible();
   await expect(page.getByText('Three books on the commons https://example.org/p/9')).toBeVisible();
-  await expect(page.getByText('1 file was too large and left out', { exact: false })).toBeVisible();
+  await expect(page.getByText('1 file was left out: a share takes up to 30 files', { exact: false })).toBeVisible();
   await expectAccessible(page, 'a share waiting for the tap');
   await page.getByRole('button', { name: 'Send to the Inbox' }).click();
   await expect(page.getByText('In your Inbox.')).toBeVisible();

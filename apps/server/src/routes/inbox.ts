@@ -38,7 +38,7 @@ export async function inboxRoutes(app: FastifyInstance, cfg: Config, db: Db, sha
     const me = req.caller!.personId;
     if (!rate.hit(me)) return reply.code(429).send({ error: 'too many shares: wait a few minutes' });
     try {
-      const row = await receiveShare(req, db, { dataDir: cfg.dataDir, workDir: cfg.workDir, personId: me });
+      const row = await receiveShare(req, db, { dataDir: cfg.dataDir, workDir: cfg.workDir, personId: me, tokenId: req.caller!.tokenId });
       if (row.mediaTotal) void shares.kick();
       return reply.code(202).send({ id: row.id, status: row.status });
     } catch (e) { return fail(reply, e); }
