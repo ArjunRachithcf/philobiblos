@@ -121,8 +121,15 @@ export function recover(root: string): void {
  */
 export function assertOwnUser(root: string, uid = process.getuid?.()): void {
   if (uid === undefined) return; // not POSIX: nothing to compare
-  if (uid === 0) throw new Error('the media worker must not run as root (SHELF_WORKER_UID)');
-  if (uid === lstatSync(dirs(root).in).uid) throw new Error('the media worker must run as its own user, not the server\'s (SHELF_WORKER_UID)');
+  const problem = userProblem(uid, lstatSync(dirs(root).in).uid);
+  if (problem) throw new Error(problem);
+}
+
+/** Why `uid` may not run the worker over a folder owned by `owner`, or null. */
+export function userProblem(uid: number, owner: number): string | null {
+  if (uid === 0) return 'the media worker must not run as root (SHELF_WORKER_UID)';
+  if (uid === owner) return 'the media worker must run as its own user, not the server\'s (SHELF_WORKER_UID)';
+  return null;
 }
 
 /** Other processes of this user (from /proc): in the worker's container there must be none between jobs. */

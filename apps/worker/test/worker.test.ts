@@ -12,7 +12,7 @@ import { MEDIA_LIMITS, SERVER_WAIT_MS, clampLimits, dirs, paths, prepareDirs, re
 // The server's marker check, run on the worker's real output (the server's tests never load sharp).
 import { cleanJpeg } from '../../server/src/media/client';
 import { LOADERS, loadSharp } from '../src/jobs';
-import { assertOwnUser, othersOfMyUser, recover, runChild, runPending, type WorkerOptions } from '../src/main';
+import { assertOwnUser, othersOfMyUser, userProblem, recover, runChild, runPending, type WorkerOptions } from '../src/main';
 import { sniff } from '../src/sniff';
 
 // tsx by its full path: the child starts in the repository's root, where tsx is not installed
@@ -228,9 +228,14 @@ describe('nothing of a job outlives it', () => {
 
 describe('the worker\'s user', () => {
   it('never root, never the folder\'s owner (the server); any other user is fine', () => {
+    expect(userProblem(0, 1000)).toMatch(/not run as root/);
+    expect(userProblem(0, 0)).toMatch(/not run as root/);
+    expect(userProblem(1000, 1000)).toMatch(/its own user/);
+    expect(userProblem(61000, 1000)).toBeNull();
+    // and against the real folder (whoever runs the tests owns it)
     const owner = statSync(dirs(root).in).uid;
     expect(() => assertOwnUser(root, 0)).toThrow(/not run as root/);
-    expect(() => assertOwnUser(root, owner)).toThrow(/its own user/);
+    expect(() => assertOwnUser(root, owner)).toThrow(owner === 0 ? /not run as root/ : /its own user/);
     expect(() => assertOwnUser(root, owner + 61000)).not.toThrow();
   });
 });
