@@ -16,6 +16,12 @@ export interface WorkerOptions {
   heapMb?: number;
   kinds?: readonly string[];
   now?: () => number;
+  /**
+   * After each job, before its result: false if something of that job outlived it (main() passes `onlyMe`). The
+   * result then says 'failed' and the worker exits, so Docker restarts the container and its PID namespace goes too.
+   */
+  clean?: () => boolean;
+  exit?: () => never;
 }
 
 const here = (f: string) => fileURLToPath(new URL(f, import.meta.url));
@@ -82,8 +88,11 @@ export async function runPending(o: WorkerOptions): Promise<number> {
     if (!(now() - created <= SERVER_WAIT_MS)) r = { id, ok: false, error: 'timeout' };
     else if (!kind) r = { id, ok: false, error: 'not_this_type' };
     else r = await runChild(o, kind, p.input, p.output, id);
+    const clean = o.clean?.() ?? true;
+    if (!clean) r = { id, ok: false, error: 'failed' };
     if (!r.ok) rmSync(p.output, { force: true });
     writeAtomic(p.result, JSON.stringify(r));
+    if (!clean) (o.exit ?? (() => process.exit(1)))();
   }
   return ran;
 }
@@ -106,9 +115,41 @@ export function recover(root: string): void {
   }
 }
 
+/**
+ * The worker's own user: never root (no capabilities is still root after a kernel escape), never the folder's owner
+ * (the server: the same user could write in/ and replace out/). Throws otherwise.
+ */
+export function assertOwnUser(root: string, uid = process.getuid?.()): void {
+  if (uid === undefined) return; // not POSIX: nothing to compare
+  if (uid === 0) throw new Error('the media worker must not run as root (SHELF_WORKER_UID)');
+  if (uid === lstatSync(dirs(root).in).uid) throw new Error('the media worker must run as its own user, not the server\'s (SHELF_WORKER_UID)');
+}
+
+/** Other processes of this user (from /proc): in the worker's container there must be none between jobs. */
+export function othersOfMyUser(uid = process.getuid?.(), self = process.pid): number[] {
+  const out: number[] = [];
+  for (const d of readdirSync('/proc')) {
+    if (!/^\d+$/.test(d) || Number(d) === self) continue;
+    try {
+      const status = readFileSync(`/proc/${d}/status`, 'utf8');
+      if (/^State:\s+Z/m.test(status)) continue; // a zombie runs nothing; it waits to be reaped
+      const ids = /^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m.exec(status);
+      if (ids && ids.slice(1).some((x) => Number(x) === uid)) out.push(Number(d));
+    } catch { /* gone */ }
+  }
+  return out;
+}
+
+/** True when nothing but the worker runs as its user; otherwise kills what it finds and says so. */
+export function onlyMe(): boolean {
+  const others = othersOfMyUser();
+  for (const pid of others) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  if (others.length) console.error(`media worker: ${others.length} process(es) outlived a job; restarting`);
+  return others.length === 0;
+}
+
 async function loop(root: string) {
-  // The folder's owner is the server; the same user here would let a decoder exploit write in/ and replace out/.
-  if (process.getuid?.() === lstatSync(dirs(root).in).uid) { console.error('the media worker must run as its own user, not the server\'s (SHELF_WORKER_UID)'); process.exit(1); }
+  try { assertOwnUser(root); } catch (e) { console.error((e as Error).message); process.exit(1); }
   recover(root);
   const d = dirs(root);
   for (let n = 0; ; n++) {
@@ -121,7 +162,7 @@ async function loop(root: string) {
         try { if (Date.now() - lstatSync(p).mtimeMs > 600_000) rmSync(p, { force: true, recursive: true }); } catch { /* raced */ }
       }
     }
-    if (!(await runPending({ root }))) await new Promise((r) => setTimeout(r, 250));
+    if (!(await runPending({ root, clean: onlyMe }))) await new Promise((r) => setTimeout(r, 250));
   }
 }
 

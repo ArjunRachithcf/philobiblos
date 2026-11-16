@@ -33,11 +33,11 @@ services:
   # The media worker (ADR 0009): decodes shared images, covers and invoice PDFs, the hostile files, away from the server.
   # No network at all, a read-only root, no capabilities, memory and process limits (768 MB bounds what the child's
   # 256 MB heap does not: ArrayBuffers, libvips); it sees only work/in and work/out.
-  # Its own user (SHELF_WORKER_UID, never SHELF_UID) in Shelf's group: it reads work/in (read-only) and writes only
+  # Its own user (SHELF_WORKER_UID: never SHELF_UID, never 0) in Shelf's group: it reads work/in (read-only) and writes only
   # work/out, which it cannot replace (its parent is the image's read-only /work). The server makes both at start.
   shelf-worker:
     image: ${SHELF_IMAGE:-shelf:0.1.0}
-    user: "${SHELF_WORKER_UID:-1001}:${SHELF_GID:-1000}"
+    user: "${SHELF_WORKER_UID:-61000}:${SHELF_GID:-1000}"
     command: [ "node", "/app/worker/dist/main.js" ]
     environment:
       SHELF_WORK_DIR: /work

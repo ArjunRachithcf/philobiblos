@@ -1,7 +1,7 @@
 // The media worker (ADR 0009) against hostile input: every file here is made by the test (nothing real, no binary
 // fixtures). Jobs run as they do in production, each in a child process with its limits; the child is the TypeScript
 // source through tsx.
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ import { MEDIA_LIMITS, SERVER_WAIT_MS, clampLimits, dirs, paths, prepareDirs, re
 // The server's marker check, run on the worker's real output (the server's tests never load sharp).
 import { cleanJpeg } from '../../server/src/media/client';
 import { LOADERS, loadSharp } from '../src/jobs';
-import { recover, runChild, runPending, type WorkerOptions } from '../src/main';
+import { assertOwnUser, othersOfMyUser, recover, runChild, runPending, type WorkerOptions } from '../src/main';
 import { sniff } from '../src/sniff';
 
 // tsx by its full path: the child starts in the repository's root, where tsx is not installed
@@ -179,6 +179,59 @@ describe('limits', () => {
     expect(pids).toHaveLength(2);
     await new Promise((r) => setTimeout(r, 300));
     for (const pid of pids) expect(running(pid), `pid ${pid}`).toBe(false);
+  });
+});
+
+describe('nothing of a job outlives it', () => {
+  const pidsOf = (f: string) => readFileSync(f, 'utf8').split(' ').map(Number);
+  const kill = (pid: number) => { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } };
+
+  it('a grandchild in a session of its own escapes the group kill, and the check after the job sees it', async () => {
+    const id = ID();
+    const out = join(root, `${id}.out`);
+    writeFileSync(join(root, `${id}.in`), 'x');
+    await runChild(o, 'test.setsid', join(root, `${id}.in`), out, id);
+    const [child, grandchild] = pidsOf(out) as [number, number];
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      expect(running(child)).toBe(false);
+      expect(running(grandchild)).toBe(true);
+      expect(othersOfMyUser()).toContain(grandchild);
+    } finally { kill(grandchild); }
+  });
+
+  it('when one is found, the job fails and the worker exits (Docker restarts it, and its PID namespace with it)', async () => {
+    const id = ID();
+    const p = paths(root, id);
+    writeAtomic(p.input, Buffer.from('x'));
+    writeAtomic(p.job, JSON.stringify({ id, kind: 'test.setsid', createdAt: new Date().toISOString() }));
+    let grandchild = 0;
+    let exited = 0;
+    try {
+      await runPending({ ...o, kinds: ['test.setsid'], clean: () => { grandchild = pidsOf(p.output)[1]!; return !running(grandchild); }, exit: (() => { exited++; }) as () => never });
+      expect(grandchild).toBeGreaterThan(0);
+      expect(exited).toBe(1);
+      expect(readResult(root, id, 'image.reencode')).toEqual({ id, ok: false, error: 'failed' });
+    } finally { kill(grandchild); }
+  });
+
+  it('the check finds no one when nothing else runs: a clean job keeps the worker going', async () => {
+    const id = ID();
+    const p = paths(root, id);
+    writeAtomic(p.input, Buffer.from('x'));
+    writeAtomic(p.job, JSON.stringify({ id, kind: 'pdf.text', createdAt: new Date().toISOString() }));
+    let exited = 0;
+    await runPending({ ...o, clean: () => true, exit: (() => { exited++; }) as () => never });
+    expect(exited).toBe(0);
+  });
+});
+
+describe('the worker\'s user', () => {
+  it('never root, never the folder\'s owner (the server); any other user is fine', () => {
+    const owner = statSync(dirs(root).in).uid;
+    expect(() => assertOwnUser(root, 0)).toThrow(/not run as root/);
+    expect(() => assertOwnUser(root, owner)).toThrow(/its own user/);
+    expect(() => assertOwnUser(root, owner + 61000)).not.toThrow();
   });
 });
 

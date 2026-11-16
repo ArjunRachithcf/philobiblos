@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { MEDIA_LIMITS, dirs, paths, prepareDirs, readResult, writeAtomic } from '@shelf/contracts/media';
+import { MEDIA_LIMITS, dirs, paths, prepareDirs, readResult, readUntrusted, writeAtomic } from '@shelf/contracts/media';
 import { MAX_WAITING, MediaUnavailable, cleanJpeg, runMediaJob } from '../src/media/client';
 
 /** A JPEG of only the segments a fresh encode has (the payloads are filler: the check walks markers, never decodes). */
@@ -168,6 +168,20 @@ describe('a compromised worker', () => {
       expect(Date.now() - t).toBeLessThan(1000);
       expect(ticks).toBeGreaterThan(0);
     });
+  });
+
+  it('readUntrusted itself: a FIFO, a directory and a link are refused (not read as empty), a missing file is null', () => {
+    const d = tmp();
+    execFileSync('mkfifo', [join(d, 'fifo')]);
+    mkdirSync(join(d, 'dir'));
+    writeFileSync(join(d, 'file'), 'ok');
+    symlinkSync(join(d, 'file'), join(d, 'link'));
+    expect(readUntrusted(join(d, 'fifo'), 100)).toBe('refused');
+    expect(readUntrusted(join(d, 'dir'), 100)).toBe('refused');
+    expect(readUntrusted(join(d, 'link'), 100)).toBe('refused');
+    expect(readUntrusted(join(d, 'missing'), 100)).toBeNull();
+    expect(readUntrusted(join(d, 'file'), 1)).toBe('refused');
+    expect(readUntrusted(join(d, 'file'), 100)).toEqual(Buffer.from('ok'));
   });
 
   it('a directory as the result is refused', async () => {

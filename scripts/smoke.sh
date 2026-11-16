@@ -55,6 +55,8 @@ ok=""
 for _ in $(seq 1 20); do if out="$(dc exec -T shelf shelf media-check 2>&1)"; then ok=1; break; fi; sleep 1; done
 [ -n "$ok" ] || { echo "media-check: $out" >&2; dc logs --tail 20 shelf-worker >&2; ls -laR "$work/work" >&2; exit 1; }
 echo "$out"
+# a clean job leaves nothing behind, so the worker did not have to restart
+[ "$(docker inspect -f '{{.RestartCount}}' "$(dc ps -q shelf-worker)")" = 0 ] || { echo "the worker restarted" >&2; exit 1; }
 
 # 2. HomersLab: the manifest's image settings (port, volume, env).
 env_args=()
