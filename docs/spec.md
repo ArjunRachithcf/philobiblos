@@ -18,7 +18,17 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
 ## 2. People
 
 - **Household**: from HomersLab (or the standalone household). Roles: admin, adult, kid. Kids have a birth year.
-  Sign-in: passkeys in standalone, HomersLab's sign-in under HomersLab (ADR 0010). Kids never sign in.
+  Sign-in: passkeys in standalone, HomersLab's sign-in under HomersLab (ADR 0010). Kids never sign in before the first
+  release.
+- **A household of one** is a whole install: one admin, no family features until a second person exists (ADR 0011).
+- **Joining** (ADR 0011): standalone, an admin invites a person or makes a join link (7 days, 5 uses, revocable, rate
+  limited); who opens it enrols a passkey and waits (at most 10 waiting) for an admin to approve them, as an adult by
+  default. Rules an admin sets (a verified mail domain, the household's networks) can only narrow, and accept a match as
+  an adult with use at once, never as an admin; the default is the home network plus approval. Under HomersLab the edge
+  signs people in; only people it sends arrive, each waits for a Philobiblos admin, Homeward admins are approved
+  automatically, and nobody's role is above their Homeward role. A waiting person can use nothing. Open sign-up never.
+- **Visibility**: owned and read books are the household's; a person's themes, ideas, takeaways and sentences are theirs
+  unless they share them.
 - **Adults** each have their own brain, picks and reading status. One shared monthly budget.
 - **Kids** each have a profile: age band and their own emotional map. Adults give feedback for them.
 - **Everyone adult** can share posts to the Inbox, add to the backlog and mark orders.
@@ -32,7 +42,9 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
 | **Reading** | One person's status for a book: to_read, reading, read, abandoned; finished date; optional takeaway (one line) |
 | **Idea** | A node in an adult's brain ("Markets and value"). Shared vocabulary across the household, per-person density |
 | **BookIdea** | A book contributes to an idea at a **layer**: intro, core, deep, counterpoint. Proposed by the AI, confirmed or not |
-| **Theme** | A kids' emotional theme (14, see §7). A kids' book has 1–2 themes |
+| **Theme** | A kids' emotional theme (14, see §7; a kids' book has 1–2), or an adult's theme from the starter list (about 30) or typed by them. Picked themes count at once |
+| **Sentence** | A free sentence a person writes about what they feel and want to read; private; matched to themes and titles as proposals |
+| **Join link** | An admin's household link: expiry, use limit, rules; revocable (ADR 0011) |
 | **Candidate** | A book in the backlog for a person or a kid, with where it came from (share, wishlist, AI, manual) and its score parts |
 | **Order** | A month's basket → Compose (a mailto with the text filled in) → bookshop quote → invoice → copies |
 | **Share** | Something sent to the Inbox from a phone (URL, images, note) and what the AI found in it |
@@ -53,8 +65,15 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
   unread pile vs limit). Kids: emotional map (theme bars) and loved / meh / not yet per book.
 - **Inbox**: shares and AI suggestions; for each, the slides read and the books found with proposed idea/layer or
   kids' theme; add or skip per book.
+- **First visit**: skippable, reopenable from Settings: pick themes (the starter list, or your own words), then add read
+  books (Goodreads CSV, StoryGraph CSV, a generic CSV of title, author and ISBN, pasted ISBNs or titles; read, not
+  owned, unless "I own these" is ticked; unmatched rows go to the Inbox; their ideas are proposals with "accept all"),
+  and optionally free sentences. Adults run it for kids, and write sentences only for kids under 13 (by birth year);
+  for a kid of 13 or more they pick themes and add read books only.
 - **Settings**: budget and split; how your brain grows (mix, unread limit, counterpoints, takeaways); AI plugin
-  (provider, jobs on/off, wildcards); score weights; kids' themes; sources; family; where Philobiblos runs.
+  (provider, jobs on/off, wildcards); score weights; kids' themes; sources; family (people, waiting people, join
+  links and their rules, the home network); where Philobiblos runs; what leaves (Open Library,
+  the price lookup, SMTP when set, Claude when opted in; Open Library can be turned off).
 - **Phone share**: share target (Android PWA, iOS Shortcut). Shows progress while the AI reads.
 
 ## 5. Monthly cycle
@@ -131,7 +150,9 @@ Providers: Ollama (local, the default) or Claude (API key, an explicit opt-in th
 ## 9. Sources (see `contracts/connectors.md`)
 
 Mail (the bookshop's mail forwarded to a Philobiblos-only mailbox, read over IMAP; Compose links instead of drafts), price lookup (Orell Füssli search, read-only, best effort), metadata (Open Library,
-cached), phone share, manual add. Every book can be ordered through the Orell Füssli English Bookshop by email, so web
+cached; ISBNs and titles only, listed under what leaves, an admin can turn it off), phone share, manual add, imports
+(Goodreads, StoryGraph, generic CSV, pasted). Optional outgoing SMTP, off by default, sends one thing only: a join
+rule's 6-digit code (ADR 0011). Every book can be ordered through the Orell Füssli English Bookshop by email, so web
 availability never blocks a pick.
 
 ## 10. Milestones
@@ -142,7 +163,9 @@ availability never blocks a pick.
   The published prototype page can retire.
 - **M3 Sources and AI**: IMAP read + Compose + quote/invoice parsing (media worker), Inbox, share target, Claude and Ollama providers, monthly job,
   push. The Claude scheduled tasks can retire.
-- **M4 Family and kids**: partner's brain, kid profiles and feedback, HomersLab packaging polish, backups
+- **M4 Family and kids**: first bookshops and mail providers as configuration (philobiblos#27), then people, joining
+  and the first visit (ADR 0011, slices in philobiblos#34); partner's brain, kid profiles and feedback, HomersLab
+  packaging polish, backups
 - **Later**: Jelu / BookLore sync for reading status, library availability (borrow before buying), wildcard islands view
 
 ## 11. Open questions (owner: the maintainer)
