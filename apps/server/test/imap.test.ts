@@ -86,7 +86,7 @@ describe.skipIf(!IMAPS)('IMAP against a real server (GreenMail)', () => {
     await deliver(await mail('job1'));
     await deliver(await mail('job2', { sign: false }));
     const db = household();
-    const c = { imap: cfg(), workDir: null, arcSealers: ['google.com'], mailRecipients: [], sealingKey: null };
+    const c = { imap: cfg(), arcSealers: ['google.com'], mailRecipients: [], sealingKey: null };
     expect((await refreshMail(db, c, { resolver })).status).toBe('done');
     const rows = db.select().from(t.mailSeen).all();
     expect(rows.find((r) => r.messageId === '<job1@orellfuessli.ch>')).toMatchObject({ accepted: 1 });

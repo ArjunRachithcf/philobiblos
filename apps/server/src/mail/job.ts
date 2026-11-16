@@ -4,15 +4,14 @@
 // forgery cannot take the id of the genuine mail that follows it. When the checks' settings change (or the reader's
 // version), the window is read again, so a mail refused under the old settings is checked under the new ones.
 // The first run reads the last 90 days only.
-// It changes nothing else: the parsers that turn a verified mail into quotes, orders and copies come later (M3 d) and
-// read what is kept here. A mail that fails the checks is kept as "not verified" with Shelf's reason, and its content
-// is not kept at all.
+// It changes nothing else, and keeps no mail's text (read.ts): the parsers that turn a verified mail into quotes,
+// orders and copies come later (M3 d) and read it again from the mailbox. A mail that fails the checks is kept as
+// "not verified" with Shelf's reason only.
 import { createHash } from 'node:crypto';
 import { and } from 'drizzle-orm';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { MediaUnavailable, runMediaJob } from '../media/client';
 import { MailboxError, openMailbox, type Mailbox, type MailboxConfig } from '../net/imap';
 import type { TxtResolver } from '../net/dns';
 import type { Outcome } from '../jobs/books';
@@ -20,9 +19,9 @@ import { SEALED } from '../routes/month';
 import { SealError, isSealed, sealingKey, unseal } from '../household/sealed';
 import type { Config } from '../config';
 import { MAIL_LIMITS, MailUnreadable, addressParts, readMail } from './read';
-import { verifyBookshopMail } from './verify';
+import { headerBlock, verifyBookshopMail } from './verify';
 
-export const PARSER_VERSION = 'm3c-2';
+export const PARSER_VERSION = 'm3c-3';
 export const PER_RUN = 200;
 /** The first run, and a run after the settings changed, read mail from this many days back. */
 export const WINDOW_DAYS = 90;
@@ -30,13 +29,12 @@ export const WINDOW_DAYS = 90;
 export interface MailDeps {
   open?: (c: MailboxConfig) => Promise<Mailbox>;
   resolver?: TxtResolver;
-  media?: (kind: 'pdf.text', input: Uint8Array) => ReturnType<typeof runMediaJob>;
   now?: () => Date;
 }
 
 const hash = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 
-export type MailJobConfig = Pick<Config, 'workDir' | 'arcSealers' | 'mailRecipients' | 'sealingKey'> & { imap: MailboxConfig | null };
+export type MailJobConfig = Pick<Config, 'arcSealers' | 'mailRecipients' | 'sealingKey'> & { imap: MailboxConfig | null };
 
 export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {}): Promise<Outcome> {
   if (!cfg.imap) return { status: 'blocked', detail: 'no mailbox is set up (SHELF_IMAP_HOST, SHELF_IMAP_USER, SHELF_IMAP_PASSWORD)' };
@@ -51,7 +49,6 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
   }
   const recipients = [...new Set([...cfg.mailRecipients, ...(cfg.imap.user.includes('@') ? [cfg.imap.user] : [])].map((r) => r.toLowerCase()))];
   const configKey = hash(JSON.stringify([PARSER_VERSION, [...cfg.arcSealers].sort(), [...recipients].sort()]));
-  const media = deps.media ?? ((kind, input) => runMediaJob(cfg.workDir, kind, input));
   let box: Mailbox;
   try { box = await (deps.open ?? openMailbox)(cfg.imap); } catch (e) {
     return { status: 'failed', detail: e instanceof MailboxError ? e.message : 'cannot reach the mailbox' };
@@ -75,8 +72,9 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
       if (known) { already++; advance(m.uid); continue; }
       const raw = m.size <= MAIL_LIMITS.message ? await box.source(m.uid, MAIL_LIMITS.message) : null;
       const unverifiedKey = `unverified:${raw ? hash(raw) : `uid:${box.uidValidity}:${m.uid}`}`;
-      const record = (row: { kind: string; parsedJson: string | null; authJson: string; accepted: number }) => {
-        const key = row.accepted === 1 && id ? id : row.accepted === 1 && raw ? `sha256:${hash(raw)}` : unverifiedKey;
+      const record = ({ signedId, ...row }: { kind: string; parsedJson: string | null; authJson: string; accepted: number; signedId?: string | null }) => {
+        // A verified mail is keyed by its Message-ID as signed (not the server's envelope of it).
+        const key = row.accepted === 1 && signedId ? signedId : row.accepted === 1 && raw ? `sha256:${hash(raw)}` : unverifiedKey;
         const v = { parserVersion: PARSER_VERSION, seenAt: now().toISOString(), ...row };
         db.insert(t.mailSeen).values({ messageId: key, ...v }).onConflictDoUpdate({ target: t.mailSeen.messageId, set: v }).run();
         // Verified now: what was kept of it as unverified goes.
@@ -93,16 +91,17 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
       }
       let content;
       try {
-        content = await readMail(raw, media, address);
+        const hb = headerBlock(raw);
+        if (!('block' in hb)) throw new MailUnreadable('headers');
+        content = await readMail(raw, hb.block, address);
       } catch (e) {
-        // Without the media worker a PDF cannot be read now: stop here, and this mail is read again next time.
-        if (e instanceof MediaUnavailable) return { status: 'blocked', detail: `stopped: ${e.message}; ${verified} verified, ${notVerified} not verified so far` };
         if (!(e instanceof MailUnreadable)) throw e;
-        record({ kind: 'unreadable', parsedJson: null, authJson: JSON.stringify({ ...auth, reason: `${auth.reason}; ${e.message}` }), accepted: 0 });
+        record({ kind: 'unreadable', parsedJson: null, authJson: JSON.stringify({ ...auth, accepted: false, reason: `${auth.reason}; ${e.message}` }), accepted: 0 });
         notVerified++; advance(m.uid); continue;
       }
       // Recognising quotes, orders and invoices is M3 (d): until then a verified mail waits as 'unclassified'.
-      record({ kind: 'unclassified', parsedJson: JSON.stringify(content), authJson: JSON.stringify(auth), accepted: 1 });
+      // Where it is, so the parsers of M3 (d) can read it again from the mailbox; never its text (read.ts).
+      record({ kind: 'unclassified', parsedJson: JSON.stringify({ ...content, uidValidity: box.uidValidity, uid: m.uid }), authJson: JSON.stringify(auth), accepted: 1, signedId: auth.messageId ?? null });
       verified++; advance(m.uid);
     }
     return { status: 'done', detail: `${list.length} new: ${verified} verified, ${notVerified} not verified, ${already} seen before` };

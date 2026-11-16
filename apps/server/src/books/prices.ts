@@ -28,27 +28,25 @@ const AVAILABILITY = /\b((?:Sofort lieferbar|Lieferbar|Versandfertig|Nicht liefe
 /** The most of a search page that is read, and of each result tile (the egress client stops at its own 1 MB). */
 export const PAGE_MAX = 1 << 20;
 export const TILE_MAX = 4000;
-const SKIP = ['script', 'style', 'template', 'noscript', 'head'];
-const BLOCK = ['br', 'p', 'div', 'tr', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table'];
+const SKIP = ['script', 'style', 'template', 'noscript'];
 
 /**
  * Text of an HTML fragment: tags dropped, the content of script, style, template and noscript dropped, the common
  * entities decoded, whitespace folded. One pass with indexOf, each search starting where the last one ended, so the
  * work is linear in the input whatever it holds (no regular expression that can backtrack over a tag).
  */
-export function textOf(html: string, o: { lines?: boolean } = {}): string {
+export function textOf(html: string): string {
   const lower = html.toLowerCase();
   let out = '';
   let i = 0;
   while (i < html.length) {
     const lt = html.indexOf('<', i);
     if (lt < 0) { out += html.slice(i); break; }
+    out += html.slice(i, lt) + ' ';
     const gt = html.indexOf('>', lt + 1);
-    const name = /^<\/?([a-z][a-z0-9]*)/.exec(lower.slice(lt, lt + 12))?.[1];
-    // With `lines`, the tags that end a line of text (br, p, div, tr, li, headings) leave a line break behind.
-    out += html.slice(i, lt) + (o.lines && name && BLOCK.includes(name) ? '\n' : ' ');
     if (gt < 0) break; // an unclosed tag: nothing after it is text
-    if (name && SKIP.includes(name) && lower[lt + 1] !== '/') {
+    const name = /^<([a-z]+)/.exec(lower.slice(lt, lt + 12))?.[1];
+    if (name && SKIP.includes(name)) {
       const close = lower.indexOf(`</${name}`, gt + 1);
       if (close < 0) break; // unclosed script or style: the rest is its content
       const after = html.indexOf('>', close);
@@ -60,7 +58,7 @@ export function textOf(html: string, o: { lines?: boolean } = {}): string {
   }
   return out
     .replace(/&nbsp;|&#160;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(o.lines ? /[ \t\f\v\u00a0]+/g : /\s+/g, ' ').replace(/ ?\n[\s]*/g, o.lines ? '\n' : ' ').trim();
+    .replace(/\s+/g, ' ').trim();
 }
 
 export interface Tile { externalId: string; title: string; text: string }

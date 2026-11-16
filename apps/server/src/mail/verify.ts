@@ -22,18 +22,43 @@ export interface MailAuth {
   via: 'dkim' | 'arc' | null;
   reason: string;
   fromDomain: string | null;
+  /** The Message-ID as signed (the verified header's value), when accepted. */
+  messageId?: string | null;
 }
 
 const inDomain = (d: string | null | undefined, domain: string) => !!d && (d.toLowerCase() === domain || d.toLowerCase().endsWith(`.${domain}`));
 
-/** The header fields of the message's top block, unfolded, in order: name (lowercase) and value. Bounded. */
-export function headers(raw: Buffer): { name: string; value: string }[] {
+/**
+ * The message's top header block, strictly (RFC 5322 section 2.2): every line is a field (a name of printable ASCII
+ * 33–126 other than `:`, then `:` at once) or the continuation of the one above it (starting with a space or tab).
+ * A line that is neither, a NUL, a lone CR, a continuation first or a block over 256 KB makes the mail unreadable:
+ * a parser that stops at such a line would read the signed headers as body, and whatever stood above as the mail.
+ */
+export function headerBlock(raw: Buffer): { block: Buffer; fields: { name: string; value: string }[] } | { problem: string } {
   const ends = [raw.indexOf('\r\n\r\n'), raw.indexOf('\n\n')].filter((i) => i >= 0);
-  const head = raw.subarray(0, Math.min(ends.length ? Math.min(...ends) : raw.length, 256 * 1024)).toString('latin1').replace(/\r?\n[ \t]+/g, ' ');
-  return head.split(/\r?\n/).flatMap((l) => {
-    const c = l.indexOf(':');
-    return c > 0 ? [{ name: l.slice(0, c).trim().toLowerCase(), value: l.slice(c + 1).trim() }] : [];
-  });
+  const end = ends.length ? Math.min(...ends) : raw.length;
+  if (end > 256 * 1024) return { problem: 'its headers are too large' };
+  const block = raw.subarray(0, end);
+  if (block.includes(0)) return { problem: 'a NUL in its headers' };
+  const fields: { name: string; value: string }[] = [];
+  for (const line of block.toString('latin1').split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l))) {
+    if (line.includes('\r')) return { problem: 'a lone CR in its headers' };
+    if (/^[ \t]/.test(line)) {
+      if (!fields.length) return { problem: 'its headers begin with a continuation' };
+      fields[fields.length - 1]!.value += ` ${line.trim()}`;
+      continue;
+    }
+    const m = /^([\x21-\x39\x3b-\x7e]+):(.*)$/.exec(line);
+    if (!m) return { problem: 'a line in its headers that is not a header field' };
+    fields.push({ name: m[1]!.toLowerCase(), value: m[2]!.trim() });
+  }
+  return { block, fields };
+}
+
+/** The header fields of the top block (empty if it is not a strict one). */
+export function headers(raw: Buffer): { name: string; value: string }[] {
+  const h = headerBlock(raw);
+  return 'fields' in h ? h.fields : [];
 }
 
 /** The addresses of a header (lowercase): `a@b` or `Name <a@b>`, one per comma-separated mailbox (quoted names and comments never count). */
@@ -64,7 +89,9 @@ export function coverageProblem(sig: { signingHeaders?: { keys?: string[] | stri
 
 export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[]; recipients: string[]; resolver?: TxtResolver; domain?: string }): Promise<MailAuth> {
   const domain = o.domain ?? BOOKSHOP_DOMAIN;
-  const hs = headers(raw);
+  const hb = headerBlock(raw);
+  if ('problem' in hb) return { accepted: false, via: null, reason: hb.problem, fromDomain: null };
+  const hs = hb.fields;
   const of = (n: string) => hs.filter((h) => h.name === n).map((h) => h.value);
   const no = (reason: string, fromDomain: string | null = null): MailAuth => ({ accepted: false, via: null, reason, fromDomain });
   // Header values are bounded before they are parsed (a 256 KB From would only be an attack).
@@ -94,7 +121,7 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
   for (const r of res.dkim?.results ?? []) {
     if (r.status?.result !== 'pass' || !inDomain(r.signingDomain, domain) || !inDomain(r.status?.aligned || '', domain)) continue;
     const problem = coverageProblem(r as Parameters<typeof coverageProblem>[0], hs);
-    if (!problem) return { accepted: true, via: 'dkim', reason: `dkim=pass for ${r.signingDomain}`, fromDomain };
+    if (!problem) return { accepted: true, via: 'dkim', reason: `dkim=pass for ${r.signingDomain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null };
     why = problem;
   }
 
@@ -106,7 +133,7 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
     if (!ok) return no(`the forward's seal by ${sealer} does not show the bookshop's DKIM passing`, fromDomain);
     const problem = coverageProblem(arc.signature, hs);
     if (problem) return no(`the forward's seal: ${problem}`, fromDomain);
-    return { accepted: true, via: 'arc', reason: `arc=pass by ${sealer}, which saw dkim=pass for ${domain}`, fromDomain };
+    return { accepted: true, via: 'arc', reason: `arc=pass by ${sealer}, which saw dkim=pass for ${domain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null };
   }
   return no(why, fromDomain);
 }

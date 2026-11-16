@@ -1,116 +1,91 @@
-// A mail's content as Shelf keeps it (ADR 0007): hostile input, read as text within limits. MIME is parsed with
-// limits on depth, parts and header size; HTML is never rendered or kept (a plain-text part, or the HTML's text with
-// every tag dropped); links are never followed or kept as links; images and other attachments are not read. Only PDFs
-// (by their bytes, at most 10 MB) are handed to the media worker for their text; the server never opens one.
+// What Shelf keeps of a verified bookshop mail (ADR 0007): never its text. A mail's free text always carries something
+// of the household's (the delivery address, a name, a card number typed into a request the bookshop quotes back), in
+// more spellings than any filter can find (Zürich and Zurich, Str. and strasse, soft hyphens, split PDF cells, unusual
+// separators), so the store holds structured fields only. This slice keeps the headers that tie a mail to an order
+// (Message-ID, In-Reply-To, the date), its subject through `safeField`, how many PDFs it has, and where it is in the
+// mailbox (UIDVALIDITY and UID). The parsers of M3 (d) read the mail again from the mailbox (which Shelf never
+// changes), in memory, and keep only what they extract: order number, date, line items, totals and status, each
+// string field through `safeField` as a second line of defence.
 //
-// What is kept leaves out what the household wrote to the bookshop: quoted lines (`>`) and everything below a reply
-// header are dropped (the person's request, with the delivery address and the card number they typed, is quoted in
-// the bookshop's replies); any line or PDF cell that holds a piece of the delivery address (sealed, PR #7: unsealed
-// only here, to find it) is replaced; and any run of 12 or more digits that is not an ISBN/EAN is masked as well.
+// The MIME structure is still parsed here, within limits (depth, parts, header size; no nested message parsed), so
+// a mail that cannot be read safely is known now; and what the parser took for its headers must be what was signed.
 import PostalMime from 'postal-mime';
-import { textOf } from '../books/prices';
-import type { MediaOutcome } from '../media/client';
 
 export const MAIL_LIMITS = {
-  /** A whole message, bytes (its text and its PDFs). */
+  /** A whole message, bytes. */
   message: 25 * 1024 * 1024,
-  /** The text kept, characters. */
-  text: 1_000_000,
-  pdf: 10 * 1024 * 1024,
-  pdfs: 5,
   depth: 8,
   parts: 64,
   headers: 256 * 1024,
 } as const;
 
 export interface MailContent {
-  subject: string;
+  subject: string | null;
   date: string | null;
   messageId: string | null;
   inReplyTo: string | null;
-  text: string;
-  pdfs: { name: string; pages: number; rows: string[][]; truncated: boolean }[];
-  /** PDFs that were too large, unreadable, or refused by the media worker. */
-  skipped: number;
+  /** PDFs among the attachments, by their bytes. */
+  pdfs: number;
 }
 
 export class MailUnreadable extends Error {
   constructor(readonly code: string) { super(`the mail cannot be read: ${code}`); }
 }
 
-// Where the household's own words begin in a reply: German, English, French and Italian clients, Outlook's line.
-const REPLY_HEADER = /^(?:_{10,}$|-{2,}\s*(?:Original(?:nachricht| Message)|Ursprüngliche Nachricht|Message d'origine|Messaggio originale)\s*-{2,}|(?:From|Von|De|Da|Sent|Gesendet|Envoyé|Inviato)\s?:\s|On .{3,200} wrote:|Am .{3,200} schrieb .{1,200}:|Le .{3,200} a écrit\s?:|Il .{3,200} ha scritto\s?:)/i;
-const SPACES = /[\u00a0\u2007\u202f\u2009\u200a\u2002-\u2006\u3000]/g;
-const ISBN = /\b97[89](?:[ -]?\d){10}\b/g;
-const DIGITS = /\d(?:[\s\-./]{0,2}\d){11,}/g;
+const fold = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').normalize('NFKC').replace(/\p{Cf}/gu, '');
+/** A string as compared: NFKC, without format characters (soft hyphens, zero-width spaces), diacritics folded,
+ * lowercase, street/Str./strasse as one word, every other non-letter-or-digit run as one space. */
+export const normal = (s: string) => fold(s).toLowerCase().replace(/ß/g, 'ss').replace(/\b(?:street|str|strasse)\b\.?/g, ' strasse ').replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
 
-/** Masks every run of 12 or more digits (with up to two separators of space, -, . or / between them) but ISBNs. */
-export function maskNumbers(text: string): string {
-  const isbns: string[] = [];
-  const held = text.replace(SPACES, ' ').replace(ISBN, (m) => `\ue000${isbns.push(m) - 1}\ue000`);
-  return held.replace(DIGITS, '[number removed]').replace(/\ue000(\d+)\ue000/g, (_m, n: string) => isbns[Number(n)]!);
-}
-
-/** The pieces of the household's delivery address worth finding again (lines and comma parts of 5+ letters), normalised. */
+/** The pieces of the household's delivery address worth finding again (lines and comma parts of 5+ letters or digits). */
 export function addressParts(address: string | null): string[] {
   if (!address) return [];
-  return [...new Set(address.split(/[\n,;]+/).map(normal).filter((p) => p.replace(/[^a-z0-9]/g, '').length >= 5))];
+  return [...new Set(address.split(/[\n,;]+/).map(normal).filter((p) => p.replace(/ /g, '').length >= 5))];
 }
-const normal = (s: string) => s.replace(SPACES, ' ').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-const mentions = (line: string, parts: string[]) => { const l = normal(line); return parts.some((p) => l.includes(p)); };
 
+const ISBN13 = /^97[89]\d{10}$/;
 /**
- * The bookshop's own words: no quoted lines, nothing below a reply header, no line that holds a piece of the
- * household's delivery address, long digit runs masked unless ISBN/EAN.
+ * A string field fit to keep, or null: dropped when it holds a piece of the delivery address, or a run of 12 or more
+ * digits (whatever separates them: up to three characters that are neither letters nor digits) other than one
+ * ISBN/EAN as the whole field. Applied after NFKC and with format characters stripped, so look-alike digits and
+ * invisible separators count too. Bounded to 300 characters.
  */
-export function keepText(text: string, address: string[] = []): string {
-  const out: string[] = [];
-  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
-    if (REPLY_HEADER.test(line.replace(SPACES, ' ').trim())) break;
-    if (/^\s*>/.test(line)) continue;
-    if (mentions(line, address)) { out.push('[address removed]'); continue; }
-    out.push(maskNumbers(line));
-  }
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, MAIL_LIMITS.text);
+export function safeField(v: unknown, address: string[]): string | null {
+  if (typeof v !== 'string') return null;
+  const s = fold(v).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 300);
+  if (!s) return null;
+  const n = normal(s);
+  if (address.some((p) => ` ${n} `.includes(` ${p} `) || n.replace(/ /g, '').includes(p.replace(/ /g, '')))) return null;
+  if (ISBN13.test(s.replace(/[^\d]/g, '')) && /^[\d\s-]+$/.test(s)) return s;
+  for (const run of s.match(/\d(?:[^\p{L}\p{N}\n]{0,3}\d)*/gu) ?? []) if (run.replace(/\D/g, '').length >= 12) return null;
+  return s;
 }
-
-/** A PDF's rows with the same care: a cell that holds a piece of the address, or a long number, is masked. */
-export function keepRows(rows: string[][], address: string[]): string[][] {
-  return rows.map((r) => r.map((c) => (mentions(c, address) ? '[address removed]' : maskNumbers(c))));
-}
-
-/** HTML as text, line by line: no tag, script, style, link or image survives (only the words between them). Linear. */
-export const htmlText = (html: string) => textOf(html.slice(0, 4 * 1024 * 1024), { lines: true });
 
 const isPdf = (b: Uint8Array) => b.length > 5 && Buffer.from(b.subarray(0, 5)).toString('latin1') === '%PDF-';
+const opts = { attachmentEncoding: 'arraybuffer' as const, maxNestingDepth: MAIL_LIMITS.depth, maxPartCount: MAIL_LIMITS.parts, maxHeadersSize: MAIL_LIMITS.headers, maxRfc822NestingDepth: 0, forceRfc822Attachments: true };
 
-export async function readMail(raw: Buffer, media: (kind: 'pdf.text', input: Uint8Array) => Promise<MediaOutcome>, address: string[] = []): Promise<MailContent> {
+/**
+ * Parses the mail within limits and keeps its few fields. `headerBlock` is the verified header block (verify.ts): the
+ * fields the MIME parser read from the whole mail must equal those it reads from that block alone, so nothing the
+ * parser took for a header can come from anywhere else.
+ */
+export async function readMail(raw: Buffer, headerBlock: Buffer, address: string[] = []): Promise<MailContent> {
   if (raw.length > MAIL_LIMITS.message) throw new MailUnreadable('too_large');
-  let mail;
+  let mail, signed;
   try {
-    mail = await PostalMime.parse(raw, {
-      attachmentEncoding: 'arraybuffer', maxNestingDepth: MAIL_LIMITS.depth, maxPartCount: MAIL_LIMITS.parts,
-      maxHeadersSize: MAIL_LIMITS.headers, maxRfc822NestingDepth: 0, forceRfc822Attachments: true,
-    });
+    mail = await PostalMime.parse(raw, opts);
+    signed = await PostalMime.parse(Buffer.concat([headerBlock, Buffer.from('\r\n\r\n')]), opts);
   } catch (e) {
     throw new MailUnreadable(String((e as { code?: string }).code ?? 'malformed').slice(0, 40));
   }
-  const text = keepText(mail.text ?? htmlText(mail.html ?? ''), address);
-  const pdfs: MailContent['pdfs'] = [];
-  let skipped = 0;
-  for (const a of mail.attachments ?? []) {
-    const bytes = new Uint8Array(a.content as ArrayBuffer);
-    // Only PDFs, by their bytes (the name and the declared type count for nothing); every other attachment is unread.
-    if (!isPdf(bytes)) continue;
-    if (bytes.length > MAIL_LIMITS.pdf || pdfs.length >= MAIL_LIMITS.pdfs) { skipped++; continue; }
-    const r = await media('pdf.text', bytes);
-    if (r.ok && r.kind === 'pdf.text') pdfs.push({ name: String(a.filename ?? 'attachment.pdf').replace(/[^\w .-]/g, '_').slice(0, 100), pages: r.pages, rows: keepRows(r.rows, address), truncated: r.truncated });
-    else skipped++;
+  const same = (k: 'subject' | 'messageId' | 'date' | 'inReplyTo') => (mail[k] ?? null) === (signed[k] ?? null);
+  if (!same('subject') || !same('messageId') || !same('date') || !same('inReplyTo') || JSON.stringify(mail.from ?? null) !== JSON.stringify(signed.from ?? null)) {
+    throw new MailUnreadable('headers_differ');
   }
   const one = (v: unknown, max: number) => (typeof v === 'string' && v ? v.slice(0, max) : null);
   return {
-    subject: (mail.subject ?? '').replace(/[\r\n\t]+/g, ' ').slice(0, 300),
+    subject: safeField(mail.subject, address),
     date: one(mail.date, 64), messageId: one(mail.messageId, 300), inReplyTo: one(mail.inReplyTo, 300),
-    text, pdfs, skipped,
+    pdfs: (mail.attachments ?? []).filter((a) => isPdf(new Uint8Array(a.content as ArrayBuffer))).length,
   };
 }

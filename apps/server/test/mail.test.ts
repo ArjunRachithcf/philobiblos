@@ -10,10 +10,9 @@ import { sealMessage } from 'mailauth';
 import { dkimSign } from 'mailauth/lib/dkim/sign';
 import { describe, expect, it } from 'vitest';
 import * as t from '../src/db/schema';
-import { MediaUnavailable } from '../src/media/client';
 import { refreshMail } from '../src/mail/job';
-import { MailUnreadable, addressParts, htmlText, keepRows, keepText, readMail } from '../src/mail/read';
-import { addressDomains, verifyBookshopMail } from '../src/mail/verify';
+import { MailUnreadable, addressParts, readMail, safeField } from '../src/mail/read';
+import { addressDomains, headerBlock, verifyBookshopMail } from '../src/mail/verify';
 import { dkimKeyResolver } from '../src/net/dns';
 import type { Mailbox } from '../src/net/imap';
 import { SEALED } from '../src/routes/month';
@@ -81,6 +80,17 @@ describe('is it the bookshop?', () => {
     expect(await verify(await make())).toMatchObject({ accepted: false, via: null });
   });
 
+  // The two count rules, each where only it applies (each would otherwise hide the other).
+  it('two Subjects, both signed: only the once-only rule refuses it', async () => {
+    const mail = await signed(message({ extra: 'Subject: a second subject' }), 'orellfuessli.ch', shop, { headerList: 'From:To:Subject:Subject:Date:Message-ID:MIME-Version:Content-Type' });
+    expect(await verify(mail)).toMatchObject({ accepted: false, reason: 'more than one subject header' });
+  });
+
+  it('a header that may repeat, signed once, with another above it: only the instance rule refuses it', async () => {
+    const mail = Buffer.concat([Buffer.from('X-Order: forged\r\n'), await signed(message({ extra: 'X-Order: 1234567' }), 'orellfuessli.ch', shop, { headerList: 'From:To:Subject:Date:Message-ID:MIME-Version:Content-Type:X-Order' })]);
+    expect(await verify(mail)).toMatchObject({ accepted: false, reason: 'more x-order headers than were signed' });
+  });
+
   it('a forward that broke the signature: accepted through a trusted provider\'s ARC seal that saw dkim=pass', async () => {
     // The bookshop's key is gone from DNS here (rotated, say): only the forwarder's ARC record can vouch for the mail.
     const noShopKey = async (n: string) => (n.startsWith('mail._domainkey.orellfuessli.ch') ? Promise.reject(Object.assign(new Error('nx'), { code: 'ENOTFOUND' })) : resolver(n));
@@ -116,82 +126,88 @@ describe('is it the bookshop?', () => {
   });
 });
 
-describe('what is kept of a mail', () => {
-  const noMedia = async () => { throw new Error('no PDF expected'); };
+describe('the header block is strict, and what was parsed is what was signed', () => {
+  // One line above a signed mail that a parser cannot read as a header ends the header block there: the signed
+  // headers would become body, and the attacker's line the mail. Each variant is refused before anything is read.
+  it.each([
+    ['no colon', 'Price correction CHF 999.00 pay at evil.example'],
+    ['an 8-bit name', 'Xé: Price correction CHF 999.00'],
+    ['a space in the name', 'X Y: Price correction CHF 999.00'],
+    ['a space before the colon', 'Subject : Price correction'],
+    ['a NUL', 'X-Note: a\u0000b'],
+    ['a continuation first', ' Price correction CHF 999.00'],
+    ['a lone CR', 'X-Note: a\rSubject: forged'],
+  ])('a line with %s above the signed headers: refused', async (_n, line) => {
+    const mail = Buffer.concat([Buffer.from(`${line}\r\n`, 'latin1'), await signed(message())]);
+    expect(headerBlock(mail)).toHaveProperty('problem');
+    expect(await verify(mail)).toMatchObject({ accepted: false });
+  });
+
+  it('the parser\'s Subject, Message-ID, From and Date must equal those of the verified block', async () => {
+    const good = await signed(message({ id: 'same1' }));
+    const hb = headerBlock(good);
+    if (!('block' in hb)) throw new Error('strict block expected');
+    await expect(readMail(good, hb.block)).resolves.toMatchObject({ messageId: '<same1@orellfuessli.ch>', subject: 'Re: Book order' });
+    // A block that is not this mail's (as if the parser had read other headers than the verified ones): refused.
+    const other = headerBlock(message({ id: 'other1', subject: 'Something else' }));
+    if (!('block' in other)) throw new Error('strict block expected');
+    await expect(readMail(good, other.block)).rejects.toMatchObject({ code: 'headers_differ' });
+  });
+
+  it('a verified mail keeps no text: only its fields, and where it is in the mailbox', async () => {
+    const db = household();
+    const mail = await signed(message({ id: 'fields1', body: 'Delivery to: Somewhere Street 1, 8000 Exampletown\r\nCard 4111 1111 1111 1111\r\nTotal CHF 19.90' }));
+    await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 6, raw: mail }]), resolver });
+    const kept = JSON.parse(db.select().from(t.mailSeen).get()!.parsedJson!);
+    expect(kept).toEqual({ subject: 'Re: Book order', date: expect.any(String), messageId: '<fields1@orellfuessli.ch>', inReplyTo: null, pdfs: 0, uidValidity: 7, uid: 6 });
+    expect(JSON.stringify(kept)).not.toMatch(/Somewhere|4111|19\.90/);
+  });
+});
+
+describe('a kept field never holds the address or a long number', () => {
+  const parts = addressParts('Alex Example\nExample Street 1\n8000 Zurich');
+  it.each([
+    ['the address as written', 'Example Street 1'], ['diacritics', 'CH-8000 Zürich'], ['Str.', 'Example Str. 1'], ['strasse', 'Examplestrasse 1'],
+    ['a soft hyphen', 'Exam­ple Street 1'], ['a zero-width space', 'Example​ Street 1'], ['other case and spacing', 'EXAMPLE   street 1'],
+  ])('%s: dropped', (_n, v) => expect(safeField(`Delivered to ${v}`, parts)).toBeNull());
 
   it.each([
-    ['French Outlook', 'De : A Reader <reader@example.org>'], ['Italian', 'Da: A Reader'], ['Outlook\'s line', '________________________________'],
-    ['Outlook\'s Sent', 'Sent: Monday, 16 November 2026 09:00'], ['German', 'Von: A Reader'], ['Italian client', 'Il 16 nov 2026, A Reader ha scritto:'],
-  ])('a reply header (%s) ends what is kept', (_n, marker) => {
-    expect(keepText(['Your quote: CHF 19.90', marker, 'Premium Card number: 4111 1111 1111 1111', 'Somewhere Street 1'].join('\n'))).toBe('Your quote: CHF 19.90');
+    ['spaces', '4111 1111 1111 1111'], ['an en dash', '4111–1111–1111–1111'], ['apostrophes', "4111'1111'1111'1111"], ['underscores', '4111_1111_1111_1111'],
+    ['commas', '4111,1111,1111,1111'], ['zero-width spaces', '4111​1111​1111​1111'], ['" - "', '4111 - 1111 - 1111 - 1111'], ['full-width digits', '４１１１ 1111 1111 1111'],
+    ['slashes', '4111/1111/1111/1111'], ['NBSP', '4111 1111 1111 1111'],
+  ])('a card-like number with %s: dropped', (_n, v) => expect(safeField(`Card ${v}`, [])).toBeNull());
+
+  it('what may stay: an ISBN as the whole field, a price, an order number, ordinary words', () => {
+    expect(safeField('978-0-00-000000-2', [])).toBe('978-0-00-000000-2');
+    expect(safeField('Re: Ihre Bestellung 1234567', parts)).toBe('Re: Ihre Bestellung 1234567');
+    expect(safeField('Total CHF 19.90', parts)).toBe('Total CHF 19.90');
+    expect(safeField(42, [])).toBeNull();
   });
 
-  it.each([
-    ['non-breaking spaces', '4111\u00a01111\u00a01111\u00a01111'], ['slashes', '4111/1111/1111/1111'], ['a double space', '4111  1111 1111 1111'], ['narrow spaces', '4111\u202f1111\u202f1111\u202f1111'],
-  ])('card-like numbers with %s are masked whole; an ISBN stays', (_n, n) => {
-    expect(keepText(`Card ${n} and ISBN 978-0-00-000000-2`)).toBe('Card [number removed] and ISBN 978-0-00-000000-2');
-  });
-
-  it('the household\'s delivery address is left out of the text and of PDF rows', () => {
-    const parts = addressParts('A Reader\nSomewhere Street 1\n8000 Exampletown');
-    expect(keepText('Delivered to:\nA  Reader\nSomewhere\u00a0street 1\n8000 EXAMPLETOWN\nTotal CHF 19.90', parts)).toBe('Delivered to:\n[address removed]\n[address removed]\n[address removed]\nTotal CHF 19.90');
-    expect(keepRows([['Lieferadresse', 'Somewhere Street 1, 8000 Exampletown'], ['9780000000002', 'A Made-up Title', '19.90']], parts)).toEqual([['Lieferadresse', '[address removed]'], ['9780000000002', 'A Made-up Title', '19.90']]);
-  });
-
-  it('the bookshop\'s words only: quoted lines and the household\'s own request below a reply header are dropped', () => {
-    const text = [
-      'Dear customer, here is your quote.', 'ISBN: 978-0-00-000000-2 Price: CHF 19.90', '',
-      '> Premium Card number: 1234 5678 9012 3456', 'On Mon, 16 Nov 2026, A Reader wrote:', 'Delivered to: Somewhere Street 1', 'Premium Card number: 1234567890123456',
-    ].join('\n');
-    const kept = keepText(text);
-    expect(kept).toContain('CHF 19.90');
-    expect(kept).toContain('978-0-00-000000-2');
-    expect(kept).not.toMatch(/1234|Somewhere|Premium/);
-    expect(keepText('Your card 4111 1111 1111 1111 is noted')).toBe('Your card [number removed] is noted');
-  });
-
-  it('HTML: words only; no tag, link, script or image survives', () => {
-    const t0 = htmlText('<p>Price <a href="https://evil.example/x">CHF 19.90</a><img src="https://evil.example/t.gif"><script>steal()</script></p>');
-    expect(t0).toContain('CHF 19.90');
-    expect(t0).not.toMatch(/evil|href|steal|<|img/);
-  });
-
-  it('only PDFs (by their bytes) go to the media worker; another file called .pdf, or an image, is never read', async () => {
-    const b = 'b1';
-    const part = (name: string, type: string, bytes: Buffer) => [`--${b}`, `Content-Type: ${type}; name="${name}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${name}"`, '', bytes.toString('base64'), ''].join('\r\n');
-    const raw = Buffer.from([
-      'From: english-orders@orellfuessli.ch', 'Subject: Ihre Rechnung', 'Message-ID: <inv1@orellfuessli.ch>', 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${b}"`, '',
-      `--${b}`, 'Content-Type: text/plain', '', 'See the invoice.', '',
-      part('invoice.pdf', 'application/pdf', Buffer.from('%PDF-1.4 made up')),
-      part('not-really.pdf', 'application/pdf', Buffer.from('MZ\x90\x00 an executable')),
-      part('photo.jpg', 'image/jpeg', Buffer.from([0xff, 0xd8, 0xff, 0xe0])),
-      `--${b}--`, '',
-    ].join('\r\n'));
-    const handed: string[] = [];
-    const c = await readMail(raw, async (kind, input) => { handed.push(Buffer.from(input).toString('latin1')); return { id: 'x', ok: true, kind, pages: 1, rows: [['9780000000002', 'A Made-up Title', '19.90']], truncated: false }; });
-    expect(handed).toEqual(['%PDF-1.4 made up']);
-    expect(c.pdfs).toEqual([{ name: 'invoice.pdf', pages: 1, rows: [['9780000000002', 'A Made-up Title', '19.90']], truncated: false }]);
-    expect(c.text).toBe('See the invoice.');
-  });
-
-  it('hostile HTML and headers cost linear time: 4 MB of <, an unclosed script, a From of 200k (', async () => {
-    let t0 = Date.now();
-    htmlText('<'.repeat(4 << 20));
-    htmlText(`<script>${'<'.repeat(1 << 20)}`);
-    expect(Date.now() - t0).toBeLessThan(500);
-    t0 = Date.now();
+  it('hostile input costs linear time: a From of 200k (, a field of 1M digits and separators', async () => {
+    const t0 = Date.now();
     expect(await verify(message({ from: `${'('.repeat(200_000)} a@orellfuessli.ch` }))).toMatchObject({ accepted: false, reason: 'a header is too long' });
+    expect(safeField('1 '.repeat(500_000), [])).toBeNull();
     expect(Date.now() - t0).toBeLessThan(500);
-    expect(htmlText('<p>Line one</p><p>Line <b>two</b></p>')).toBe('Line one\nLine two');
   });
 
   it('MIME nested too deep, or too many parts: unreadable, not a crash', async () => {
     let body = 'x';
     for (let i = 0; i < 12; i++) body = [`Content-Type: multipart/mixed; boundary="d${i}"`, '', `--d${i}`, body, `--d${i}--`].join('\r\n');
     const deep = Buffer.from(`From: a@orellfuessli.ch\r\nMIME-Version: 1.0\r\n${body}\r\n`);
-    await expect(readMail(deep, noMedia)).rejects.toBeInstanceOf(MailUnreadable);
+    const block = (b: Buffer) => { const h = headerBlock(b); return 'block' in h ? h.block : Buffer.alloc(0); };
+    await expect(readMail(deep, block(deep))).rejects.toBeInstanceOf(MailUnreadable);
     const wide = Buffer.from(`From: a@orellfuessli.ch\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="w"\r\n\r\n${Array.from({ length: 100 }, () => '--w\r\nContent-Type: text/plain\r\n\r\nx\r\n').join('')}--w--\r\n`);
-    await expect(readMail(wide, noMedia)).rejects.toBeInstanceOf(MailUnreadable);
+    await expect(readMail(wide, block(wide))).rejects.toBeInstanceOf(MailUnreadable);
+  });
+
+  it('PDFs are only counted (by their bytes); nothing of them is kept', async () => {
+    const b = 'b1';
+    const part = (name: string, bytes: Buffer) => [`--${b}`, `Content-Type: application/pdf; name="${name}"`, 'Content-Transfer-Encoding: base64', '', bytes.toString('base64'), ''].join('\r\n');
+    const raw = Buffer.from(['From: english-orders@orellfuessli.ch', 'Subject: Ihre Rechnung', 'Message-ID: <inv1@orellfuessli.ch>', 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${b}"`, '',
+      `--${b}`, 'Content-Type: text/plain', '', 'See the invoice.', '', part('invoice.pdf', Buffer.from('%PDF-1.4 made up')), part('not-really.pdf', Buffer.from('MZ an executable')), `--${b}--`, ''].join('\r\n'));
+    const h = headerBlock(raw);
+    expect(await readMail(raw, 'block' in h ? h.block : Buffer.alloc(0))).toMatchObject({ pdfs: 1 });
   });
 });
 
@@ -208,7 +224,7 @@ function fakeBox(msgs: { uid: number; raw: Buffer }[], uidValidity = 7): Mailbox
   return box;
 }
 const IMAP = { host: 'imap.example.org', user: 'shelf', password: { value: 'not-a-real-password' }, folder: 'INBOX' };
-const CFG = { imap: IMAP, workDir: null, arcSealers: SEALERS, mailRecipients: HOUSEHOLD, sealingKey: null };
+const CFG = { imap: IMAP, arcSealers: SEALERS, mailRecipients: HOUSEHOLD, sealingKey: null };
 
 describe('the mail job', () => {
   it('records each mail once: verified with its content, not verified with only Shelf\'s reason', async () => {
@@ -220,7 +236,7 @@ describe('the mail job', () => {
     expect(await refreshMail(db, cfg, { open: async () => box, resolver })).toMatchObject({ status: 'done', detail: '2 new: 1 verified, 1 not verified, 0 seen before' });
     const rows = db.select().from(t.mailSeen).all();
     expect(rows.find((r) => r.messageId === '<good1@orellfuessli.ch>')).toMatchObject({ accepted: 1, kind: 'unclassified' });
-    expect(JSON.parse(rows.find((r) => r.accepted === 1)!.parsedJson!).text).toContain('CHF 19.90');
+    expect(JSON.parse(rows.find((r) => r.accepted === 1)!.parsedJson!)).toMatchObject({ subject: 'Re: Book order', uid: 3 });
     // An unverified mail never claims its Message-ID: it is kept under a hash of its bytes.
     const bad = rows.find((r) => r.accepted === 0)!;
     expect(bad.messageId).toMatch(/^unverified:[0-9a-f]{64}$/);
@@ -268,30 +284,29 @@ describe('the mail job', () => {
     expect(asked).toEqual([new Date('2026-08-18T10:00:00Z'), undefined]);
   });
 
-  it('the delivery address (sealed) is left out of what is kept; a key that cannot open it reads nothing', async () => {
+  it('the delivery address (sealed) is kept out of every field; a key that cannot open it reads nothing', async () => {
     const db = household();
     const key = Buffer.from(TEST_SEALING_KEY, 'base64');
     seal(db, key, SEALED.deliveryAddress, 'A Reader\nSomewhere Street 1\n8000 Exampletown');
-    const mail = await signed(message({ id: 'conf1', body: 'We have ordered your books.\r\nDelivery to: Somewhere Street 1, 8000 Exampletown\r\nTotal CHF 19.90' }));
+    const mail = await signed(message({ id: 'conf1', subject: 'Your order to Somewhere Street 1' }));
     await refreshMail(db, { ...CFG, sealingKey: { value: TEST_SEALING_KEY } }, { open: async () => fakeBox([{ uid: 1, raw: mail }]), resolver });
-    const kept = JSON.parse(db.select().from(t.mailSeen).get()!.parsedJson!).text as string;
-    expect(kept).toContain('Total CHF 19.90');
-    expect(kept).not.toMatch(/Somewhere|Exampletown/);
+    const kept = JSON.parse(db.select().from(t.mailSeen).get()!.parsedJson!);
+    expect(kept.subject).toBeNull();
+    expect(JSON.stringify(kept)).not.toMatch(/Somewhere|Exampletown/);
     const other = household();
     seal(other, key, SEALED.deliveryAddress, 'A Reader');
     expect(await refreshMail(other, { ...CFG, sealingKey: { value: Buffer.alloc(32, 9).toString('base64') } }, { open: async () => fakeBox([{ uid: 1, raw: mail }]), resolver })).toMatchObject({ status: 'blocked' });
     expect(other.select().from(t.mailSeen).all()).toEqual([]);
   });
 
-  it('without the media worker, a mail with a PDF is left for the next run (the cursor stays before it)', async () => {
+  it('a verified mail is keyed by its Message-ID as signed, not by the server\'s envelope', async () => {
     const db = household();
-    const b = 'p';
-    const withPdf = await signed(Buffer.from(['From: english-orders@orellfuessli.ch', 'To: shelf.household@example.org', 'Subject: Rechnung', 'Message-ID: <pdf1@orellfuessli.ch>', 'Date: Mon, 16 Nov 2026 09:00:00 +0100', 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${b}"`, '',
-      `--${b}`, 'Content-Type: text/plain', '', 'Invoice attached.', `--${b}`, 'Content-Type: application/pdf', 'Content-Transfer-Encoding: base64', '', Buffer.from('%PDF-1.4 x').toString('base64'), `--${b}--`, ''].join('\r\n')));
-    const out = await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 9, raw: withPdf }]), resolver, media: async () => { throw new MediaUnavailable(); } });
-    expect(out.status).toBe('blocked');
-    expect(db.select().from(t.mailSeen).all()).toEqual([]);
-    expect(db.select().from(t.mailCursor).all()).toEqual([]);
+    const mail = await signed(message({ id: 'signed-id' }));
+    const box = fakeBox([{ uid: 1, raw: mail }]);
+    const list = box.list.bind(box);
+    box.list = async (a, m) => (await list(a, m)).map((x) => ({ ...x, messageId: '<envelope-says-other@x>' }));
+    await refreshMail(db, CFG, { open: async () => box, resolver });
+    expect(db.select().from(t.mailSeen).all().map((r) => r.messageId)).toEqual(['<signed-id@orellfuessli.ch>']);
   });
 
   it('no mailbox set up, or one that refuses: the run says so, and never the password', async () => {

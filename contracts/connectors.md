@@ -26,16 +26,23 @@ as a secret (`SHELF_IMAP_PASSWORD`, never in the database, the API or logs), rea
   `accepted = 0` and shown in the Inbox as "not verified", and changes nothing (and none of its content is kept). The
   forwarding providers whose ARC seal counts are `SHELF_MAIL_ARC_SEALERS` (default `google.com`); DNS is asked only for
   DKIM key records (`<selector>._domainkey.<domain>`, a few per mail), never SPF, DMARC or anything a mail names;
-- what is kept of a verified mail is the bookshop's own words: quoted lines and everything below a reply header are
-  dropped (the household's request, with its delivery address and card number, is quoted in the replies), and runs of
-  12 or more digits that are not an ISBN/EAN are masked (whatever spaces, dashes, dots or slashes sit between them);
-  any line or PDF cell holding a piece of the delivery address (sealed; unsealed only to find it) is replaced;
+- the header block must be strict RFC 5322 (every line a field, `name:` of printable ASCII, or a continuation; no NUL,
+  no lone CR): a line a parser cannot read would end the headers there and turn the signed ones into body; and the
+  Subject, Message-ID, From, Date and In-Reply-To the MIME parser read must equal those of the verified block;
+- **no mail text is stored** (decided 2026-11-16, PR #12): a mail's free text always carries something of the
+  household's (the delivery address, names, a card number quoted back) in more spellings than a filter can find. A
+  verified mail keeps its Message-ID, In-Reply-To, date, subject (through the field filter below), how many PDFs it has
+  and where it is in the mailbox (UIDVALIDITY, UID); the parsers (M3 d) read it again from the mailbox, in memory, and
+  keep only structured fields: order number, date, line items (title, author, ISBN, quantity, price), totals and
+  status. Every string field passes a filter as a second defence: after NFKC and with format characters stripped, a
+  field holding a piece of the sealed delivery address, or a run of 12 or more digits whatever separates them (other
+  than an ISBN/EAN as the whole field), is dropped;
 - only a verified mail claims its Message-ID (an unverified one is kept under a hash of its bytes, so a forgery cannot
   shadow the genuine mail); the first run reads the last 90 days, by UID SEARCH; when the checks' settings change, that
   window is read again;
 - links in mail are never followed, fetched or shown as clickable; images are not loaded;
-- bodies are parsed as text with size limits (1 MB per mail, 10 MB per attachment, only `application/pdf` attachments
-  are read); PDFs are parsed in the media worker (ADR 0009), never in the server process;
+- MIME is parsed with limits (25 MB per mail, depth 8, 64 parts, 256 KB of headers, no nested message); only
+  `application/pdf` attachments (by their bytes, 10 MB) are read, in the media worker (ADR 0009), never in the server;
 - what the parsers extract only proposes changes to Shelf's own records (prices, quote states, copies); it never
   creates people, settings or outgoing mail.
 
