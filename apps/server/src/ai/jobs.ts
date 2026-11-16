@@ -27,7 +27,7 @@ import { readBooksForAi } from '../library/ai-context';
 import { KIDS_THEMES, bookRef } from '../library/library';
 import { addressParts } from '../mail/read';
 import { SEALED } from '../routes/month';
-import { currentMonth } from '../month/plan';
+import { thisMonth } from '../month/plan';
 import { modelFor, type ModelDeps } from './model';
 import { AiBudget, AiError, runAi } from './run';
 import { getAi } from './settings';
@@ -104,7 +104,7 @@ const stopped = (e: unknown, did: string): Outcome | null => (e instanceof AiErr
 export class AiJobs {
   private reading: Promise<Outcome> | null = null;
   private again = false;
-  constructor(private readonly db: Db, private readonly cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sealingKey' | 'dataDir' | 'timezone'>, private readonly o: AiJobOptions = {}) {}
+  constructor(private readonly db: Db, private readonly cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sealingKey' | 'dataDir'>, private readonly o: AiJobOptions = {}) {}
 
   private start(job: 'read' | 'link' | 'suggest' | 'explain'): { why: string } | { why?: undefined; model: Model; budget: AiBudget; address: string[]; wildcards: boolean } {
     const s = getAi(this.db);
@@ -226,14 +226,18 @@ export class AiJobs {
     return done(`${n} of ${books.length} books tagged; ${ideas} ideas and ${links} links proposed`);
   }
 
-  /** suggestNext for each adult: up to 3 books to their own Inbox. */
-  async suggest(): Promise<Outcome> {
+  /**
+   * suggestNext for each adult: up to 3 books to their own Inbox. `until`: the monthly refresh's deadline; the people
+   * left then get none this time (a retry would ask again for those done).
+   */
+  async suggest(o: { until?: Date } = {}): Promise<Outcome> {
     const s = this.start('suggest');
     if (s.why !== undefined) return done(`no suggestions: ${s.why}`);
     const db = this.db;
     const ownedTitles = db.selectDistinct({ title: t.book.title }).from(t.copy).innerJoin(t.book, eq(t.book.id, t.copy.bookId)).all().map((r) => r.title);
     let n = 0;
     for (const p of household(db).filter((x) => x.role !== 'kid').slice(0, PER_RUN.people)) {
+      if (o.until && this.now() >= o.until) return { status: 'blocked', detail: `suggestions for ${n} people; stopped at the time limit` };
       // Their run: book ideas private to anyone else are not in it.
       const brain = getBrain(db, p.id, { as: p.id });
       const ideas = brain.ideas.map((i) => {
@@ -254,18 +258,22 @@ export class AiJobs {
     return done(`suggestions for ${n} people`);
   }
 
-  /** explainPick for this month's kept plan: each adult pick's one-line why. */
-  async explain(): Promise<Outcome> {
+  /**
+   * explainPick for a month's kept plan (default: this month): each adult pick's one-line why. `until`: the monthly
+   * refresh's deadline; the picks left keep Shelf's words until its retry (a why is written once).
+   */
+  async explain(o: { month?: string; until?: Date } = {}): Promise<Outcome> {
     const s = this.start('explain');
     if (s.why !== undefined) return done(`no picks explained: ${s.why}`);
     const db = this.db;
-    const month = currentMonth(this.cfg.timezone, this.now());
+    const month = o.month ?? thisMonth(this.db, this.now());
     const order = db.select().from(t.order).where(eq(t.order.month, month)).orderBy(desc(t.order.createdAt)).get();
     if (!order) return done('no plan kept for this month yet');
     const adults = new Set(household(db).filter((p) => p.role !== 'kid').map((p) => p.id));
     const lines = db.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, order.id), isNull(t.orderLine.why))).all().filter((l) => adults.has(l.forPerson)).slice(0, PER_RUN.picks);
     let n = 0;
     for (const l of lines) {
+      if (o.until && this.now() >= o.until) return { status: 'failed', detail: `${n} picks explained; stopped at the time limit` };
       const b = db.select().from(t.book).where(eq(t.book.id, l.bookId)).get();
       if (!b) continue;
       // Its idea and the read books it builds on, by the tags and links that count, as the person sees them (theirs

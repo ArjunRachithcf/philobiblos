@@ -19,6 +19,8 @@ import { VERSION } from '../version';
 
 export interface Rule {
   host: string;
+  /** Instead of `host`: names matching this, anchored on both ends (the push services' numbered hosts). */
+  hostPattern?: RegExp;
   /** Default https. */
   scheme?: 'https' | 'http';
   port?: number;
@@ -56,6 +58,11 @@ export interface Egress {
    * most POST_MAX bytes, the answer JSON within LIMITS.json, and its own deadline (a local model may take minutes).
    */
   post(url: string, body: Buffer, opts: { headers?: Record<string, string>; timeoutMs: number }): Promise<Response>;
+  /**
+   * A Web Push message (push/push.ts): its encrypted bytes POSTed to a push service, never redirected, within the GET
+   * deadline; the answer's status only (its body is never read).
+   */
+  push(url: string, body: Buffer, opts: { headers: Record<string, string> }): Promise<Response>;
 }
 
 /** The largest request body Shelf sends (an AI job's images, base64, with its prompt). */
@@ -133,7 +140,7 @@ export function createEgress(o: EgressOptions): Egress {
 
   function ruleFor(u: URL): Rule | null {
     const scheme = u.protocol.slice(0, -1);
-    return o.rules.find((r) => r.host === u.hostname && (r.scheme ?? 'https') === scheme && (r.port == null ? u.port === '' : Number(u.port || (scheme === 'https' ? 443 : 80)) === r.port)) ?? null;
+    return o.rules.find((r) => (r.hostPattern ? r.hostPattern.test(u.hostname) : r.host === u.hostname) && (r.scheme ?? 'https') === scheme && (r.port == null ? u.port === '' : Number(u.port || (scheme === 'https' ? 443 : 80)) === r.port)) ?? null;
   }
 
   async function addressFor(host: string, privateOk: boolean, signal: AbortSignal): Promise<LookupAddress> {
@@ -151,7 +158,7 @@ export function createEgress(o: EgressOptions): Egress {
     return all[0]!;
   }
 
-  function once(u: URL, rule: Rule, want: Want, headers: Record<string, string>, signal: AbortSignal, body?: Buffer): Promise<{ res: http.IncomingMessage; addr: LookupAddress }> {
+  function once(u: URL, rule: Rule, want: Want | 'push', headers: Record<string, string>, signal: AbortSignal, body?: Buffer): Promise<{ res: http.IncomingMessage; addr: LookupAddress }> {
     return addressFor(u.hostname, rule.privateOk === true, signal).then((addr) => new Promise((ok, fail) => {
       // The connection goes to the address checked above; the name stays for TLS (SNI and the certificate).
       const lookup: LookupFunction = (_h, opts, cb) => {
@@ -163,8 +170,8 @@ export function createEgress(o: EgressOptions): Egress {
         ...(o.test?.httpsPort && u.protocol === 'https:' && !u.port ? { port: o.test.httpsPort } : {}),
         method: body ? 'POST' : 'GET', lookup, signal, agent: false, ...(o.test?.ca ? { ca: o.test.ca } : {}),
         headers: {
-          ...headers, 'user-agent': USER_AGENT, accept: want === 'json' ? 'application/json' : want === 'html' ? 'text/html' : 'image/*', 'accept-encoding': 'identity',
-          ...(body ? { 'content-type': 'application/json', 'content-length': String(body.length) } : {}),
+          ...headers, 'user-agent': USER_AGENT, accept: want === 'json' ? 'application/json' : want === 'html' ? 'text/html' : want === 'push' ? '*/*' : 'image/*', 'accept-encoding': 'identity',
+          ...(body ? { 'content-type': want === 'push' ? 'application/octet-stream' : 'application/json', 'content-length': String(body.length) } : {}),
         },
       }, (res) => ok({ res, addr }));
       req.on('error', (e) => fail(signal.aborted ? new EgressError('timeout', `${u.hostname} took too long`) : new EgressError('network', `${u.hostname}: ${(e as NodeJS.ErrnoException).code ?? 'request failed'}`)));
@@ -172,7 +179,7 @@ export function createEgress(o: EgressOptions): Egress {
     }));
   }
 
-  async function exchange(url: string, want: Want, headers: Record<string, string>, deadline: number, body?: Buffer): Promise<Response> {
+  async function exchange(url: string, want: Want | 'push', headers: Record<string, string>, deadline: number, body?: Buffer): Promise<Response> {
       if (o.enabled === false) throw new EgressError('off', 'outgoing requests are turned off (SHELF_EGRESS=off)');
       let u = new URL(url);
       const first = ruleFor(u);
@@ -199,6 +206,12 @@ export function createEgress(o: EgressOptions): Egress {
             if (!sameHost) { rule = { host: next.hostname }; crossed++; }
             u = next;
             continue;
+          }
+          if (want === 'push') {
+            // Only the status counts: the body is never read.
+            res.destroy();
+            if (status < 200 || status >= 300) throw new EgressError('status', `${u.hostname} answered ${status}`, status);
+            return { status, type: '', body: Buffer.alloc(0), url: u.toString() };
           }
           const encoding = String(res.headers['content-encoding'] ?? 'identity').toLowerCase();
           if (encoding !== 'identity') { res.destroy(); throw new EgressError('encoding', `${u.hostname} sent ${encoding} content`); }
@@ -228,6 +241,7 @@ export function createEgress(o: EgressOptions): Egress {
 
   return {
     get: (url, want, opts = {}) => exchange(url, want, opts.headers ?? {}, timeoutMs),
+    push: (url, body, opts) => exchange(url, 'push', opts.headers, timeoutMs, body),
     post: (url, body, opts) => exchange(url, 'json', opts.headers ?? {}, Math.min(opts.timeoutMs, o.postMaxMs ?? POST_TIMEOUT_MAX_MS), body),
   };
 }

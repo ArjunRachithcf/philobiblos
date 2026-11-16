@@ -60,7 +60,7 @@ CREATE TABLE household_settings (
   ai_jobs_json      TEXT NOT NULL DEFAULT '{"read":true,"link":true,"suggest":true,"explain":true,"wildcards":true}',
   cycle_day         INTEGER NOT NULL DEFAULT 1,
   cycle_time        TEXT NOT NULL DEFAULT '20:17',
-  timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',
+  timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',  -- the household's one zone; the row is made at the first start with SHELF_TZ, never read after
   ai_models_json    TEXT NOT NULL DEFAULT '{}',  -- the AI's models (Ollama's text and vision model, Claude's); the Claude key is sealed, never here
   ai_leaves_accepted TEXT,                      -- JSON: the lines of what leaves with Claude an admin accepted; Claude runs only while they cover it
   ai_daily_tokens   INTEGER NOT NULL DEFAULT 200000 -- the household's Claude allowance: tokens in any 24 hours, every run together
@@ -315,7 +315,37 @@ CREATE INDEX ai_run_cache ON ai_run (job, prompt_version, input_hash); -- identi
 CREATE INDEX ai_run_spend ON ai_run (provider, started_at);
 
 CREATE TABLE job_run (
-  id TEXT PRIMARY KEY NOT NULL, job TEXT NOT NULL, status TEXT NOT NULL, detail TEXT, started_at TEXT NOT NULL, finished_at TEXT
+  id TEXT PRIMARY KEY NOT NULL, job TEXT NOT NULL, status TEXT NOT NULL, detail TEXT, started_at TEXT NOT NULL, finished_at TEXT,
+  period TEXT                                -- a scheduled run's period ('YYYY-MM' for the monthly refresh); null when run by hand
+);
+
+-- Web Push (push/push.ts): an adult's browsers. The endpoint is a known push service's (https); the keys are the
+-- browser's (P-256 point, 16-byte secret). The application server key is sealed (sealed_secret 'vapid_private_key').
+CREATE TABLE push_subscription (
+  id           TEXT PRIMARY KEY NOT NULL,
+  person_id    TEXT NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+  endpoint     TEXT NOT NULL UNIQUE,
+  p256dh       TEXT NOT NULL,
+  auth         TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  last_sent_at TEXT
+);
+CREATE INDEX push_subscription_person ON push_subscription(person_id);
+
+-- The scheduler's claim on a period (jobs/schedule.ts): one row per job and period, so a period runs once whatever
+-- restarts, overlaps or clocks do. A claim holds a lease; a retry waits for next_try_at; steps_json lists the steps
+-- done, so a retry resumes after them.
+CREATE TABLE job_period (
+  job         TEXT NOT NULL,
+  period      TEXT NOT NULL,
+  status      TEXT NOT NULL CHECK (status IN ('running','retry','done','gave_up','void')),  -- void: a later month's row from a clock that was wrong
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  steps_json  TEXT NOT NULL DEFAULT '[]',
+  lease_until TEXT,
+  next_try_at TEXT,
+  run_id      TEXT REFERENCES job_run(id) ON DELETE SET NULL,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (job, period)
 );
 
 -- Privacy of proposals (shelf#3): private_to follows the AI run's takeaways_of, whoever writes the row.

@@ -266,7 +266,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** This month's plan, in the household's time zone (SHELF_TZ): the one source of "this month" for the page and for add_to_month. */
+        /** This month's plan, in the household's time zone (Settings.cycle.timezone): the one source of "this month" for the page and for add_to_month. */
         get: operations["getCurrentMonth"];
         put?: never;
         post?: never;
@@ -701,6 +701,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your own devices that get notifications (the endpoint is never answered) */
+        get: operations["listPushSubscriptions"];
+        put?: never;
+        /** This browser's subscription (PushSubscription.toJSON()), for you: https at a browser's push service, a P-256 key and a 16-byte secret; at most 10 a person (409); the same endpoint moves to you; 10 saves in 10 minutes */
+        post: operations["addPushSubscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["removePushSubscription"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A test notification to your own devices (3 in 10 minutes); its text is the service worker's own */
+        post: operations["testPush"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Web Push: the household's application server key (VAPID, P-256), public half only, for PushManager.subscribe; made and sealed the first time */
+        get: operations["pushKey"];
+        put?: never;
+        post?: never;
+        /** Admins, with a sign-in of the last 10 minutes (standalone): a new notification key. The sealed key and every device are removed together; each adult turns notifications on again. For a deliberate sealing-key change, or a key someone may have seen. */
+        delete: operations["resetPushKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/shares/{id}": {
         parameters: {
             query?: never;
@@ -764,7 +833,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** `person` (your own settings) is stored, and the household's `budget`, `order` and `ai` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it). */
+        /** `person` (your own settings) is stored, and the household's `budget`, `order`, `ai` and `cycle` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it). */
         patch: operations["patchSettings"];
         trace?: never;
     };
@@ -777,7 +846,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult's Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month's kept picks) run through the AI provider in Settings; monthly arrives with its slice and changes nothing yet. */
+        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult's Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month's kept picks) run through the AI provider in Settings; monthly is the monthly refresh (spec §5 step 1: mail, shares, prices, the month's plan kept, ai_suggest, ai_explain), which also runs by itself on the household's day (Settings.cycle), once a month, and then notifies the adults (Web Push, /push); by hand it does every step again for this month and notifies no one. */
         post: operations["runJob"];
         delete?: never;
         options?: never;
@@ -1226,10 +1295,28 @@ export interface components {
                 theme?: string;
                 enabled?: boolean;
             }[];
+            /** @description When the monthly refresh runs by itself (admins set it): the household's day, time and time zone. Once a month, whatever restarts or clocks do; a month missed while the server was off is not made up. */
             cycle?: {
                 day?: number;
                 time?: string;
+                /** @description an IANA time zone, e.g. Europe/Zurich: the household's one zone, for the refresh and for "this month" everywhere (the plan, /month, add_to_month). SHELF_TZ is only its value at the first start. */
                 timezone?: string;
+                /**
+                 * Format: date-time
+                 * @description when it next runs (or is tried again)
+                 */
+                readonly next?: string;
+                readonly last?: {
+                    /** @description YYYY-MM */
+                    period?: string;
+                    /** @enum {unknown} */
+                    status?: "running" | "retry" | "done" | "gave_up";
+                    attempts?: number;
+                };
+                /** @description the stored time zone is not one this server knows: nothing runs until an admin sets it again (next is then absent) */
+                readonly problem?: string;
+                /** @description YYYY-MM: a run was recorded for a month later than now's, so the clock was ahead when it ran (or is behind now). It does not stop the month it is now; the month it names runs again when it comes. */
+                readonly futureRun?: string;
             };
             /** @description Where orders go (admins set it): both sealed at rest with a key outside the database (docs/security.md) */
             order?: {
@@ -1257,6 +1344,13 @@ export interface components {
                 folder: string;
                 readonly configured?: boolean;
             };
+        };
+        PushSubscription: {
+            id: string;
+            /** @description the push service's host name */
+            service: string;
+            createdAt: string;
+            lastSentAt?: string | null;
         };
         ShareToken: {
             id: string;
@@ -3159,6 +3253,224 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listPushSubscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscription"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addPushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    endpoint: string;
+                    expirationTime?: number | null;
+                    keys: {
+                        p256dh: string;
+                        auth: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Saved */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description At most 10 devices a person */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many saves */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No usable sealing key */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removePushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Not one of yours */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    testPush: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sent (or why not) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {unknown} */
+                        status?: "done" | "blocked" | "failed";
+                        detail?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Too many tests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    pushKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description base64url, 65 bytes uncompressed */
+                        publicKey: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No usable sealing key, or one that does not open the sealed notification key (nothing is replaced or removed): no notifications */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resetPushKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description devices removed */
+                        devices: number;
+                    };
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];

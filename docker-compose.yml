@@ -14,6 +14,7 @@ services:
       SHELF_DATA_DIR: /data
       SHELF_KEYS_DIR: /keys
       SHELF_WORK_DIR: /work
+      # The household's time zone at the first start only; Settings holds it after.
       SHELF_TZ: Europe/Zurich
       # AI: Ollama is the default; Claude only after the opt-in in Settings.
       OLLAMA_URL: ${OLLAMA_URL:-}

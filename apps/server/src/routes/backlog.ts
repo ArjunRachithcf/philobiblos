@@ -2,7 +2,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { MonthError, changePicks, currentMonth } from '../month/plan';
+import { MonthError, changePicks, thisMonth } from '../month/plan';
 import { BacklogError, addToBacklog, bulk, removeFilter, renameFilter, saveFilter, savedFilters } from '../backlog/actions';
 import { LIMIT_MAX, getCandidate, listBacklog, parseCandidateId } from '../backlog/backlog';
 
@@ -38,7 +38,7 @@ export async function backlogRoutes(app: FastifyInstance, cfg: Config, db: Db) {
           if (!k) throw new BacklogError(400, 'ids: candidate ids from the list');
           return { bookId: k.bookId, for: k.personId };
         });
-        changePicks(db, currentMonth(cfg.timezone), req.caller!.personId, { add });
+        changePicks(db, thisMonth(db), req.caller!.personId, { add });
         return { changed: add.length };
       }
       return { changed: bulk(db, req.caller!.personId, req.body) };

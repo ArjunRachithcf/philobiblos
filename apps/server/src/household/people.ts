@@ -106,11 +106,13 @@ export function editPerson(db: Db, id: string, patch: Partial<PersonInput>): Per
       handle: patch.handle === undefined ? p.handle : patch.handle,
       birthYear: role === 'kid' ? (patch.birthYear === undefined ? p.birthYear : patch.birthYear) : null,
     }).where(eq(t.person.id, id)).run();
-    // Kids never sign in: becoming one ends every session and removes every passkey.
+    // Kids never sign in: becoming one ends every session and removes every passkey and device.
     if (role === 'kid' && p.role !== 'kid') {
       tx.delete(t.session).where(eq(t.session.personId, id)).run();
       tx.delete(t.passkey).where(eq(t.passkey.personId, id)).run();
       tx.delete(t.invite).where(eq(t.invite.personId, id)).run();
+      // Nor get notifications (push/push.ts checks the role at each send too).
+      tx.delete(t.pushSubscription).where(eq(t.pushSubscription.personId, id)).run();
     }
     if (role !== 'admin' && p.role === 'admin') revokeInvitesBy(tx as unknown as Db, id);
   });

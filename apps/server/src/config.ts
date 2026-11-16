@@ -1,6 +1,8 @@
 // Settings from the environment (contracts/homerslab-app.yaml, docker-compose.yml). Secrets are read here and
 // nowhere else, and never logged.
 import { join, resolve } from 'node:path';
+import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY, wildcardTooBroad } from './push/hosts';
+import { validTimeZone } from './jobs/zone';
 
 export type Mode = 'homerslab' | 'standalone';
 
@@ -10,6 +12,7 @@ export interface Config {
   dbFile: string;
   host: string;
   port: number;
+  /** SHELF_TZ: only the zone the household starts with (its settings row, made at the first start); never read after. */
   timezone: string;
   /** homerslab: the only address whose X-HomersLab-Person header is trusted. */
   trustedProxy: string | null;
@@ -37,6 +40,11 @@ export interface Config {
   imap: { host: string; user: string; password: { value: string } | { file: string }; folder: string } | null;
   /** Mail providers whose ARC seal Shelf trusts for a forward that broke the bookshop's DKIM (SHELF_MAIL_ARC_SEALERS). */
   arcSealers: string[];
+  /**
+   * The push services a device's subscription may name (SHELF_PUSH_HOSTS, comma-separated host names or `*.domain`;
+   * default the browsers' own, push/push.ts DEFAULT_PUSH_HOSTS). Every send still goes to public addresses over https only.
+   */
+  pushHosts: string[];
   /** The household's addresses the bookshop writes to (SHELF_MAIL_RECIPIENTS); a mail to anyone else is not taken. */
   mailRecipients: string[];
 }
@@ -68,7 +76,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // publishes the port on 127.0.0.1 only.
     host: env.SHELF_HOST ?? '127.0.0.1',
     port,
-    timezone: env.SHELF_TZ ?? 'Europe/Zurich',
+    timezone: parseTimeZone(env.SHELF_TZ),
     trustedProxy: env.SHELF_TRUSTED_PROXY || null,
     webDir: env.SHELF_WEB_DIR ?? null,
     origin: origin.origin,
@@ -86,8 +94,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       folder: env.SHELF_IMAP_FOLDER || 'INBOX',
     } : null,
     mailRecipients: (env.SHELF_MAIL_RECIPIENTS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter((d) => /^[^@\s]+@[^@\s]+$/.test(d)),
+    pushHosts: parsePushHosts(env.SHELF_PUSH_HOSTS),
     arcSealers: (env.SHELF_MAIL_ARC_SEALERS ?? 'google.com').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
   };
+}
+
+/** SHELF_TZ: the household's zone at the first start only (jobs/schedule.ts initHousehold); Settings has it after. */
+function parseTimeZone(v: string | undefined): string {
+  if (v === undefined || !v.trim()) return 'Europe/Zurich';
+  const tz = v.trim();
+  if (!validTimeZone(tz)) throw new Error(`SHELF_TZ: a time zone such as Europe/Zurich, not ${v.trim().slice(0, 80)}`);
+  return tz;
+}
+
+function parsePushHosts(v: string | undefined): string[] {
+  if (v === undefined || !v.trim()) return [...DEFAULT_PUSH_HOSTS];
+  const hosts = v.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  for (const h of hosts) if (!PUSH_HOST_ENTRY.test(h) || wildcardTooBroad(h)) throw new Error(`SHELF_PUSH_HOSTS: host names or *.domain (at least three labels after *.), comma-separated, not ${h.slice(0, 80)}`);
+  return hosts;
 }
 
 function parseOrigin(v: string): URL {

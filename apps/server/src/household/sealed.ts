@@ -54,14 +54,23 @@ export function keyProblem(cfg: Pick<Config, 'sealingKey'>): 'missing' | 'unread
 
 const keyId = (key: Buffer) => createHash('sha256').update(key).digest('hex').slice(0, 12);
 
-export function seal(db: Db, key: Buffer, name: string, value: string | null, now = new Date()): void {
-  if (value === null) { db.delete(t.sealedSecret).where(eq(t.sealedSecret.key, name)).run(); return; }
+function sealedRow(key: Buffer, name: string, value: string, now: Date) {
   const iv = randomBytes(12);
   const c = createCipheriv('aes-256-gcm', key, iv);
   c.setAAD(Buffer.from(name));
   const body = Buffer.concat([c.update(value, 'utf8'), c.final()]);
-  const row = { key: name, ciphertext: Buffer.concat([iv, c.getAuthTag(), body]), keyId: keyId(key), updatedAt: now.toISOString() };
+  return { key: name, ciphertext: Buffer.concat([iv, c.getAuthTag(), body]), keyId: keyId(key), updatedAt: now.toISOString() };
+}
+
+export function seal(db: Db, key: Buffer, name: string, value: string | null, now = new Date()): void {
+  if (value === null) { db.delete(t.sealedSecret).where(eq(t.sealedSecret.key, name)).run(); return; }
+  const row = sealedRow(key, name, value, now);
   db.insert(t.sealedSecret).values(row).onConflictDoUpdate({ target: t.sealedSecret.key, set: { ciphertext: row.ciphertext, keyId: row.keyId, updatedAt: row.updatedAt } }).run();
+}
+
+/** Seals `value` only when nothing is sealed under `name` yet (the row's name is unique: of two at once, the first wins). */
+export function sealIfAbsent(db: Db, key: Buffer, name: string, value: string, now = new Date()): void {
+  db.insert(t.sealedSecret).values(sealedRow(key, name, value, now)).onConflictDoNothing().run();
 }
 
 /** The value, or null when nothing is sealed under that name. No key, a wrong key or a changed row: SealError. */

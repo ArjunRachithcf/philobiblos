@@ -7,7 +7,7 @@ import { parse } from 'yaml';
 import { EDGE_IDENTITY, loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { seal } from '../src/household/sealed';
-import { ORIGIN, TEST_SEALING_KEY, expectValid, fakeWebAuthn, household, inboxItems, isPublic, ops, request, security, sessionCookie } from './helpers';
+import { ORIGIN, RFC8291_UA_KEY, TEST_SEALING_KEY, expectValid, nowherePush, fakeWebAuthn, household, inboxItems, isPublic, ops, request, security, sessionCookie } from './helpers';
 
 const standalone = () => loadConfig({ SHELF_MODE: 'standalone', SHELF_DATA_DIR: '/nonexistent', SHELF_SEALING_KEY: TEST_SEALING_KEY });
 const homerslab = () => loadConfig({ SHELF_MODE: 'homerslab', SHELF_EDGE_IDENTITY: 'homerslab-v1', SHELF_TRUSTED_PROXY: '127.0.0.1', SHELF_ORIGIN: ORIGIN, SHELF_DATA_DIR: '/nonexistent' });
@@ -26,7 +26,9 @@ beforeAll(async () => {
   admin = sessionCookie(db0, 'p_alex');
   adult = sessionCookie(db0, 'p_sam');
   kid = sessionCookie(db0, 'p_kid1');
-  built = await buildApp(standalone(), db0, { webauthn: fakeWebAuthn() });
+  // A device of Alex's for DELETE /push/subscriptions/{id}; the pushes go nowhere (a stand-in push client).
+  db0.insert(t.pushSubscription).values({ id: 'ps_alex', personId: 'p_alex', endpoint: 'https://fcm.googleapis.com/fcm/send/contract', p256dh: RFC8291_UA_KEY, auth: 'BTBZMqHH6r4Tts7J_aSIgg', createdAt: new Date().toISOString() }).run();
+  built = await buildApp(standalone(), db0, { webauthn: fakeWebAuthn(), push: nowherePush });
   await built.app.ready();
 });
 afterAll(() => built.app.close());
