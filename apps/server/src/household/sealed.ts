@@ -36,6 +36,22 @@ export function sealingKey(cfg: Pick<Config, 'sealingKey'>): Buffer | null {
   return decode(readFileSync(src.file, 'utf8'));
 }
 
+/**
+ * What is wrong with the key's configuration, without making a key: 'missing' (none configured, or the named file is
+ * not there) or 'unreadable' (not 32 bytes of base64, or the file cannot be read); null when it is usable (a standalone
+ * key that does not exist yet is made on the first seal).
+ */
+export function keyProblem(cfg: Pick<Config, 'sealingKey'>): 'missing' | 'unreadable' | null {
+  const src = cfg.sealingKey;
+  if (!src) return 'missing';
+  try {
+    if ('value' in src) decode(src.value);
+    else if (existsSync(src.file)) decode(readFileSync(src.file, 'utf8'));
+    else if (!src.create) return 'missing';
+    return null;
+  } catch { return 'unreadable'; }
+}
+
 const keyId = (key: Buffer) => createHash('sha256').update(key).digest('hex').slice(0, 12);
 
 export function seal(db: Db, key: Buffer, name: string, value: string | null, now = new Date()): void {
