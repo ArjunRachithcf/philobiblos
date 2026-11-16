@@ -26,7 +26,7 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
   return (
     <>
       <PageHead title="Household" sub={me.mode === 'homerslab'
-        ? 'People come from HomersLab: add, remove or change them there.'
+        ? 'People come from Homeward: add, remove or change them there.'
         : 'Everyone who uses Philobiblos, and the kids it picks books for. Kids never sign in; adults act for them.'} />
       <div className="stack">
         {error && <Notice kind="error">{error}</Notice>}

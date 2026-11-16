@@ -1499,7 +1499,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Not in homerslab mode (HomersLab signs people in) */
+            /** @description Not in homerslab mode (Homeward signs people in) */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -1916,7 +1916,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description Not under HomersLab (HomersLab holds the passkeys) */
+            /** @description Not under HomersLab (Homeward holds the passkeys) */
             404: {
                 headers: {
                     [name: string]: unknown;

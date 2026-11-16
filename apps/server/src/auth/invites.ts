@@ -79,7 +79,7 @@ export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'd
  * same file as the setup link. For the person who runs Philobiblos's container (they hold the data folder anyway).
  */
 export function createRecoveryLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir'>, handle: string): string {
-  if (cfg.mode !== 'standalone') throw new Error('under HomersLab, HomersLab signs people in');
+  if (cfg.mode !== 'standalone') throw new Error('in homerslab mode, Homeward signs people in');
   const p = db.select().from(t.person).where(eq(t.person.handle, handle)).get();
   if (!p || p.role !== 'admin') throw new Error(`no admin with the handle ${handle}`);
   const { url } = createInvite(db, cfg, { kind: 'recovery', personId: p.id });

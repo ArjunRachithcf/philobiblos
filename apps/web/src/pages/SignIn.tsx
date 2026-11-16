@@ -10,7 +10,7 @@ export function SignIn({ session, onSignedIn }: { session: AuthSession; onSigned
     return (
       <main className="auth" id="main">
         <h1 className="large-title">Philobiblos</h1>
-        <Notice kind="info" title="Open Philobiblos from HomersLab.">HomersLab signs you in; Philobiblos has no sign-in of its own here.</Notice>
+        <Notice kind="info" title="Open Philobiblos from Homeward.">Homeward signs you in; Philobiblos has no sign-in of its own here.</Notice>
       </main>
     );
   }

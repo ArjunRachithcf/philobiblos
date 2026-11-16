@@ -1,4 +1,4 @@
-// Sign-in (ADR 0010). Standalone only: under HomersLab these answer 404 (HomersLab signs people in).
+// Sign-in (ADR 0010). Standalone only: under HomersLab these answer 404 (Homeward signs people in).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { and, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
@@ -17,7 +17,7 @@ const limited = { auth: 'public' as const, rateLimit: { max: 20, timeWindow: '1 
 export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, webauthn: WebAuthn, challenges: Challenges) {
   const standaloneOnly = (reply: FastifyReply) => {
     if (cfg.mode === 'standalone') return true;
-    void reply.code(404).send({ error: 'HomersLab signs people in' });
+    void reply.code(404).send({ error: 'Homeward signs people in' });
     return false;
   };
   // A sign-in replaces this browser's earlier session, and remembers the passkey (removing it ends the session).

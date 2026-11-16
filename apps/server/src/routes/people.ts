@@ -49,13 +49,13 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
   };
   const managedElsewhere = (reply: FastifyReply) => {
     if (cfg.mode === 'standalone') return false;
-    void reply.code(409).send({ error: 'people are managed in HomersLab' });
+    void reply.code(409).send({ error: 'people are managed in Homeward' });
     return true;
   };
   // Passkeys and sessions are Philobiblos's own only in standalone mode; under HomersLab these routes do not exist.
   const standaloneOnly = (reply: FastifyReply) => {
     if (cfg.mode === 'standalone') return true;
-    void reply.code(404).send({ error: 'HomersLab holds the passkeys' });
+    void reply.code(404).send({ error: 'Homeward holds the passkeys' });
     return false;
   };
   // Adding a passkey (to anyone) needs a sign-in of the last few minutes: an old, stolen cookie cannot.
