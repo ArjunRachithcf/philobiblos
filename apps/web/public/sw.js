@@ -8,7 +8,14 @@
 const CACHE = 'shelf-share';
 const FIELDS = { title: 300, text: 5000, url: 2000 };
 const MAX_FILES = 30;
-const MAX_FILE_BYTES = 64 * 1024 * 1024; // the server's largest (a video; an image is 20 MB): a larger file is left out here, not cached
+// The server's limits (src/shares/shares.ts SHARE_BYTES): a file over its type's is left out here, not cached, so one
+// large photo never fails the whole share. The type is told from the first bytes, as the server does.
+const MAX_BYTES = { image: 20 * 1024 * 1024, video: 64 * 1024 * 1024, total: 100 * 1024 * 1024 };
+async function isImage(f) {
+  const b = new Uint8Array(await f.slice(0, 12).arrayBuffer());
+  const at = (i, ...v) => v.every((x, k) => b[i + k] === x);
+  return at(0, 0xff, 0xd8, 0xff) || at(0, 0x89, 0x50, 0x4e, 0x47) || (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) || at(0, 0x47, 0x49, 0x46, 0x38);
+}
 
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
@@ -24,10 +31,15 @@ self.addEventListener('fetch', (e) => {
       const v = form.get(k);
       if (typeof v === 'string' && v.trim()) out.append(k, v.slice(0, max));
     }
-    let dropped = 0;
-    for (const f of form.getAll('media').slice(0, MAX_FILES)) {
+    // Left out, and counted for the share screen's notice: a file past its type's limit or the share's, and every file
+    // once MAX_FILES are kept.
+    let dropped = 0, total = 0, files = 0;
+    for (const f of form.getAll('media')) {
       if (!(f instanceof File)) continue;
-      if (f.size > MAX_FILE_BYTES) { dropped++; continue; }
+      if (files >= MAX_FILES) { dropped++; continue; }
+      if (f.size > ((await isImage(f)) ? MAX_BYTES.image : MAX_BYTES.video) || total + f.size > MAX_BYTES.total) { dropped++; continue; }
+      total += f.size;
+      files++;
       out.append('media', f, 'shared');
     }
     const id = crypto.randomUUID();

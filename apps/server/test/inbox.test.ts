@@ -1,6 +1,8 @@
 // The Inbox, phone shares and share tokens (M3 e, docs/security.md). Every share, caption and mail here is invented.
 // Each rule has a test that fails when the rule is changed.
+import { connect } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -12,14 +14,16 @@ import type { Db } from '../src/db/open';
 import { MAX_COPIES, PAGE, UNVERIFIED_ID, mailItemId, shareItemId } from '../src/inbox/inbox';
 import { MediaUnavailable, type MediaOutcome, type runMediaJob } from '../src/media/client';
 import { refreshMail } from '../src/mail/job';
-import { SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, ShareProcessor, imageType, shareFileType } from '../src/shares/shares';
+import { IMAGE_HEADER, SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, SHARE_UPLOADS, ShareProcessor, imageType, shareFileType } from '../src/shares/shares';
 import { MAX_LIVE_TOKENS, findShareToken } from '../src/shares/tokens';
 import { TOKEN_FAILURES } from '../src/auth/hook';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
 import { CFG, fakeBox, message, resolver, signed } from './mailkit';
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
-const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]);
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]), Buffer.from('IHDR'), Buffer.alloc(17)]);
+const GIF = Buffer.from('GIF89a\x01\0\x01\0\0\0\0', 'latin1');
+const WEBP = Buffer.from('RIFF\0\0\0\0WEBPVP8 \0\0\0\0', 'latin1');
 const HEIC = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypheic'), Buffer.alloc(8)]);
 const OUT = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 /** Video containers by their first bytes (the server never decodes them: the worker does). */
@@ -28,7 +32,11 @@ const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x8
 
 const dirs: string[] = [];
 const apps: BuiltApp[] = [];
+const sockets: (() => void)[] = [];
+const UPLOADS = { ...SHARE_UPLOADS };
 afterEach(async () => {
+  for (const d of sockets.splice(0)) d();
+  Object.assign(SHARE_UPLOADS, { max: UPLOADS.max, perPerson: UPLOADS.perPerson, idleMs: UPLOADS.idleMs, deadlineMs: UPLOADS.deadlineMs });
   for (const a of apps.splice(0)) await a.app.close();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
@@ -153,8 +161,17 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
   });
 
   it('the type comes from the bytes: a PNG named .txt passes; a HEIC, a playlist or a script called JPEG does not, and nothing is staged', async () => {
-    expect([JPEG, PNG, Buffer.from('GIF89a......'), Buffer.from('RIFF\0\0\0\0WEBPVP8 ')].map(imageType)).toEqual(['jpeg', 'png', 'gif', 'webp']);
+    expect([JPEG, PNG, GIF, WEBP].map(imageType)).toEqual(['jpeg', 'png', 'gif', 'webp']);
     expect([HEIC, Buffer.from('<svg onload=alert(1)>'), Buffer.from('%PDF-1.7'), Buffer.from([0xff, 0xd8])].map(imageType)).toEqual([null, null, null, null]);
+    // Each type needs its whole fixed header: one byte short, it is no image (a 3-byte FF D8 FF was a JPEG, PR #21 review).
+    const heads = { jpeg: JPEG, png: PNG, gif: GIF, webp: WEBP };
+    for (const [type, b] of Object.entries(heads) as [keyof typeof heads, Buffer][]) {
+      expect([imageType(b.subarray(0, IMAGE_HEADER[type])), imageType(b.subarray(0, IMAGE_HEADER[type] - 1))]).toEqual([type, null]);
+    }
+    expect(IMAGE_HEADER).toEqual({ jpeg: 6, png: 33, webp: 20, gif: 13 });
+    // and what the header says must be one: a JPEG's first marker and its length, a PNG's IHDR, a WebP's VP8 chunk
+    expect([Buffer.from([0xff, 0xd8, 0xff, 0x00, 0, 2]), Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 1]), Buffer.concat([PNG.subarray(0, 12), Buffer.from('IDAT'), PNG.subarray(16)]), Buffer.from('RIFF\0\0\0\0WEBPXXXX\0\0\0\0', 'latin1'), Buffer.from('GIF89b\x01\0\x01\0\0\0\0', 'latin1')].map(imageType)).toEqual([null, null, null, null, null]);
+    expect((await share(await app(), [{ name: 'media', file: Buffer.from([0xff, 0xd8, 0xff]) }])).statusCode).toBe(415);
     const w = worker();
     const a = await app({ media: w.media });
     expect([MP4, WEBM, HEIC].map(shareFileType)).toEqual(['video', 'video', null]);
@@ -214,6 +231,18 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
     expect((await share(a, [{ name: 'media', file: big(MP4, 51) }, { name: 'media', file: big(MP4, 50) }])).statusCode).toBe(413);
     expect(a.db.select().from(t.share).all()).toHaveLength(1);
   }, 30_000);
+
+  it('uploads stream to disk, a few at a time: past them, 429 and nothing read; a staged file is whole or not there', async () => {
+    const w = worker(() => 'unavailable');
+    const a = await app({ media: w.media });
+    const { id } = (await share(a, [{ name: 'media', file: JPEG }, { name: 'media', file: MP4 }])).json();
+    expect(readdirSync(join(a.data, 'incoming', id)).sort()).toEqual(['00.bin', '01.bin']);
+    expect(readFileSync(join(a.data, 'incoming', id, '01.bin'))).toEqual(MP4);
+    expect(SHARE_UPLOADS.active).toBe(0);
+    // refused after part of it was written: nothing of the share stays, no half file either
+    expect((await share(a, [{ name: 'media', file: JPEG }, { name: 'media', file: Buffer.concat([JPEG, Buffer.alloc(21 * 1024 * 1024)]) }])).statusCode).toBe(413);
+    expect(readdirSync(join(a.data, 'incoming'))).toEqual([id]);
+  });
 
   it('every file goes through the worker; only its JPEG is kept, the original deleted; progress counts kept and refused', async () => {
     const w = worker((b) => (b[0] === 0x89 ? { id: 'j', ok: false, error: 'too_many_pixels' } : { id: 'j', ok: true, kind: 'image.reencode', width: 10, height: 12, format: 'jpeg', bytes: OUT.length, image: OUT }));
@@ -309,6 +338,128 @@ describe('POST /shares: CSRF, limits, types by their bytes, and the media worker
     expect((await a.app.inject({ method: 'POST', url: `/api/inbox/${shareItemId(id)}/books/0`, headers: { cookie: a.sam, origin: ORIGIN }, payload: { action: 'add' } })).statusCode).toBe(404);
     expect((await a.app.inject({ method: 'POST', url: `/api/inbox/${shareItemId(id)}/dismiss`, headers: { cookie: a.sam, origin: ORIGIN } })).statusCode).toBe(404);
     expect((await a.app.inject({ url: '/api/inbox', headers: { cookie: a.alex } })).json().items).toMatchObject([{ id: shareItemId(id), kind: 'share', found: [{ index: 0, title: 'Care at the Centre', verdict: 'add', decided: null }] }]);
+  });
+});
+
+/** The app on a real port (inject never shows what a slow client does to the server). */
+async function listening(a: Awaited<ReturnType<typeof app>>) {
+  await a.app.listen({ port: 0, host: '127.0.0.1' });
+  return (a.app.server.address() as AddressInfo).port;
+}
+/**
+ * A share sent over a socket, chunked: its headers, then (with `first`) a media part's head and those bytes, then one
+ * byte every `everyMs` if given, until `finish` (which ends the file and the form) or `destroy`.
+ */
+function slow(port: number, auth: Record<string, string>, o: { first?: Buffer; everyMs?: number } = {}) {
+  const b = 'inbox-test-boundary';
+  const s = connect(port, '127.0.0.1');
+  let got = '';
+  s.on('data', (d: Buffer) => { got += d.toString('latin1'); });
+  s.on('error', () => {});
+  let isClosed = false;
+  const closed = new Promise<void>((r) => s.on('close', () => { isClosed = true; r(); }));
+  const chunk = (x: Buffer | string) => { if (s.destroyed) return; const c = Buffer.from(x); s.write(`${c.length.toString(16)}\r\n`); s.write(c); s.write('\r\n'); };
+  const head = Object.entries({ host: '127.0.0.1', 'content-type': `multipart/form-data; boundary=${b}`, 'transfer-encoding': 'chunked', ...auth }).map(([k, v]) => `${k}: ${v}\r\n`).join('');
+  s.write(`POST /api/shares HTTP/1.1\r\n${head}\r\n`);
+  if (o.first) chunk(Buffer.concat([Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="media"; filename="a.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`), o.first]));
+  const tick = o.everyMs ? setInterval(() => chunk(Buffer.alloc(1)), o.everyMs) : undefined;
+  const destroy = () => { clearInterval(tick); s.destroy(); };
+  sockets.push(destroy);
+  return {
+    closed, isClosed: () => isClosed, status: () => /^HTTP\/1\.1 (\d{3})/.exec(got)?.[1] ?? null, destroy,
+    finish: () => { clearInterval(tick); chunk(`${o.first ? '\r\n' : ''}--${b}\r\nContent-Disposition: form-data; name="url"\r\n\r\nhttps://example.org/p/slow\r\n--${b}--\r\n`); if (!s.destroyed) s.write('0\r\n\r\n'); },
+  };
+}
+const within = async (ms: number, f: () => boolean) => { for (const end = Date.now() + ms; !f() && Date.now() < end;) await new Promise((r) => setTimeout(r, 10)); expect(f()).toBe(true); };
+const staged = (a: { data: string }) => (existsSync(join(a.data, 'incoming')) ? readdirSync(join(a.data, 'incoming')) : []);
+
+describe('uploads cannot be held open (PR #21 review): two a person, a few for the household; cut when idle, late or revoked', () => {
+  it('the limits, and no request outlasts a share\'s deadline', async () => {
+    const a = await app();
+    expect(SHARE_UPLOADS).toMatchObject({ max: 6, perPerson: 2, idleMs: 15_000, deadlineMs: 5 * 60_000, active: 0 });
+    expect(a.app.server.requestTimeout).toBe(SHARE_UPLOADS.deadlineMs + 60_000);
+  });
+
+  it('four trickling uploads from one adult (and their token) hold two slots: another adult\'s plain share still gets 202', async () => {
+    const a = await app();
+    const port = await listening(a);
+    const mine = [0, 1, 2, 3].map(() => slow(port, { cookie: a.alex, origin: ORIGIN }, { first: JPEG, everyMs: 100 }));
+    await within(3000, () => SHARE_UPLOADS.active === 2 && mine.filter((u) => u.status() === '429').length === 2);
+    // A token is its person's: it counts against the same two.
+    const { token } = await newToken(a);
+    const viaToken = slow(port, { authorization: `Bearer ${token}` }, { first: JPEG, everyMs: 100 });
+    await within(3000, () => viaToken.status() === '429');
+    const other = slow(port, { cookie: a.sam, origin: ORIGIN });
+    other.finish();
+    await within(3000, () => other.status() !== null);
+    expect(other.status()).toBe('202');
+    for (const u of [...mine, viaToken]) u.destroy();
+    await within(3000, () => SHARE_UPLOADS.active === 0);
+    expect(staged(a)).toEqual([]);
+  });
+
+  it('the household\'s ceiling: past it, 429 even for someone with nothing open', async () => {
+    SHARE_UPLOADS.max = 3;
+    const a = await app();
+    const port = await listening(a);
+    for (const cookie of [a.alex, a.alex, a.sam]) slow(port, { cookie, origin: ORIGIN }, { first: JPEG, everyMs: 100 });
+    await within(3000, () => SHARE_UPLOADS.active === 3);
+    const robin = slow(port, { cookie: sessionCookie(a.db, 'p_del'), origin: ORIGIN });
+    robin.finish();
+    await within(3000, () => robin.status() !== null);
+    expect(robin.status()).toBe('429');
+  });
+
+  it('an idle upload is cut: no bytes for idleMs, the request is destroyed, the slot comes back and nothing stays staged', async () => {
+    SHARE_UPLOADS.idleMs = 300;
+    const a = await app();
+    const port = await listening(a);
+    const quiet = slow(port, { cookie: a.alex, origin: ORIGIN }, { first: JPEG });
+    const headersOnly = slow(port, { cookie: a.sam, origin: ORIGIN });
+    // One that keeps sending is not idle, however slowly it arrives, and is taken once it is in.
+    const steady = slow(port, { cookie: sessionCookie(a.db, 'p_del'), origin: ORIGIN }, { first: JPEG, everyMs: 50 });
+    await within(3000, () => SHARE_UPLOADS.active === 3 && staged(a).length > 0);
+    await within(3000, () => quiet.isClosed() && headersOnly.isClosed());
+    expect([quiet.status(), headersOnly.status()]).toEqual([null, null]);
+    await new Promise((r) => setTimeout(r, 700));
+    expect([steady.isClosed(), SHARE_UPLOADS.active]).toEqual([false, 1]);
+    steady.finish();
+    await within(3000, () => steady.status() !== null);
+    expect(steady.status()).toBe('202');
+    await within(3000, () => SHARE_UPLOADS.active === 0);
+    // Only the steady one's share: the cut ones left nothing.
+    expect(a.db.select().from(t.share).all()).toHaveLength(1);
+  });
+
+  it('an upload that never ends is cut at its deadline, bytes or not; the slot comes back and nothing stays staged', async () => {
+    Object.assign(SHARE_UPLOADS, { idleMs: 10_000, deadlineMs: 800 });
+    const a = await app();
+    const port = await listening(a);
+    const forever = slow(port, { cookie: a.alex, origin: ORIGIN }, { first: JPEG, everyMs: 50 });
+    await within(3000, () => SHARE_UPLOADS.active === 1 && staged(a).length === 1);
+    await within(3000, () => forever.isClosed());
+    expect(SHARE_UPLOADS.active).toBe(0);
+    expect(staged(a)).toEqual([]);
+    expect(a.db.select().from(t.share).all()).toEqual([]);
+  });
+
+  it('revoking a token cuts the uploads it has open, and only those', async () => {
+    const a = await app();
+    const port = await listening(a);
+    const { id, token } = await newToken(a);
+    const viaToken = slow(port, { authorization: `Bearer ${token}` }, { first: JPEG, everyMs: 100 });
+    const viaSession = slow(port, { cookie: a.alex, origin: ORIGIN }, { first: JPEG, everyMs: 100 });
+    await within(3000, () => SHARE_UPLOADS.active === 2 && staged(a).length === 2);
+    // Another adult revoking it changes nothing.
+    await a.app.inject({ method: 'DELETE', url: `/api/share-tokens/${id}`, headers: { cookie: a.sam, origin: ORIGIN } });
+    await new Promise((r) => setTimeout(r, 300));
+    expect([viaToken.isClosed(), SHARE_UPLOADS.active]).toEqual([false, 2]);
+    expect((await a.app.inject({ method: 'DELETE', url: `/api/share-tokens/${id}`, headers: { cookie: a.alex, origin: ORIGIN } })).statusCode).toBe(204);
+    await within(3000, () => viaToken.isClosed());
+    expect([viaSession.isClosed(), SHARE_UPLOADS.active, staged(a).length]).toEqual([false, 1, 1]);
+    viaSession.finish();
+    await within(3000, () => viaSession.status() !== null);
+    expect(viaSession.status()).toBe('202');
   });
 });
 

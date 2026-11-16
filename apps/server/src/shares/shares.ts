@@ -11,7 +11,7 @@
 // while, the share waits, and gives up after a day.
 //
 // A share is its sharer's: only they see it (GET /shares/{id}, the Inbox); for anyone else it does not exist.
-import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, eq, inArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
@@ -34,22 +34,49 @@ export const SHARE_RATE = { max: 30, windowMs: 10 * 60_000 };
 export const SHARE_PATIENCE_MS = 24 * 3600_000;
 /** A file's size by its type, and a whole share's, bytes (the multipart limit is the largest, SHARE_LIMITS in app.ts). */
 export const SHARE_BYTES = { image: 20 * 1024 * 1024, video: 64 * 1024 * 1024, total: 100 * 1024 * 1024 } as const;
+/** The uploads being read now (each streams to disk, never held whole in memory). */
+interface Upload { personId: string; tokenId: string | null; cut: (why: ShareError) => void }
+const open = new Set<Upload>();
+/**
+ * Uploads read at once: at most `perPerson` of one person's (their session and their tokens together) and `max` of the
+ * household's; past either, 429. Each is cut when no bytes come for `idleMs`, when it is not in after `deadlineMs`,
+ * and when the token it came with is revoked: the request is destroyed, its slot freed and what it staged deleted. So
+ * one person, or whoever holds one of their tokens, can hold at most their own two slots, and only while they send.
+ */
+export const SHARE_UPLOADS = { max: 6, perPerson: 2, idleMs: 15_000, deadlineMs: 5 * 60_000, get active() { return open.size; } };
 /** Staged files that belong to no waiting share are deleted after this. */
 export const STAGED_MAX_AGE_MS = 3600_000;
 
 export class ShareError extends Error {
-  constructor(readonly status: 400 | 413 | 415 | 503, message: string) { super(message); }
+  constructor(readonly status: 400 | 401 | 408 | 413 | 415 | 429 | 503, message: string) { super(message); }
 }
 
-/** The image type of a file, from its first bytes; null for anything else (a video, a HEIC, a PDF, a script). */
+/** Cuts the open uploads `which` picks (a revoked token's); how many were cut. */
+export function cutUploads(which: (u: { personId: string; tokenId: string | null }) => boolean, why = new ShareError(401, 'the share token was revoked')): number {
+  let n = 0;
+  for (const u of [...open]) if (which(u)) { u.cut(why); n++; }
+  return n;
+}
+
+/**
+ * The fewest bytes each image type's fixed header takes: a JPEG's SOI and its first marker with that segment's length,
+ * a PNG's signature and whole IHDR chunk, a WebP's RIFF header and its first chunk's header, a GIF's header and logical
+ * screen descriptor. A file shorter than that is no image, whatever its first bytes.
+ */
+export const IMAGE_HEADER = { jpeg: 6, png: 33, webp: 20, gif: 13 } as const;
+
+/** The image type of a file, from its first bytes; null for anything else (a video, a HEIC, a PDF, a script, a stub). */
 export function imageType(b: Uint8Array): 'jpeg' | 'png' | 'webp' | 'gif' | null {
   const at = (i: number, ...v: number[]) => v.every((x, k) => b[i + k] === x);
-  if (at(0, 0xff, 0xd8, 0xff)) return 'jpeg';
-  if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'png';
-  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'webp';
-  if (at(0, 0x47, 0x49, 0x46, 0x38) && (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61) return 'gif';
+  const ascii = (i: number, s: string) => at(i, ...Buffer.from(s, 'latin1'));
+  if (b.length >= IMAGE_HEADER.jpeg && at(0, 0xff, 0xd8, 0xff) && b[3]! >= 0xc0 && b[3]! <= 0xfe && ((b[4]! << 8) | b[5]!) >= 2) return 'jpeg';
+  if (b.length >= IMAGE_HEADER.png && at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13) && ascii(12, 'IHDR')) return 'png';
+  if (b.length >= IMAGE_HEADER.webp && ascii(0, 'RIFF') && ascii(8, 'WEBP') && (ascii(12, 'VP8 ') || ascii(12, 'VP8L') || ascii(12, 'VP8X'))) return 'webp';
+  if (b.length >= IMAGE_HEADER.gif && (ascii(0, 'GIF87a') || ascii(0, 'GIF89a'))) return 'gif';
   return null;
 }
+
+const UNTYPED = new ShareError(415, 'only images (JPEG, PNG, WebP or GIF) and videos (MP4, MOV or WebM) are taken; convert a photo to JPEG first');
 
 /** What a shared file is, from its first bytes: an image or a video Shelf takes (videoContainer), or null. */
 export function shareFileType(b: Uint8Array): 'image' | 'video' | null {
@@ -81,37 +108,76 @@ const kept = (dataDir: string, id: string) => join(dataDir, 'shares', id);
  * and records the share. Every part is read to its end, so a refusal never leaves a request half read; on any refusal
  * nothing is kept.
  */
-export async function receiveShare(req: FastifyRequest, db: Db, o: { dataDir: string; workDir: string | null; personId: string; now?: Date }): Promise<ShareRow> {
+export async function receiveShare(req: FastifyRequest, db: Db, o: Receive & { tokenId?: string | null }): Promise<ShareRow> {
   if (!req.isMultipart()) throw new ShareError(400, 'a share is multipart/form-data');
+  let mine = 0;
+  for (const u of open) if (u.personId === o.personId) mine++;
+  if (mine >= SHARE_UPLOADS.perPerson) throw new ShareError(429, `${SHARE_UPLOADS.perPerson} of your shares are still arriving: try again once they are in`);
+  if (open.size >= SHARE_UPLOADS.max) throw new ShareError(429, 'too many shares arriving at once: try again in a moment');
+  const state: { cut: ShareError | null } = { cut: null };
+  // Cut: the request is destroyed, so the part being read fails, its file is deleted and the share's folder with it.
+  const cut = (why: ShareError) => { if (state.cut) return; state.cut = why; req.raw.destroy(why); };
+  let idle: NodeJS.Timeout | undefined;
+  const touch = () => { clearTimeout(idle); idle = setTimeout(() => cut(new ShareError(408, 'the share stopped arriving')), SHARE_UPLOADS.idleMs); };
+  const deadline = setTimeout(() => cut(new ShareError(408, 'the share took too long to arrive')), SHARE_UPLOADS.deadlineMs);
+  const u: Upload = { personId: o.personId, tokenId: o.tokenId ?? null, cut };
+  open.add(u);
+  touch();
+  try { return await receive(req, db, o, touch); } catch (e) { throw state.cut ?? e; } finally {
+    clearTimeout(idle);
+    clearTimeout(deadline);
+    open.delete(u);
+  }
+}
+
+interface Receive { dataDir: string; workDir: string | null; personId: string; now?: Date }
+
+/** A part's chunks, each one telling the upload's idle timer that bytes came. */
+async function* chunks(file: AsyncIterable<unknown>, touch: () => void): AsyncGenerator<Buffer> {
+  for await (const c of file) { touch(); yield c as Buffer; }
+}
+
+async function receive(req: FastifyRequest, db: Db, o: Receive, touch: () => void): Promise<ShareRow> {
   const id = ulid();
   const dir = staging(o.dataDir, id);
   const fields: Partial<Record<keyof typeof SHARE_FIELDS, string>> = {};
   let files = 0, total = 0, problem: ShareError | null = null;
   try {
     for await (const part of req.parts()) {
+      touch();
       if (part.type === 'field') {
         const name = part.fieldname as keyof typeof SHARE_FIELDS;
         if (name in SHARE_FIELDS && typeof part.value === 'string') fields[name] = part.value;
         continue;
       }
-      if (part.fieldname !== 'media') { for await (const _ of part.file) { /* drain */ } problem ??= new ShareError(400, 'files go in the field "media"'); continue; }
+      if (part.fieldname !== 'media') { for await (const _ of chunks(part.file, touch)) { /* drain */ } problem ??= new ShareError(400, 'files go in the field "media"'); continue; }
       const n = files++;
       // Without a worker nothing is staged: the files are read to their end and the share refused.
-      if (!o.workDir) { for await (const _ of part.file) { /* drain */ } problem ??= new ShareError(503, 'media processing is unavailable here: share the link and the caption without files'); continue; }
-      // A share's files together within its limit: past it, the rest is read and dropped, never kept in memory.
-      const chunks: Buffer[] = [];
-      for await (const c of part.file) {
-        total += (c as Buffer).length;
-        if (total <= SHARE_BYTES.total && !problem) chunks.push(c as Buffer);
-      }
-      if (total > SHARE_BYTES.total) { problem ??= new ShareError(413, `a share's files: up to ${SHARE_BYTES.total / 1024 / 1024} MB together`); continue; }
-      if (problem) continue;
-      const bytes = Buffer.concat(chunks);
-      const type = shareFileType(bytes);
-      if (!type) { problem ??= new ShareError(415, 'only images (JPEG, PNG, WebP or GIF) and videos (MP4, MOV or WebM) are taken; convert a photo to JPEG first'); continue; }
-      if (bytes.length > SHARE_BYTES[type]) { problem ??= new ShareError(413, `${type === 'image' ? 'an image' : 'a video'}: up to ${SHARE_BYTES[type] / 1024 / 1024} MB`); continue; }
+      if (!o.workDir) { for await (const _ of chunks(part.file, touch)) { /* drain */ } problem ??= new ShareError(503, 'media processing is unavailable here: share the link and the caption without files'); continue; }
+      // Streamed to a fresh file in the staging folder as it arrives, counted as it goes: the type from the first
+      // bytes, then its own limit and the share's; past either, the rest is read and dropped, and the file deleted.
+      if (problem) { for await (const _ of chunks(part.file, touch)) { /* drain */ } continue; }
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      writeAtomic(join(dir, `${String(n).padStart(2, '0')}.bin`), bytes, 0o600);
+      const name = join(dir, `${String(n).padStart(2, '0')}.bin`), tmp = `${name}.part`;
+      const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      let size = 0, head = Buffer.alloc(0), type: 'image' | 'video' | null | undefined, err: ShareError | null = null;
+      try {
+        for await (const b of chunks(part.file, touch)) {
+          total += b.length;
+          if (err) continue;
+          size += b.length;
+          if (head.length < 64) head = Buffer.concat([head, b.subarray(0, 64 - head.length)]);
+          if (type === undefined && head.length >= 64) type = shareFileType(head);
+          if (type === null) err = UNTYPED;
+          else if (total > SHARE_BYTES.total) err = new ShareError(413, `a share's files: up to ${SHARE_BYTES.total / 1024 / 1024} MB together`);
+          else if (size > SHARE_BYTES[type ?? 'video']) err = new ShareError(413, `${type === 'image' ? 'an image' : 'a video'}: up to ${SHARE_BYTES[type ?? 'video'] / 1024 / 1024} MB`);
+          else for (let off = 0; off < b.length;) off += writeSync(fd, b, off);
+        }
+      } finally { closeSync(fd); }
+      if (!err && type === undefined) type = shareFileType(head);
+      if (!err && !type) err = UNTYPED;
+      if (err) { rmSync(tmp, { force: true }); problem = err; continue; }
+      renameSync(tmp, name);
     }
     if (problem) throw problem;
     const url = cleanUrl(fields.url ? cleanText(fields.url, 'url', SHARE_FIELDS.url) : null);
