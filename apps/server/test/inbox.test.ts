@@ -339,6 +339,14 @@ describe('the Inbox', () => {
     expect(await list(a)).toEqual([]);
   });
 
+  it('an imported share whose books are in a backlog already, offering none, asks nothing', async () => {
+    const a = await app();
+    const { id } = (await share(a, [{ name: 'url', value: 'https://example.org/p/1' }])).json();
+    expect((await list(a)).map((i) => i.id)).toEqual([shareItemId(id)]);
+    a.db.update(t.candidate).set({ shareId: id }).where(eq(t.candidate.bookId, 'b_tide')).run();
+    expect(await list(a)).toEqual([]);
+  });
+
   it('mail that failed closed shows its reason; mail waiting for the worker says so; dismissed, it is gone for everyone', async () => {
     const a = await withMail();
     const now = new Date().toISOString();

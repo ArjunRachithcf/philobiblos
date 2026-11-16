@@ -1,9 +1,10 @@
 // Settings (spec §4): the household's monthly budget (one shared budget for the month's order; admins set it, everyone
 // sees it; no rollover) and where orders go (the bookshop's address and the delivery address, sealed on the server; the
-// delivery address is never shown back). The rest of the screen arrives with its parts (M3).
+// delivery address is never shown back), and phone share tokens (ShareTokens.tsx). The rest arrives with its parts (M3).
 import { useEffect, useId, useState } from 'react';
 import { api, message, type Me, type Settings as S } from '../api';
 import { Notice, PageHead } from '../ui';
+import { ShareTokens } from './ShareTokens';
 
 const toChf = (c: number) => (c / 100).toFixed(0);
 
@@ -37,7 +38,7 @@ export function Settings({ me }: { me: Me }) {
 
   return (
     <>
-      <PageHead title="Settings" sub="The household’s monthly budget and where orders go. The rest of the settings come with their screens." />
+      <PageHead title="Settings" sub="The household’s monthly budget, where orders go, and phone share. The rest of the settings come with their screens." />
       <div className="stack">
         <section className="card stack" aria-labelledby={`${id}-h`}>
           <div>
@@ -69,6 +70,7 @@ export function Settings({ me }: { me: Me }) {
           )}
         </section>
         <OrderPlaces admin={admin} />
+        <ShareTokens />
       </div>
     </>
   );

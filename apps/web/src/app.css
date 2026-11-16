@@ -6,6 +6,8 @@
 code { font-family: var(--mono); font-size: 0.95em; }
 h1[tabindex="-1"]:focus { outline: none; }
 .bar { position: sticky; top: 0; z-index: 10; }
+/* What scrolls into view (focus, a click) stays clear of the sticky bar (WCAG 2.4.11). */
+html { scroll-padding-top: calc(var(--bar-height) + 16px); }
 .bar-inner { display: flex; align-items: center; gap: var(--space-4); height: var(--bar-height); }
 .bar nav { flex: 1; display: flex; gap: var(--space-2); min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .brand-name { font-weight: var(--weight-bold); font-size: var(--fs-headline); color: var(--text); text-decoration: none; }

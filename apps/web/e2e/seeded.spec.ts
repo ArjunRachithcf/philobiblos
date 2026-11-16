@@ -1,8 +1,11 @@
 // A Shelf with the sample seed imported (seed-sample/, all invented), one browser for the whole file: Alex claims the
 // imported admin; the Library (books marked, a takeaway, Sam's library without takeaways or controls, Kid 2's); the
 // Backlog (the filter bar, labels, tabs, a score's parts, grouping, bulk actions, a book added); the budget; the Brain
-// (the map and its table, views, the panel) and the proposals waiting for a decision (confirm, reject, a layer change).
-import { expect, test, type Page } from '@playwright/test';
+// (the map and its table, views, the panel) and the proposals waiting for a decision (confirm, reject, a layer change);
+// the Inbox, share tokens and phone shares.
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+import { expect, request, test, type Page } from '@playwright/test';
 import { SEEDED_PORT, dataDir } from './env';
 import { addAuthenticator, expectAccessible, noForeignRequests, setupLink } from './support';
 
@@ -366,6 +369,9 @@ test('this month: picks, the budget bar by keyboard, a pick removed, Compose', a
   await page.getByRole('button', { name: 'Save where orders go' }).click();
   await expect(page.getByText('The delivery address is kept sealed')).toBeVisible();
   await expect(page.getByLabel(/^Delivery address \(saved/)).toHaveValue('');
+  // Settings is longer than the window now (phone share below): measured from the top, as it opens, since a target
+  // scrolled under the sticky bar counts as obscured.
+  await page.evaluate(() => scrollTo(0, 0));
   await expectAccessible(page, 'settings, where orders go');
 
   await page.getByRole('link', { name: 'This month' }).click();
@@ -421,5 +427,91 @@ test('this month: picks, the budget bar by keyboard, a pick removed, Compose', a
   await expectAccessible(page, 'this month on a phone');
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.screenshot({ path: 'test-results/month.png', fullPage: true });
+  done();
+});
+
+test('the inbox, share tokens with their QR code, and phone shares (by token, by hand, through the share target)', async () => {
+  const done = noForeignRequests(page, ORIGIN);
+  // The bookshop's mail as the mail job keeps it (invented): an invoice with lines that matched no book, and a forgery.
+  const db = new DatabaseSync(join(dataDir(SEEDED_PORT), 'shelf.sqlite'), { timeout: 5000 });
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, ?, ?, ?, ?, ?, ?)').run('<e2e-inv@orellfuessli.ch>', 'invoice', JSON.stringify({ invoiceNumber: '99001122', lines: [
+    { ean: '9780000000330', title: 'Gardens of the Commons', qty: 1, priceC: 1500, totalC: 1500, vatPct: 2.6, bookId: null },
+    { ean: null, notBook: true, title: 'Wooden Train Set', qty: 1, priceC: 3900, totalC: 3900, vatPct: 8.1, bookId: null },
+  ] }), 'm3d-1/invoice-1', now, '{}', 1);
+  db.prepare('INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, ?, ?, ?, ?, ?, ?)').run('unverified:e2e', 'not_verified', null, 'm3d-1', now, JSON.stringify({ accepted: false, reason: 'not from the bookshop', fromDomain: 'phish.example' }), 0);
+  db.close();
+
+  await page.getByRole('link', { name: 'Inbox' }).click();
+  await expect(page.getByRole('heading', { name: 'Inbox', level: 1 })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Invoice 99001122' })).toBeVisible();
+  await expect(page.getByText('not from the bookshop')).toBeVisible();
+  await expect(page.getByText('phish.example')).toHaveCount(0);
+  await expectAccessible(page, 'inbox');
+  await page.getByRole('button', { name: 'Add to the library: Gardens of the Commons' }).click();
+  await expect(page.getByText('Gardens of the Commons: added.')).toBeAttached();
+  await expect(page.getByRole('button', { name: /Gardens of the Commons/ })).toHaveCount(0);
+  // A toy can only be skipped; focus moved to it.
+  await expect(page.getByRole('button', { name: /^Add.*Wooden Train Set/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Skip Wooden Train Set' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Invoice 99001122' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dismiss A mail that was not verified' }).click();
+  // The sample seed's shares are in the backlog already: nothing is left to ask.
+  await expect(page.getByRole('heading', { name: 'Nothing waiting' })).toBeVisible();
+
+  // A share token: shown once, with its QR code; gone from the page after Done.
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByLabel('Name of the phone or Shortcut').fill('Alex’s iPhone');
+  await page.getByRole('button', { name: 'Make a share token' }).click();
+  await expect(page.getByRole('img', { name: 'QR code of the Shortcut’s Authorization value' })).toBeVisible();
+  const auth = await page.getByLabel(/^Authorization/).inputValue();
+  expect(auth).toMatch(/^Bearer [0-9A-HJKMNP-TV-Z]{26}[A-Za-z0-9_-]{43}$/);
+  await page.evaluate(() => scrollTo(0, 0)); // as above: nothing measured while scrolled under the sticky bar
+  await expectAccessible(page, 'a new share token');
+  await page.getByRole('button', { name: 'Done' }).click();
+  expect(await page.content()).not.toContain(auth.slice(7));
+  await expect(page.getByRole('button', { name: 'Revoke Alex’s iPhone' })).toBeVisible();
+
+  // The Shortcut's request: the token alone, no Origin, no cookie.
+  const ctx = await request.newContext({ baseURL: ORIGIN });
+  const r = await ctx.post('/api/shares', { headers: { authorization: auth }, multipart: { url: 'https://example.org/p/7', text: 'A caption from the Shortcut' } });
+  expect(r.status()).toBe(202);
+  // Without the service worker, the share target's POST changes nothing on the server.
+  const offline = await ctx.post('/share-target', { multipart: { text: 'x' }, maxRedirects: 0 });
+  expect([offline.status(), offline.headers().location]).toEqual([303, '/share?offline=1']);
+  await ctx.dispose();
+
+  // By hand on the share screen: progress, then done.
+  await page.goto('/share');
+  await expect(page.getByRole('heading', { name: 'Share to Shelf', level: 1 })).toBeVisible();
+  await page.getByLabel('Link').fill('https://example.org/p/8');
+  await page.getByLabel('Note').fill('Recommended by a friend');
+  await expectAccessible(page, 'share by hand');
+  await page.getByRole('button', { name: 'Send to the Inbox' }).click();
+  await expect(page.getByText('In your Inbox.')).toBeVisible();
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+  await expectAccessible(page, 'a share sent');
+
+  // The share target: the phone's POST is the service worker's; the share screen then posts it as Shelf's own page.
+  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+  await page.reload();
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
+  const landed = await page.evaluate(async () => {
+    const f = new FormData();
+    f.append('title', 'A post about gardens');
+    f.append('text', 'Three books on the commons https://example.org/p/9');
+    return (await fetch('/share-target', { method: 'POST', body: f })).url;
+  });
+  expect(landed).toMatch(/\/share\?pending=[0-9a-f-]{36}$/);
+  await page.goto(landed);
+  await expect(page.getByText('In your Inbox.')).toBeVisible();
+  await expect(page).toHaveURL(/\/share\?id=[0-9A-Z]{26}$/);
+
+  await page.getByRole('link', { name: 'Open the Inbox' }).click();
+  await expect(page.getByRole('heading', { name: 'A post about gardens' })).toBeVisible();
+  await expect(page.getByText('Recommended by a friend')).toBeVisible();
+  await expect(page.getByText('A caption from the Shortcut')).toBeVisible();
+  await expectAccessible(page, 'inbox with shares');
   done();
 });
