@@ -283,7 +283,7 @@ paths:
 
   /settings:
     get: { tags: [settings], operationId: getSettings, responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } } } }
-    patch: { tags: [settings], operationId: patchSettings, summary: '`person` (your own settings) is stored, and the household''s `budget` and `order` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` needs the sealing key (409 without it).', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: No sealing key, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
+    patch: { tags: [settings], operationId: patchSettings, summary: '`person` (your own settings) is stored, and the household''s `budget`, `order` and `ai` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it).', requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Settings' } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: No sealing key (for the addresses or a Claude key), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK } } }
   /jobs/{job}/run:
     post: { tags: [system], operationId: runJob, description: 'Admins only. prices, metadata, covers, mail and shares (the media worker''s queue of shared images and videos) run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet.', parameters: [{ name: job, in: path, required: true, schema: { enum: [monthly, mail, shares, prices, metadata, covers, ai_suggest] } }, { name: again, in: query, required: false, schema: { enum: ['true', 'false'] }, description: 'metadata: look up every book again, not only those never looked up' }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '202': { description: Started, content: { application/json: { schema: { type: object, properties: { id: { type: string, description: 'the job_run row' } } } } } }, '409': { description: 'That job is running already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } } }
 
@@ -424,7 +424,22 @@ components:
         budget: { allOf: [ { $ref: '#/components/schemas/Budget' } ], description: 'one shared monthly budget (centimes, 0 to 1,000,000, min ≤ max); admins set it; no rollover' }
         adultPicks: {type: integer}
         newAuthorsOnly: {type: boolean}
-        ai: { type: object, properties: { provider: { enum: [claude, ollama, none], description: 'ollama for a new household; claude only by explicit opt-in' }, model: {type: string}, ollamaUrl: {type: string}, leaves: { type: array, readOnly: true, items: {type: string}, description: 'what leaves the server with this provider, shown before opting in' }, jobs: { type: object, properties: { read: {type: boolean}, link: {type: boolean}, suggest: {type: boolean}, explain: {type: boolean}, wildcards: {type: boolean} } } } }
+        ai:
+          type: object
+          description: 'The AI plugin (contracts/ai-plugin.md); admins change it. Ollama is the default and nothing leaves the home network with it; Claude is an opt-in that needs its API key and acceptLeaves: true in the same request.'
+          properties:
+            provider: { enum: [claude, ollama, none], description: 'ollama for a new household; claude only by explicit opt-in' }
+            model: { type: string, description: 'Ollama''s text model' }
+            visionModel: { type: [string, 'null'], description: 'Ollama''s model for shared images; without one, shares are read by their captions only' }
+            claudeModel: { type: string, description: 'Claude''s model id (default claude-opus-5-5)' }
+            ollamaUrl: { type: string, readOnly: true, description: 'OLLAMA_URL, from the server''s environment only' }
+            ollamaConfigured: { type: boolean, readOnly: true }
+            claudeApiKey: { type: [string, 'null'], writeOnly: true, description: 'sealed like the delivery address (a key outside the database); never sent back. null removes it (and turns Claude off)' }
+            hasClaudeKey: { type: boolean, readOnly: true }
+            acceptLeaves: { type: boolean, writeOnly: true, description: 'true: the admin read leavesWithClaude; needed to turn Claude on, or to turn on a job that sends more while it is on' }
+            leaves: { type: array, readOnly: true, items: {type: string}, description: 'what leaves the server with this provider (empty for Ollama and none)' }
+            leavesWithClaude: { type: array, readOnly: true, items: {type: string}, description: 'what would leave with Claude and these jobs, shown before opting in' }
+            jobs: { type: object, properties: { read: {type: boolean}, link: {type: boolean}, suggest: {type: boolean}, explain: {type: boolean}, wildcards: {type: boolean} } }
         person: { type: object, description: settings of the current person, properties: { mix: { enum: [deepen_connect, deepen_broaden, ai] }, unreadLimit: {type: integer}, counterpoints: {type: boolean}, takeaways: {type: boolean}, takeawaysToAi: { type: boolean, description: 'whether any AI (local or not) may read your takeaways; off unless you turn it on' }, fiction: {type: boolean}, weights: { type: object, additionalProperties: {type: number} } } }
         kidsThemes: { type: array, items: { type: object, properties: { theme: {type: string}, enabled: {type: boolean} } } }
         cycle: { type: object, properties: { day: {type: integer}, time: {type: string}, timezone: {type: string} } }

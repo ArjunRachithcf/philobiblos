@@ -51,7 +51,15 @@ export class EgressError extends Error {
 
 export interface Egress {
   get(url: string, want: Want, opts?: { headers?: Record<string, string> }): Promise<Response>;
+  /**
+   * A JSON request to an AI provider (Ollama, Claude): never redirected (a redirect is refused), the request body at
+   * most POST_MAX bytes, the answer JSON within LIMITS.json, and its own deadline (a local model may take minutes).
+   */
+  post(url: string, body: Buffer, opts: { headers?: Record<string, string>; timeoutMs: number }): Promise<Response>;
 }
+
+/** The largest request body Shelf sends (an AI job's images, base64, with its prompt). */
+export const POST_MAX = 32 << 20;
 
 /** What may be reached: the manifest's egress list (contracts/homerslab-app.yaml), Ollama if configured, Claude on opt-in. */
 export function egressRules(o: { ollamaUrl?: string | null; claude?: boolean }): Rule[] {
@@ -68,6 +76,15 @@ export function egressRules(o: { ollamaUrl?: string | null; claude?: boolean }):
   }
   if (o.claude) rules.push({ host: 'api.anthropic.com' });
   return rules;
+}
+
+/**
+ * The whole allowlist of an AI job's own client: the household's Ollama, or Claude's API after the opt-in, and nothing
+ * else. An AI request can never reach a book site, nor one provider's data the other.
+ */
+export function aiEgressRules(provider: 'ollama' | 'claude', ollamaUrl: string | null): Rule[] {
+  if (provider === 'claude') return [{ host: 'api.anthropic.com' }];
+  return ollamaUrl ? egressRules({ ollamaUrl }).filter((r) => r.privateOk === true) : [];
 }
 
 // Addresses that are not the public internet (IANA special-purpose registries).
@@ -103,6 +120,8 @@ export interface EgressOptions {
   enabled?: boolean;
   resolve?: Resolve;
   timeoutMs?: number;
+  /** The longest a POST may take, whatever its caller asks (default POST_TIMEOUT_MAX_MS). */
+  postMaxMs?: number;
   /** Tests only: a CA to trust besides the system's, and who counts as public (their servers are on 127.0.0.1). */
   test?: { ca?: string; isPublic?: (addr: string) => boolean; httpsPort?: number };
 }
@@ -121,8 +140,8 @@ export function createEgress(o: EgressOptions): Egress {
     let all: LookupAddress[];
     // The lookup is inside the deadline too: a resolver that never answers is cut off with the rest.
     const aborted = new Promise<never>((_, fail) => {
-      if (signal.aborted) fail(new EgressError('timeout', `${host} took longer than ${timeoutMs} ms`));
-      signal.addEventListener('abort', () => fail(new EgressError('timeout', `${host} took longer than ${timeoutMs} ms`)), { once: true });
+      if (signal.aborted) fail(new EgressError('timeout', `${host} took too long`));
+      signal.addEventListener('abort', () => fail(new EgressError('timeout', `${host} took too long`)), { once: true });
     });
     aborted.catch(() => {});
     try { all = await Promise.race([resolve(host), aborted]); } catch (e) { throw e instanceof EgressError ? e : new EgressError('network', `cannot resolve ${host}`); }
@@ -132,7 +151,7 @@ export function createEgress(o: EgressOptions): Egress {
     return all[0]!;
   }
 
-  function once(u: URL, rule: Rule, want: Want, headers: Record<string, string>, signal: AbortSignal): Promise<{ res: http.IncomingMessage; addr: LookupAddress }> {
+  function once(u: URL, rule: Rule, want: Want, headers: Record<string, string>, signal: AbortSignal, body?: Buffer): Promise<{ res: http.IncomingMessage; addr: LookupAddress }> {
     return addressFor(u.hostname, rule.privateOk === true, signal).then((addr) => new Promise((ok, fail) => {
       // The connection goes to the address checked above; the name stays for TLS (SNI and the certificate).
       const lookup: LookupFunction = (_h, opts, cb) => {
@@ -142,31 +161,36 @@ export function createEgress(o: EgressOptions): Egress {
       const mod = u.protocol === 'https:' ? https : http;
       const req = mod.request(u, {
         ...(o.test?.httpsPort && u.protocol === 'https:' && !u.port ? { port: o.test.httpsPort } : {}),
-        method: 'GET', lookup, signal, agent: false, ...(o.test?.ca ? { ca: o.test.ca } : {}),
-        headers: { 'user-agent': USER_AGENT, accept: want === 'json' ? 'application/json' : want === 'html' ? 'text/html' : 'image/*', 'accept-encoding': 'identity', ...headers },
+        method: body ? 'POST' : 'GET', lookup, signal, agent: false, ...(o.test?.ca ? { ca: o.test.ca } : {}),
+        headers: {
+          ...headers, 'user-agent': USER_AGENT, accept: want === 'json' ? 'application/json' : want === 'html' ? 'text/html' : 'image/*', 'accept-encoding': 'identity',
+          ...(body ? { 'content-type': 'application/json', 'content-length': String(body.length) } : {}),
+        },
       }, (res) => ok({ res, addr }));
-      req.on('error', (e) => fail(signal.aborted ? new EgressError('timeout', `${u.hostname} took longer than ${timeoutMs} ms`) : new EgressError('network', `${u.hostname}: ${(e as NodeJS.ErrnoException).code ?? 'request failed'}`)));
-      req.end();
+      req.on('error', (e) => fail(signal.aborted ? new EgressError('timeout', `${u.hostname} took too long`) : new EgressError('network', `${u.hostname}: ${(e as NodeJS.ErrnoException).code ?? 'request failed'}`)));
+      req.end(body);
     }));
   }
 
-  return {
-    async get(url, want, opts = {}) {
+  async function exchange(url: string, want: Want, headers: Record<string, string>, deadline: number, body?: Buffer): Promise<Response> {
       if (o.enabled === false) throw new EgressError('off', 'outgoing requests are turned off (SHELF_EGRESS=off)');
       let u = new URL(url);
       const first = ruleFor(u);
       if (!first || u.username || u.password) throw new EgressError('not-allowed', `${u.protocol}//${u.host} is not on the egress allowlist`);
+      if (body && body.length > POST_MAX) throw new EgressError('too-large', `a request body over ${POST_MAX} bytes is not sent`);
       let rule = first;
       let crossed = 0;
       const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      const timer = setTimeout(() => ctl.abort(), deadline);
       try {
         for (let hop = 0; ; hop++) {
-          const { res } = await once(u, rule, want, opts.headers ?? {}, ctl.signal);
+          const { res } = await once(u, rule, want, headers, ctl.signal, body);
           const status = res.statusCode ?? 0;
           if (status >= 300 && status < 400 && res.headers.location) {
             // Never read a body nobody wants: the connection is closed, not drained.
             res.destroy();
+            // A request with a body is never sent on to another address, the same host's included.
+            if (body) throw new EgressError('redirect', 'a redirect of a request with a body is refused');
             if (hop >= MAX_REDIRECTS) throw new EgressError('redirect', `more than ${MAX_REDIRECTS} redirects`);
             const next = new URL(res.headers.location, u);
             const sameHost = next.hostname === u.hostname && next.protocol === u.protocol && next.port === u.port;
@@ -193,13 +217,20 @@ export function createEgress(o: EgressOptions): Egress {
             }
           } catch (e) {
             if (e instanceof EgressError) throw e;
-            throw ctl.signal.aborted ? new EgressError('timeout', `${u.hostname} took longer than ${timeoutMs} ms`) : new EgressError('network', `${u.hostname}: the answer broke off`);
+            throw ctl.signal.aborted ? new EgressError('timeout', `${u.hostname} took too long`) : new EgressError('network', `${u.hostname}: the answer broke off`);
           }
           return { status, type, body: Buffer.concat(chunks), url: u.toString() };
         }
       } finally {
         clearTimeout(timer);
       }
-    },
+  }
+
+  return {
+    get: (url, want, opts = {}) => exchange(url, want, opts.headers ?? {}, timeoutMs),
+    post: (url, body, opts) => exchange(url, 'json', opts.headers ?? {}, Math.min(opts.timeoutMs, o.postMaxMs ?? POST_TIMEOUT_MAX_MS), body),
   };
 }
+
+/** No AI request waits longer than this, whatever its caller asks. */
+export const POST_TIMEOUT_MAX_MS = 300_000;

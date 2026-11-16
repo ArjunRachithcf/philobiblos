@@ -64,6 +64,13 @@
       "when": 1794802831732,
       "tag": "0008_inbox_and_shares",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1794814660622,
+      "tag": "0009_ai_settings",
+      "breakpoints": true
     }
   ]
 }

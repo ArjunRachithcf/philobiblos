@@ -2,13 +2,13 @@
 import { describe, expect, it } from 'vitest';
 import { validateAiOutput, AI_SCHEMAS } from '@shelf/contracts';
 import fixture from '../../../contracts/ai/fixture.extract_titles.json' with { type: 'json' };
-import { FakeProvider, createClaudeProvider, createOllamaProvider, NotImplementedError, EXPLAIN_MAX } from '../src';
+import { FakeProvider, EXPLAIN_MAX } from '../src';
 
 const book = { id: 'b1', title: 'A Book', authors: ['A. Writer'] };
 
 describe('contracts/ai', () => {
   it('every schema compiles and the extractTitles fixture is valid', () => {
-    expect(Object.keys(AI_SCHEMAS).sort()).toEqual(['extractTitles', 'proposeLinks', 'suggestNext', 'tagBook']);
+    expect(Object.keys(AI_SCHEMAS).sort()).toEqual(['checkRedundant', 'explainPick', 'extractTitles', 'proposeLinks', 'suggestNext', 'tagBook']);
     expect(validateAiOutput('extractTitles', fixture)).toEqual({ ok: true, errors: [] });
   });
   it('invalid output is rejected with a reason', () => {
@@ -43,21 +43,5 @@ describe('FakeProvider', () => {
   });
   it('records its calls', () => {
     expect(ai.calls.map((c) => c.job)).toContain('extractTitles');
-  });
-});
-
-describe('claude and ollama adapters are empty', () => {
-  it.each([
-    ['claude', () => createClaudeProvider({ apiKey: 'test' })],
-    ['ollama', () => createOllamaProvider({ url: 'http://localhost:11434' })],
-  ])('%s refuses every job', async (_n, make) => {
-    const p = make();
-    for (const job of ['extractTitles', 'tagBook', 'proposeLinks', 'suggestNext', 'explainPick', 'checkRedundant'] as const) {
-      await expect((p[job] as (i: unknown) => Promise<unknown>)({})).rejects.toBeInstanceOf(NotImplementedError);
-    }
-  });
-  it('they need their key or address', () => {
-    expect(() => createClaudeProvider({ apiKey: '' })).toThrow();
-    expect(() => createOllamaProvider({ url: '' })).toThrow();
   });
 });

@@ -745,7 +745,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** `person` (your own settings) is stored, and the household's `budget` and `order` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` needs the sealing key (409 without it). */
+        /** `person` (your own settings) is stored, and the household's `budget`, `order` and `ai` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it). */
         patch: operations["patchSettings"];
         trace?: never;
     };
@@ -1132,16 +1132,31 @@ export interface components {
             budget?: components["schemas"]["Budget"];
             adultPicks?: number;
             newAuthorsOnly?: boolean;
+            /** @description The AI plugin (contracts/ai-plugin.md); admins change it. Ollama is the default and nothing leaves the home network with it; Claude is an opt-in that needs its API key and acceptLeaves: true in the same request. */
             ai?: {
                 /**
                  * @description ollama for a new household; claude only by explicit opt-in
                  * @enum {unknown}
                  */
                 provider?: "claude" | "ollama" | "none";
+                /** @description Ollama's text model */
                 model?: string;
-                ollamaUrl?: string;
-                /** @description what leaves the server with this provider, shown before opting in */
+                /** @description Ollama's model for shared images; without one, shares are read by their captions only */
+                visionModel?: string | null;
+                /** @description Claude's model id (default claude-opus-5-5) */
+                claudeModel?: string;
+                /** @description OLLAMA_URL, from the server's environment only */
+                readonly ollamaUrl?: string;
+                readonly ollamaConfigured?: boolean;
+                /** @description sealed like the delivery address (a key outside the database); never sent back. null removes it (and turns Claude off) */
+                claudeApiKey?: string | null;
+                readonly hasClaudeKey?: boolean;
+                /** @description true: the admin read leavesWithClaude; needed to turn Claude on, or to turn on a job that sends more while it is on */
+                acceptLeaves?: boolean;
+                /** @description what leaves the server with this provider (empty for Ollama and none) */
                 readonly leaves?: string[];
+                /** @description what would leave with Claude and these jobs, shown before opting in */
+                readonly leavesWithClaude?: string[];
                 jobs?: {
                     read?: boolean;
                     link?: boolean;
@@ -3213,7 +3228,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description No sealing key */
+            /** @description No sealing key (for the addresses or a Claude key) */
             409: {
                 headers: {
                     [name: string]: unknown;

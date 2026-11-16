@@ -1,7 +1,7 @@
 // A provider for tests: deterministic, offline, every output valid against contracts/ai/*.schema.json.
 import extractTitlesFixture from '../../../contracts/ai/fixture.extract_titles.json' with { type: 'json' };
 import type { ExtractTitlesOut, ProposeLinksOut, SuggestNextOut, TagBookOut } from '@shelf/contracts';
-import { EXPLAIN_MAX, type AiProvider, type CheckRedundantIn, type ExplainPickIn, type ProposeLinksIn, type SuggestNextIn, type TagBookIn } from './provider';
+import { EXPLAIN_MAX, type AiProvider, type Model, type ModelRequest, type CheckRedundantIn, type ExplainPickIn, type ProposeLinksIn, type SuggestNextIn, type TagBookIn } from './provider';
 
 export interface FakeFixtures {
   extractTitles: ExtractTitlesOut;
@@ -53,4 +53,20 @@ export class FakeProvider implements AiProvider {
     return { why: why.slice(0, EXPLAIN_MAX) };
   }
   async checkRedundant(i: CheckRedundantIn) { this.log('checkRedundant', i); return {}; }
+}
+
+/**
+ * A Model for tests: answers what `answer` returns for each request (a value is sent as its JSON, a string as it is),
+ * and keeps every request it was sent, so a test can see exactly what would have left Shelf.
+ */
+export function fakeModel(answer: (r: ModelRequest, n: number) => unknown, o: { supportsVision?: boolean; model?: string } = {}): Model & { requests: ModelRequest[] } {
+  const requests: ModelRequest[] = [];
+  return {
+    provider: 'fake', model: o.model ?? 'fake-1', supportsVision: o.supportsVision ?? true, requests,
+    async complete(r) {
+      requests.push(r);
+      const a = await answer(r, requests.length);
+      return { text: typeof a === 'string' ? a : JSON.stringify(a), model: o.model ?? 'fake-1', inputTokens: r.user.length, outputTokens: 10, costCents: 0 };
+    },
+  };
 }

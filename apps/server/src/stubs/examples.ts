@@ -68,7 +68,7 @@ export const settings: S['Settings'] = {
   budget: { min: 10000, max: 15000 },
   adultPicks: 2,
   newAuthorsOnly: true,
-  ai: { provider: 'ollama', model: 'llama3.2-vision', ollamaUrl: 'http://ollama:11434', leaves: [], jobs: { read: true, link: true, suggest: true, explain: true, wildcards: true } },
+  ai: { provider: 'ollama', model: 'llama3.2', visionModel: null, claudeModel: 'claude-opus-5-5', ollamaUrl: 'http://ollama:11434', ollamaConfigured: true, hasClaudeKey: false, leaves: [], leavesWithClaude: [], jobs: { read: true, link: true, suggest: true, explain: true, wildcards: true } },
   person: { mix: 'deepen_connect', unreadLimit: 4, counterpoints: true, takeaways: true, takeawaysToAi: false, fiction: false, weights: {} },
   kidsThemes: [{ theme: 'Friendship', enabled: true }],
   cycle: { day: 1, time: '20:17', timezone: 'Europe/Zurich' },

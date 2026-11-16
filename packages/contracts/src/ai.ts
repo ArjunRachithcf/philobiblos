@@ -4,25 +4,31 @@ import extractTitlesSchema from '../../../contracts/ai/extract_titles.schema.jso
 import tagBookSchema from '../../../contracts/ai/tag_book.schema.json' with { type: 'json' };
 import proposeLinksSchema from '../../../contracts/ai/propose_links.schema.json' with { type: 'json' };
 import suggestNextSchema from '../../../contracts/ai/suggest_next.schema.json' with { type: 'json' };
-import type { ExtractTitlesOut, ProposeLinksOut, SuggestNextOut, TagBookOut } from './ai.gen';
+import explainPickSchema from '../../../contracts/ai/explain_pick.schema.json' with { type: 'json' };
+import checkRedundantSchema from '../../../contracts/ai/check_redundant.schema.json' with { type: 'json' };
+import type { CheckRedundantOut, ExplainPickOut, ExtractTitlesOut, ProposeLinksOut, SuggestNextOut, TagBookOut } from './ai.gen';
 import type { components } from './openapi.gen';
 
-export type { ExtractTitlesOut, ProposeLinksOut, SuggestNextOut, TagBookOut } from './ai.gen';
+export type { CheckRedundantOut, ExplainPickOut, ExtractTitlesOut, ProposeLinksOut, SuggestNextOut, TagBookOut } from './ai.gen';
 
 export const AI_SCHEMAS = {
   extractTitles: extractTitlesSchema,
   tagBook: tagBookSchema,
   proposeLinks: proposeLinksSchema,
   suggestNext: suggestNextSchema,
+  explainPick: explainPickSchema,
+  checkRedundant: checkRedundantSchema,
 } as const;
 
-/** Jobs whose output has a JSON schema in contracts/ai/. */
+/** Every job's output has a JSON schema in contracts/ai/. */
 export type SchemaJob = keyof typeof AI_SCHEMAS;
 export interface JobOutputs {
   extractTitles: ExtractTitlesOut;
   tagBook: TagBookOut;
   proposeLinks: ProposeLinksOut;
   suggestNext: SuggestNextOut;
+  explainPick: ExplainPickOut;
+  checkRedundant: CheckRedundantOut;
 }
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });

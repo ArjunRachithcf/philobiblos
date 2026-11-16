@@ -35,10 +35,31 @@ export interface AiProvider {
 | `explainPick` | after picks | one pick | plain words, no hype |
 | `checkRedundant` | after tagging | owned books in the same idea | e.g. a summary of a book already read |
 
-Prompts are versioned files in `packages/ai/prompts/<job>.v<N>.md`. Every call stores provider, model, prompt
-version, input hash, output, cost. Identical input hash + prompt version reuses the stored output (cache).
+Every job's output has a schema in `ai/`: `explain_pick.schema.json` (`why`, at most 140 characters) and
+`check_redundant.schema.json` (`repeats`, the id of an owned book from the input, and a `reason`) joined the four in M3 g.
 
-Privacy: with Ollama nothing leaves the server. With Claude (opt-in), only book metadata, idea names and shared images
-leave it. A person's takeaways reach no AI, Ollama included, unless that person turns on `takeawaysToAi` (off by
+Prompts are versioned files in `packages/ai/prompts/<job>.v<N>.md`. Every call stores provider, model, prompt
+version, input hash, output, cost. Identical input hash + prompt version reuses the stored output (cache); the hash
+covers the provider, the model and the whole prompt, and a stored output is reused only for the same person (and the
+same `takeaways_of`), and only after it validates again.
+
+**Underneath** (`packages/ai/src/provider.ts`): a provider is a `Model`, one call that takes the prompt and answers
+text, and reaches its host only through a `Transport` the server hands it (its egress client, held to that one host).
+The server's runner (`apps/server/src/ai/run.ts`) builds the prompt, keeps the cache and the log, validates, cleans
+(`packages/ai/src/jobs.ts`: ids only from the input, one-line texts, Shelf's own decisions), retries once and keeps a
+per-run budget of calls and tokens. Ollama: `POST /api/chat`, not streamed, the schema as `format`, temperature 0.
+Claude: the Messages API (`anthropic-version: 2026-10-21`), `claude-opus-5-5` unless Settings names another `claude-…`
+model, structured output (`output_config.format`), adaptive thinking at low effort; a refusal or a cut-off answer is no
+answer. Neither is ever offered a tool.
+
+**The prompt**: the system message is the prompt file. The user message holds Shelf's own data (ids, numbers, the
+household's idea names and themes, settings) as JSON in an `<input>` block, and each text from outside Shelf (a share's
+caption and link, a book's title and authors, a blurb, a takeaway) in an `<untrusted source="…">` block, JSON with `<`,
+`>` and `&` escaped, so that nothing inside can end the block.
+
+Privacy: with Ollama nothing leaves the home network. With Claude (opt-in), only book metadata, idea names and the
+reading map's counts, and shared images with their captions and links leave it (and the takeaways of those who turned
+them on, below), to `api.anthropic.com` only. Turning Claude on is an admin's request with `acceptLeaves: true`; the API
+key is sealed like the delivery address and never answered back. A person's takeaways reach no AI, Ollama included, unless that person turns on `takeawaysToAi` (off by
 default; `apps/server/src/library/ai-context.ts` is the one place that hands them out). Settings shows
 this list (`Settings.ai.leaves`) before the opt-in and while Claude is on. Names of people and kids never leave.

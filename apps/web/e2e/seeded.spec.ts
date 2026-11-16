@@ -243,6 +243,31 @@ test('the budget: an admin sets it; it is not carried over', async () => {
   await expectAccessible(page, 'settings');
 });
 
+test('the AI: Ollama by default; Claude only after the list of what leaves is ticked, its key never shown again', async () => {
+  const done = noForeignRequests(page, ORIGIN);
+  const card = page.getByRole('region', { name: 'The AI' });
+  await expect(card.getByText(/nothing leaves your home network/)).toBeVisible();
+  await card.getByLabel('Provider').selectOption('claude');
+  await expect(card.getByText('With Claude, this goes to Anthropic:')).toBeVisible();
+  await expect(card.getByText(/Never: names of people or kids/)).toBeVisible();
+  await card.getByLabel(/Anthropic API key/).fill('sk-ant-e2e-' + 'x'.repeat(30));
+  await card.getByRole('button', { name: 'Save the AI settings' }).click();
+  await expect(card.getByRole('alert')).toContainText('Tick that you read');
+  await card.getByLabel(/I read this/).check();
+  await expectAccessible(page, 'settings, the AI opt-in');
+  await card.getByRole('button', { name: 'Save the AI settings' }).click();
+  await expect(card.getByText('Claude is on. This leaves the server:')).toBeVisible();
+  await expect(card.getByLabel(/Anthropic API key \(saved/)).toHaveValue('');
+  expect(await page.content()).not.toContain('sk-ant-e2e-');
+  // Back to Ollama, and the key removed, for the tests after this one.
+  await card.getByLabel('Provider').selectOption('ollama');
+  await card.getByRole('button', { name: 'Save the AI settings' }).click();
+  await expect(card.getByText(/nothing leaves your home network/)).toBeVisible();
+  await card.getByRole('button', { name: 'Remove the Claude key' }).click();
+  await expect(card.getByText('The key is removed.')).toBeVisible();
+  done();
+});
+
 test('the brain: the map, its table, views; proposals confirmed, rejected and moved to another layer', async () => {
   const done = noForeignRequests(page, ORIGIN);
   await page.getByRole('link', { name: 'Brain' }).click();

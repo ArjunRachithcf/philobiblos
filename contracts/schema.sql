@@ -60,7 +60,8 @@ CREATE TABLE household_settings (
   ai_jobs_json      TEXT NOT NULL DEFAULT '{"read":true,"link":true,"suggest":true,"explain":true,"wildcards":true}',
   cycle_day         INTEGER NOT NULL DEFAULT 1,
   cycle_time        TEXT NOT NULL DEFAULT '20:17',
-  timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich'
+  timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',
+  ai_models_json    TEXT NOT NULL DEFAULT '{}'  -- the AI's models (Ollama's text and vision model, Claude's); the Claude key is sealed, never here
 );
 
 CREATE TABLE month_override (             -- "just this month" budget changes
@@ -285,8 +286,10 @@ CREATE TABLE ai_run (
   id TEXT PRIMARY KEY NOT NULL, job TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
   prompt_version TEXT NOT NULL, input_hash TEXT NOT NULL, output_json TEXT, cost_c INTEGER,
   started_at TEXT NOT NULL, finished_at TEXT, error TEXT,
-  takeaways_of TEXT REFERENCES person(id) ON DELETE CASCADE -- whose takeaways the input held; purged when they opt out
+  takeaways_of TEXT REFERENCES person(id) ON DELETE CASCADE, -- whose takeaways the input held; purged when they opt out
+  person_id    TEXT REFERENCES person(id) ON DELETE CASCADE  -- whose request it served (a share's sharer, a suggestion's person); NULL: the household's
 );
+CREATE INDEX ai_run_cache ON ai_run (job, prompt_version, input_hash); -- identical input + prompt version reuses the output
 
 CREATE TABLE job_run (
   id TEXT PRIMARY KEY NOT NULL, job TEXT NOT NULL, status TEXT NOT NULL, detail TEXT, started_at TEXT NOT NULL, finished_at TEXT

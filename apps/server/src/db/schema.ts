@@ -59,6 +59,8 @@ export const householdSettings = sqliteTable('household_settings', {
   cycleDay: integer('cycle_day').notNull().default(1),
   cycleTime: text('cycle_time').notNull().default('20:17'),
   timezone: text('timezone').notNull().default('Europe/Zurich'),
+  // The AI's models (M3 g): {"ollama": {"model", "visionModel"}, "claude": {"model"}}; the Claude key is sealed, never here.
+  aiModelsJson: text('ai_models_json').notNull().default('{}'),
 }, (t) => [
   check('household_settings_one', sql`${t.id} = 1`),
   check('household_settings_ai_provider', sql`${t.aiProvider} IN ('claude','ollama','none')`),
@@ -337,7 +339,9 @@ export const aiRun = sqliteTable('ai_run', {
   // Whose takeaways were in the input (null: nobody's). Turning takeawaysToAi off deletes these runs and what they
   // proposed (src/library/ai-context.ts).
   takeawaysOf: text('takeaways_of').references(() => person.id, { onDelete: 'cascade' }),
-});
+  // Whose request it served (a share's sharer, the person a suggestion is for); null for the household's (a book's tags).
+  personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
+}, (t) => [index('ai_run_cache').on(t.job, t.promptVersion, t.inputHash)]);
 
 export const jobRun = sqliteTable('job_run', {
   id: text('id').primaryKey(),

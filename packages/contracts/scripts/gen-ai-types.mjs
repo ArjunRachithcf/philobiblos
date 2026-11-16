@@ -8,6 +8,8 @@ const names = {
   'tag_book.schema.json': 'TagBookOut',
   'propose_links.schema.json': 'ProposeLinksOut',
   'suggest_next.schema.json': 'SuggestNextOut',
+  'explain_pick.schema.json': 'ExplainPickOut',
+  'check_redundant.schema.json': 'CheckRedundantOut',
 };
 const files = readdirSync(dir).filter((f) => f.endsWith('.schema.json')).sort();
 for (const f of files) if (!names[f]) throw new Error(`no type name for contracts/ai/${f}: add it to ${import.meta.url}`);
