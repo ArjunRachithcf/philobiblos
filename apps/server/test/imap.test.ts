@@ -11,6 +11,7 @@ import * as t from '../src/db/schema';
 import { refreshMail } from '../src/mail/job';
 import { MailboxError, openMailbox, type MailboxConfig } from '../src/net/imap';
 import { household } from './helpers';
+import { CONNECTORS } from './mailkit';
 
 const IMAPS = Number(process.env.PHILOBIBLOS_IMAP_TEST_PORT ?? 0);
 const SMTP = Number(process.env.PHILOBIBLOS_SMTP_TEST_PORT ?? 0);
@@ -30,18 +31,18 @@ async function deliver(raw: Buffer): Promise<void> {
     tick();
   });
   await wait('220');
-  for (const [cmd, code] of [['EHLO test', '250 '], ['MAIL FROM:<english-orders@orellfuessli.ch>', '250'], [`RCPT TO:<${USER}>`, '250'], ['DATA', '354']] as const) { s.write(`${cmd}\r\n`); await wait(code); }
+  for (const [cmd, code] of [['EHLO test', '250 '], ['MAIL FROM:<english-orders@quillmere.example>', '250'], [`RCPT TO:<${USER}>`, '250'], ['DATA', '354']] as const) { s.write(`${cmd}\r\n`); await wait(code); }
   s.write(Buffer.concat([Buffer.from(raw.toString('latin1').replace(/\r\n\./g, '\r\n..'), 'latin1'), Buffer.from('\r\n.\r\n')])); // dot-stuffed
   await wait('250');
   s.end('QUIT\r\n');
 }
 
 const shop = generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'der' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
-const resolver = async (n: string) => (n === 'mail._domainkey.orellfuessli.ch' ? [[`v=DKIM1; k=rsa; p=${shop.publicKey.toString('base64')}`]] : Promise.reject(Object.assign(new Error('nx'), { code: 'ENOTFOUND' })));
+const resolver = async (n: string) => (n === 'mail._domainkey.quillmere.example' ? [[`v=DKIM1; k=rsa; p=${shop.publicKey.toString('base64')}`]] : Promise.reject(Object.assign(new Error('nx'), { code: 'ENOTFOUND' })));
 async function mail(id: string, o: { sign?: boolean } = {}): Promise<Buffer> {
-  const raw = Buffer.from([`From: English Bookshop <english-orders@orellfuessli.ch>`, `To: ${USER}`, 'Subject: Re: Book order', `Message-ID: <${id}@orellfuessli.ch>`, 'Date: Mon, 16 Nov 2026 09:00:00 +0100', 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Title: The Long Tide of Markets / ISBN: 9780000000002 / Price: CHF 19.90', ''].join('\r\n'));
+  const raw = Buffer.from([`From: English Bookshop <english-orders@quillmere.example>`, `To: ${USER}`, 'Subject: Re: Book order', `Message-ID: <${id}@quillmere.example>`, 'Date: Mon, 16 Nov 2026 09:00:00 +0100', 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Title: The Long Tide of Markets / ISBN: 9780000000002 / Price: CHF 19.90', ''].join('\r\n'));
   if (o.sign === false) return raw;
-  const r = await dkimSign(raw, { signatureData: [{ signingDomain: 'orellfuessli.ch', selector: 'mail', privateKey: shop.privateKey }] });
+  const r = await dkimSign(raw, { signatureData: [{ signingDomain: 'quillmere.example', selector: 'mail', privateKey: shop.privateKey }] });
   return Buffer.concat([Buffer.from(r.signatures), raw]);
 }
 
@@ -66,7 +67,7 @@ describe.skipIf(!IMAPS)('IMAP against a real server (GreenMail)', () => {
       list = await box.list(0, 50);
       expect(list.length).toBeGreaterThanOrEqual(2);
       const src = await box.source(list.at(-1)!.uid, 1 << 20);
-      expect(src?.toString()).toContain('imap2@orellfuessli.ch');
+      expect(src?.toString()).toContain('imap2@quillmere.example');
       expect(await box.source(list.at(-1)!.uid, 10)).toBeNull(); // over the limit: not read
       expect(await box.list(list.at(-1)!.uid, 50)).toEqual([]);
     } finally { await box.close(); }
@@ -86,13 +87,13 @@ describe.skipIf(!IMAPS)('IMAP against a real server (GreenMail)', () => {
     await deliver(await mail('job1'));
     await deliver(await mail('job2', { sign: false }));
     const db = household();
-    const c = { imap: cfg(), arcSealers: ['google.com'], mailRecipients: [], sealingKey: null };
+    const c = { imap: cfg(), arcSealers: ['forwarder.example'], mailRecipients: [], sealingKey: null, connectors: CONNECTORS };
     expect((await refreshMail(db, c, { resolver })).status).toBe('done');
     const rows = db.select().from(t.mailSeen).all();
-    expect(rows.find((r) => r.messageId === '<job1@orellfuessli.ch>')).toMatchObject({ accepted: 1 });
+    expect(rows.find((r) => r.messageId === '<job1@quillmere.example>')).toMatchObject({ accepted: 1 });
     // The unsigned one is not verified: kept under a hash of its bytes, never under its Message-ID, with no content.
     expect(rows.filter((r) => r.accepted === 0 && r.parsedJson === null).length).toBeGreaterThan(0);
-    expect(rows.find((r) => r.messageId === '<job2@orellfuessli.ch>')).toBeUndefined();
+    expect(rows.find((r) => r.messageId === '<job2@quillmere.example>')).toBeUndefined();
     const n = rows.length;
     await refreshMail(db, c, { resolver });
     expect(db.select().from(t.mailSeen).all()).toHaveLength(n);

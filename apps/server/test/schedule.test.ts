@@ -396,7 +396,7 @@ describe('the monthly refresh', () => {
       db.insert(t.book).values({ id, title: id, authorsJson: '[]', audience: 'adult', normKey: id, createdAt: now }).run();
       db.insert(t.candidate).values({ personId: 'p_alex', bookId: id, origin: 'manual', addedAt: now, touchedAt: now }).run();
     }
-    const src: PriceSource = { id: 'orellfuessli', find: async (b) => { looked.push(b.title); return null; } };
+    const src: PriceSource = { id: 'quillmere', find: async (b) => { looked.push(b.title); return null; } };
     const out = await refreshPrices(db, src, { now: () => new Date(clock), sleep: async (ms) => { clock += ms; }, deadline: new Date(Date.parse('2026-12-01T20:00:05Z')) });
     expect(out).toMatchObject({ status: 'failed', detail: expect.stringContaining('time limit') });
     expect(looked).toHaveLength(2);
@@ -437,7 +437,7 @@ describe('through the app', () => {
     let scheduler: Scheduler | undefined;
     const built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off' }), db, {
       push,
-      jobs: { prices: { id: 'orellfuessli', find }, env: { sleep: async () => {} }, started: (_j, d) => byHand.push(d), schedule: { now: () => clock.now, start: false, onScheduler: (s) => { scheduler = s; } } },
+      jobs: { prices: { id: 'quillmere', find }, env: { sleep: async () => {} }, started: (_j, d) => byHand.push(d), schedule: { now: () => clock.now, start: false, onScheduler: (s) => { scheduler = s; } } },
     });
     return { db, pushed, byHand, app: built.app, scheduler: scheduler!, admin: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN }, adult: { cookie: sessionCookie(db, 'p_sam'), origin: ORIGIN } };
   };

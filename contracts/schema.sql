@@ -90,7 +90,7 @@ CREATE INDEX book_norm ON book(norm_key);
 
 CREATE TABLE book_offer (                  -- price estimates and retailer ids
   book_id     TEXT NOT NULL REFERENCES book(id) ON DELETE CASCADE,
-  source      TEXT NOT NULL,               -- 'orellfuessli' | 'quote' | 'invoice' | 'manual'
+  source      TEXT NOT NULL,               -- a connector's id (its price lookup) | 'seed' | 'quote' | 'invoice' | 'manual'
   external_id TEXT,                        -- e.g. A0000000000
   price_c     INTEGER,
   availability TEXT,                       -- raw text, informational only
@@ -346,6 +346,15 @@ CREATE TABLE job_period (
   run_id      TEXT REFERENCES job_run(id) ON DELETE SET NULL,
   updated_at  TEXT NOT NULL,
   PRIMARY KEY (job, period)
+);
+
+-- The bookshop connectors an admin enabled (connectors/enabled.ts, philobiblos#27), each for the version (the SHA-256 of
+-- its file) they read in Settings: a connector whose file changed allows nothing until an admin enables it again.
+CREATE TABLE connector_enabled (
+  id          TEXT PRIMARY KEY NOT NULL,
+  version     TEXT NOT NULL,
+  enabled_by  TEXT REFERENCES person(id) ON DELETE SET NULL,
+  enabled_at  TEXT NOT NULL
 );
 
 -- Privacy of proposals (philobiblos#3): private_to follows the AI run's takeaways_of, whoever writes the row.

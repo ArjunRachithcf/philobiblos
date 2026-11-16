@@ -18,6 +18,7 @@ export type Layer = components['schemas']['Layer'];
 export type InboxItem = components['schemas']['InboxItem'];
 export type Share = components['schemas']['Share'];
 export type ShareToken = components['schemas']['ShareToken'];
+export type Connector = components['schemas']['Connector'];
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); }

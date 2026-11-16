@@ -1,0 +1,16 @@
+# An invented invoice: the mail's subject, and its PDF's rows as the media worker splits them (cells at wide gaps).
+from: rechnung@quillmere.example
+subject: Ihre Quillmere-Rechnung Nr. 99001122
+rows:
+  - [Rechnung Nr. 99001122]
+  - ['9780000000002', The Long Tide of Markets, 1 ST, '19.90', 19.90 CHF, 2.6 %]
+  - ['9780000000019', The Quiet Hedgehog, '2', ST, '16.90', 10 %, '30.42', CHF, 2.6%]
+  - [Versandkosten, 0.00 CHF]
+  - [Total, 50.32 CHF]
+expect:
+  kind: invoice
+  invoiceNumber: '99001122'
+  totalC: 5032
+  lines:
+    - { ean: '9780000000002', title: The Long Tide of Markets, qty: 1, priceC: 1990, totalC: 1990 }
+    - { ean: '9780000000019', title: The Quiet Hedgehog, qty: 2, priceC: 1690, discountPct: 10, totalC: 3042 }

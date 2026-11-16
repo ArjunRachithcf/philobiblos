@@ -2,28 +2,48 @@
 // quote stays the truth; an estimate only helps the month's plan fit the budget, and an unknown price counts as CHF 25
 // in packages/scoring (`priceUnknown`).
 //
-// Orell Füssli has no API: the source reads its search page as text (no script runs, no DOM), keeps only the fields
-// below, and never touches a wishlist, cart or account. The page is hostile input; the egress client holds it to 2 MB
-// and 10 s, on its own host.
+// Which shop is asked, and how its page reads, is the connector's (`prices` in connectors/<id>/connector.yaml): the
+// search URL, the article links, the print formats, the languages and the availability words. Nothing here names a shop.
+// The page is read as text (no script runs, no DOM), only the fields below are kept, and no wishlist, cart or account is
+// touched. The page is hostile input; the egress client holds it to 1 MB and 10 s, on its own host, and that host is on
+// the allowlist only while an admin has the connector enabled.
+import type { Connector } from '@philobiblos/contracts/connector';
 import type { Egress } from '../net/egress';
 import { norm, parsePriceC } from '../seed/import';
+import { alternation, contains, literal } from '../connectors/text';
 
 /** What an unknown price counts as in a month's budget, centimes (ADR 0008; packages/scoring's `priceUnknown`). */
 export const UNKNOWN_PRICE_C = 2500;
 
 export interface Offer { externalId: string; priceC: number | null; availability: string | null }
 export interface PriceSource {
-  /** The source's name in book_offer.source. */
+  /** The source's name in book_offer.source: its connector's id. */
   id: string;
   /** The offer for this book, or null when the source has no matching edition. Network and refusals are thrown. */
   find(b: { title: string; authors: string[] }): Promise<Offer | null>;
 }
 
-const ARTICLE = /href="(?:https:\/\/www\.orellfuessli\.ch)?\/shop\/home\/artikeldetails\/(A\d{6,14})[^"<>]{0,200}"/g;
-const PRINT = /\bBuch \((?:Taschenbuch|Gebundene Ausgabe)\)/;
-const PRICE = /(?:Fr\.|CHF)\s*(\d{1,4}[.,]\d{2})/;
-const ENGLISH = /\b(?:Englisch|English)\b/;
-const AVAILABILITY = /\b((?:Sofort lieferbar|Lieferbar|Versandfertig|Nicht lieferbar|Vorbestellbar|Erscheint)(?: (?:in|innerhalb|ab|am) [\d.\- ]{1,12}(?:Werktagen|Tagen|Tag|Wochen|Woche)?)?)/;
+/** How a connector's search page reads: its `prices` and its `money`, as the fixed shapes below. */
+export interface TileRules { host: string; article: RegExp; print: (s: string) => boolean; want: (s: string) => boolean; other: (s: string) => boolean; price: RegExp; availability: RegExp }
+
+/**
+ * The shapes, each built from the connector's words as literals (connectors/text.ts): an article link is
+ * `href="[https://<host>]<path><prefix><digits>…"`; an amount is `<symbol> 12.90`; availability is a phrase, then
+ * optionally a joiner, up to 12 digits, dots, dashes or spaces, and a unit (`Lieferbar in 2-3 Tagen`).
+ */
+export function tileRules(c: Pick<Connector, 'money'> & { prices: NonNullable<Connector['prices']> }): TileRules {
+  const p = c.prices;
+  const host = new URL(p.url.replace('{query}', 'q')).hostname;
+  const [lo, hi] = p.article.id_digits;
+  const av = p.availability;
+  return {
+    host,
+    article: new RegExp(`href="(?:https://${literal(host)})?${literal(p.article.path)}(${literal(p.article.id_prefix)}\\d{${lo},${hi}})[^"<>]{0,200}"`, 'g'),
+    print: contains(p.print_formats), want: contains(p.want_languages), other: contains(p.other_languages),
+    price: new RegExp(`${alternation(c.money.before)}\\s{0,3}(\\d{1,4}[.,]\\d{2})`, 'iu'),
+    availability: new RegExp(`(?<![\\p{L}\\p{N}])(${alternation(av.phrases)}(?: ${alternation(av.joiners)} [\\d.\\- ]{1,12}${alternation(av.units)}?)?)`, 'u'),
+  };
+}
 
 /** The most of a search page that is read, and of each result tile (the egress client stops at its own 1 MB). */
 export const PAGE_MAX = 1 << 20;
@@ -64,9 +84,9 @@ export function textOf(html: string): string {
 export interface Tile { externalId: string; title: string; text: string }
 
 /** The result tiles of a search page: each article link and the page text after it (up to the next one, 4000 characters at most). */
-export function parseTiles(html: string): Tile[] {
+export function parseTiles(html: string, r: Pick<TileRules, 'article'>): Tile[] {
   const page = html.slice(0, PAGE_MAX);
-  const hits = [...page.matchAll(ARTICLE)];
+  const hits = [...page.matchAll(r.article)];
   const tiles: Tile[] = [];
   for (let i = 0; i < hits.length && tiles.length < 48; i++) {
     const h = hits[i]!;
@@ -82,25 +102,27 @@ export function parseTiles(html: string): Tile[] {
   return tiles;
 }
 
-/** The English print edition whose normalised title matches; tiles that name another language are skipped. */
-export function pickOffer(tiles: Tile[], title: string, authors: string[]): Offer | null {
+/** The print edition in a language the connector wants whose normalised title matches; tiles naming another language are skipped. */
+export function pickOffer(tiles: Tile[], title: string, authors: string[], r: TileRules): Offer | null {
   const want = norm(title);
   const surname = authors[0] ? norm(authors[0].split(/\s+/).at(-1) ?? '') : '';
-  const matching = tiles.filter((t) => norm(t.title) === want && PRINT.test(t.text) && (!surname || norm(t.text).includes(surname))
-    && !/\b(?:Deutsch|Französisch|Italienisch|Spanisch)\b/.test(t.text));
-  const best = matching.find((t) => ENGLISH.test(t.text)) ?? matching[0];
+  const matching = tiles.filter((t) => norm(t.title) === want && r.print(t.text) && (!surname || norm(t.text).includes(surname)) && !r.other(t.text));
+  const best = matching.find((t) => r.want(t.text)) ?? matching[0];
   if (!best) return null;
-  const price = PRICE.exec(best.text);
-  return { externalId: best.externalId, priceC: price ? parsePriceC(price[1]) : null, availability: AVAILABILITY.exec(best.text)?.[1]?.trim() ?? null };
+  const price = r.price.exec(best.text);
+  return { externalId: best.externalId, priceC: price ? parsePriceC(price[1]) : null, availability: r.availability.exec(best.text)?.[1]?.trim() ?? null };
 }
 
-export function orellFuessli(egress: Egress): PriceSource {
+/** A connector's price lookup: its search page, asked with the title and first author, through the one egress client. */
+export function searchTiles(id: string, c: Pick<Connector, 'money'> & { prices: NonNullable<Connector['prices']> }, egress: Egress): PriceSource {
+  const r = tileRules(c);
   return {
-    id: 'orellfuessli',
+    id,
     async find(b) {
       const q = [b.title, b.authors[0] ?? ''].join(' ').replace(/\s+/g, ' ').trim().slice(0, 200);
-      const page = await egress.get(`https://www.orellfuessli.ch/suche?${new URLSearchParams({ sq: q })}`, 'html');
-      return pickOffer(parseTiles(page.body.toString('utf8')), b.title, b.authors);
+      // Form-encoded (spaces as +), into the one place the template leaves for it: the query string.
+      const page = await egress.get(c.prices.url.replace('{query}', new URLSearchParams([['q', q]]).toString().slice(2)), 'html');
+      return pickOffer(parseTiles(page.body.toString('utf8'), r), b.title, b.authors, r);
     },
   };
 }

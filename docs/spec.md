@@ -76,7 +76,8 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
   owned, unless "I own these" is ticked; unmatched rows go to the Inbox; their ideas are proposals with "accept all"),
   and optionally free sentences. Adults run it for kids, and write sentences only for kids under 13 (by birth year);
   for a kid of 13 or more they pick themes and add read books only.
-- **Settings**: budget and split; how your brain grows (mix, unread limit, counterpoints, takeaways); AI plugin
+- **Settings**: budget and split; bookshops (the connectors, what each allows, enabled by an admin with a fresh
+  sign-in); how your brain grows (mix, unread limit, counterpoints, takeaways); AI plugin
   (provider, jobs on/off, wildcards); score weights; kids' themes; sources; family (people, waiting people, join
   links and their rules, the home network); where Philobiblos runs; what leaves (Open Library,
   the price lookup, SMTP when set, Claude when opted in; Open Library can be turned off).
@@ -155,11 +156,13 @@ Providers: Ollama (local, the default) or Claude (API key, an explicit opt-in th
 
 ## 9. Sources (see `contracts/connectors.md`)
 
-Mail (the bookshop's mail forwarded to a Philobiblos-only mailbox, read over IMAP; Compose links instead of drafts), price lookup (Orell Füssli search, read-only, best effort), metadata (Open Library,
+Bookshops are connectors, data an admin enables (philobiblos#27, `docs/connectors.md`): any shop, any mail provider
+with IMAP. Mail (the bookshop's mail forwarded to a Philobiblos-only mailbox, read over IMAP; Compose links instead of
+drafts), price lookup (an enabled connector's search page, read-only, best effort), metadata (Open Library,
 cached; ISBNs and titles only, listed under what leaves, an admin can turn it off), phone share, manual add, imports
 (Goodreads, StoryGraph, generic CSV, pasted). Optional outgoing SMTP, off by default, sends one thing only: a join
-rule's 6-digit code (ADR 0011). Every book can be ordered through the Orell Füssli English Bookshop by email, so web
-availability never blocks a pick.
+rule's 6-digit code (ADR 0011). A book can be ordered from the bookshop by email, so web availability never blocks a
+pick.
 
 ## 10. Milestones
 

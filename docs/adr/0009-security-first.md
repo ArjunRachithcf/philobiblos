@@ -10,6 +10,10 @@ Status: **Accepted** · 2026-11-15
 > when it is set (TLS, certificate verified), for join codes alone. Its client is the one outgoing mail connection, and
 > the architecture test that keeps every other connection out covers it.
 
+> **Superseded in part** (2026-11-16, philobiblos#27): the egress allowlist holds no bookshop of its own: a shop's price
+> host is on it only while an admin has that connector enabled (a fresh sign-in, for that version of its file), asked
+> again at each request. `PHILOBIBLOS_MAIL_ARC_SEALERS` has no default (no mail provider is assumed).
+
 **Decision**: Shelf ranks security above polish, and polish above features, as HomersLab does. The threat model is in
 `docs/security.md`; these rules follow from it and bind every milestone.
 

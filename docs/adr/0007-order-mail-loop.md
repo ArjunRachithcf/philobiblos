@@ -10,6 +10,10 @@ Status: **Accepted** · 2026-11-15 (revised the same day: no Gmail API, see "Cha
 > may send a 6-digit code for a join rule's mail domain, through an optional outgoing SMTP server that is off by default.
 > Orders still go out only through Compose, and nothing else is ever sent.
 
+> **Superseded in part** (2026-11-16, philobiblos#27): "the bookshop" is any enabled connector's
+> (`docs/connectors.md`): its domains, senders and words are data an admin enables; the checks below are unchanged and
+> apply to each.
+
 **Decision**: Shelf reads the bookshop's mail from a **Shelf-only mailbox over IMAP** and never sends mail. Orders go
 out through a **Compose** action: a `mailto:` link with the text filled in, opened in the person's own mail app.
 

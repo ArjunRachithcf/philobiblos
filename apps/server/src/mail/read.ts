@@ -12,7 +12,7 @@
 import PostalMime from 'postal-mime';
 import { textOf } from '../books/prices';
 import type { TxtResolver } from '../net/dns';
-import { headerBlock, verifyBookshopMail, type MailAuth } from './verify';
+import { headerBlock, verifyBookshopMail, type MailAuth, type ShopMail } from './verify';
 
 export const MAIL_LIMITS = {
   /** A whole message, bytes. */
@@ -151,7 +151,7 @@ export async function readMail(raw: Buffer, headerBlock: Buffer, address: string
 
 /** A bookshop mail that passed every check, as only `openVerified` makes it. */
 export interface VerifiedMail extends MailRead {
-  auth: MailAuth & { accepted: true; from: string };
+  auth: MailAuth & { accepted: true; from: string; connector: string };
 }
 const VERIFIED = new WeakSet<object>();
 /** Whether this object came from `openVerified` (effects apply to nothing else). */
@@ -165,11 +165,11 @@ export type Opened = { ok: true; mail: VerifiedMail } | { ok: false; auth: MailA
  * MIME parse within limits, whose headers must equal the verified block's. Only a mail through all of them is a
  * `VerifiedMail`.
  */
-export async function openVerified(raw: Buffer, o: { arcSealers: string[]; recipients: string[]; resolver?: TxtResolver; address: string[] }): Promise<Opened> {
+export async function openVerified(raw: Buffer, o: { shops: ShopMail[]; arcSealers: string[]; recipients: string[]; resolver?: TxtResolver; address: string[] }): Promise<Opened> {
   const hb = headerBlock(raw);
   if (!('block' in hb)) return { ok: false, auth: { accepted: false, via: null, reason: hb.problem, fromDomain: null } };
-  const auth = await verifyBookshopMail(raw, { arcSealers: o.arcSealers, recipients: o.recipients, resolver: o.resolver });
-  if (!auth.accepted || !auth.from) return { ok: false, auth };
+  const auth = await verifyBookshopMail(raw, { shops: o.shops, arcSealers: o.arcSealers, recipients: o.recipients, resolver: o.resolver });
+  if (!auth.accepted || !auth.from || !auth.connector) return { ok: false, auth };
   let read;
   try { read = await readMail(raw, hb.block, o.address); } catch (e) {
     if (!(e instanceof MailUnreadable)) throw e;

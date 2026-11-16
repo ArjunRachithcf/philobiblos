@@ -471,8 +471,8 @@ describe('the Inbox', () => {
     const db = household();
     db.insert(t.person).values({ id: 'p_kid2', name: 'Kid 2', role: 'kid', handle: 'kid2', birthYear: 2019 }).run();
     const pdf = Buffer.from('%PDF-1.4\n% invented\n');
-    const raw = await signed(message({ id: 'inb1', from: 'rechnung@orellfuessli.ch', subject: 'Ihre OrellFüssli-Rechnung Nr. 99001122', body: 'Ihre Rechnung.', pdf }));
-    const forged = message({ id: 'inb2', from: 'rechnung@orellfuessli.ch', subject: 'Ihre OrellFüssli-Rechnung Nr. 99001123', body: 'Bitte zahlen Sie hier: https://evil.example/pay' });
+    const raw = await signed(message({ id: 'inb1', from: 'rechnung@quillmere.example', subject: 'Ihre Quillmere-Rechnung Nr. 99001122', body: 'Ihre Rechnung.', pdf }));
+    const forged = message({ id: 'inb2', from: 'rechnung@quillmere.example', subject: 'Ihre Quillmere-Rechnung Nr. 99001123', body: 'Bitte zahlen Sie hier: https://evil.example/pay' });
     const quote = await signed(message({ id: 'inb3', subject: 'Re: Book order, March 2031', body: 'Author: Ines Varga\nTitle: Harbour Lights\nISBN: 9780000000101\nPrice: CHF 21.00' }));
     await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 1, raw }, { uid: 2, raw: forged }, { uid: 3, raw: quote }]), resolver, ...inv([
       ['9780000000033', 'Gardens of the Commons', '2 ST', '15.00', '30.00 CHF', '2.6 %'],
@@ -490,7 +490,7 @@ describe('the Inbox', () => {
     expect(items.map((i) => i.kind).sort()).toEqual(['mail_unverified', 'unmatched_invoice_line', 'unmatched_quote_line']);
     expect(await list(a, a.sam)).toEqual(items);
     const invoice = items.find((i) => i.kind === 'unmatched_invoice_line')!;
-    expect(invoice).toMatchObject({ id: mailItemId('<inb1@orellfuessli.ch>'), title: 'Invoice 99001122', found: [
+    expect(invoice).toMatchObject({ id: mailItemId('<inb1@quillmere.example>'), title: 'Invoice 99001122', found: [
       { index: 0, title: 'Gardens of the Commons', ean: '9780000000033', qty: 2, priceC: 3000, decided: null },
       { index: 1, title: 'Wooden Train Set', notBook: true },
       { index: 2, title: 'The Patient River', ean: null, eanUnreadable: true },
@@ -507,7 +507,7 @@ describe('the Inbox', () => {
 
   it('an invoice line added becomes copies (owned); decided once; the item goes when nothing is left', async () => {
     const a = await withMail();
-    const id = mailItemId('<inb1@orellfuessli.ch>');
+    const id = mailItemId('<inb1@quillmere.example>');
     const r = await post(a, `/api/inbox/${id}/books/0`, { action: 'add' });
     expect(r.statusCode, r.body).toBe(200);
     const book = a.db.select().from(t.book).where(eq(t.book.isbn13, '9780000000033')).get()!;
@@ -524,7 +524,7 @@ describe('the Inbox', () => {
 
   it('a quote line goes to a backlog: yours or a kid\'s, never another adult\'s', async () => {
     const a = await withMail();
-    const id = mailItemId('<inb3@orellfuessli.ch>');
+    const id = mailItemId('<inb3@quillmere.example>');
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'add', for: 'partner' })).statusCode).toBe(403);
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'add', for: 'nobody' })).statusCode).toBe(404);
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'add', for: 'kid2' })).statusCode).toBe(200);
@@ -557,13 +557,13 @@ describe('the Inbox', () => {
     const a = await withMail();
     const now = new Date().toISOString();
     a.db.insert(t.mailSeen).values([
-      { messageId: '<f1@orellfuessli.ch>', kind: 'unknown_layout', parserVersion: 'm3d-1/quote-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ subject: 'Re: Book order, November 2026', expected: 'bookshop_quote', reason: 'a price Philobiblos cannot place' }) },
-      { messageId: '<w1@orellfuessli.ch>', kind: 'pending_pdf', parserVersion: 'm3d-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ subject: 'Ihre Rechnung', tries: 2 }) },
+      { messageId: '<f1@quillmere.example>', kind: 'unknown_layout', parserVersion: 'm3d-1/quote-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ subject: 'Re: Book order, November 2026', expected: 'bookshop_quote', reason: 'a price Philobiblos cannot place' }) },
+      { messageId: '<w1@quillmere.example>', kind: 'pending_pdf', parserVersion: 'm3d-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ subject: 'Ihre Rechnung', tries: 2 }) },
     ]).run();
     const items = await list(a);
     expect(items.find((i) => i.kind === 'mail_failed')).toMatchObject({ title: 'Re: Book order, November 2026', mail: { reason: 'a price Philobiblos cannot place', expected: 'bookshop_quote' } });
     expect(items.find((i) => i.kind === 'mail_waiting')).toMatchObject({ mail: { reason: 'its PDF waits for the media worker (tried 2 times)' } });
-    const id = mailItemId('<f1@orellfuessli.ch>');
+    const id = mailItemId('<f1@quillmere.example>');
     expect((await post(a, `/api/inbox/${id}/dismiss`)).statusCode).toBe(204);
     expect((await list(a, a.sam)).map((i) => i.id)).not.toContain(id);
     expect((await post(a, `/api/inbox/m_${'0'.repeat(32)}/dismiss`)).statusCode).toBe(404);
@@ -574,11 +574,11 @@ describe('the Inbox', () => {
     const now = new Date().toISOString();
     a.db.insert(t.order).values({ id: 'o_q', month: '2026-11', status: 'quoted', createdAt: now }).run();
     a.db.insert(t.orderLine).values({ orderId: 'o_q', bookId: 'b_tide', forPerson: 'p_alex', state: 'quoted' }).run();
-    a.db.insert(t.mailSeen).values({ messageId: '<big@orellfuessli.ch>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1234', lines: [
+    a.db.insert(t.mailSeen).values({ messageId: '<big@quillmere.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1234', lines: [
       { ean: null, title: 'The Long Tide of Markets', qty: 2, priceC: 1000, totalC: 2000, vatPct: 2.6, bookId: null },
       { ean: '9780000000057', title: 'Box of Many', qty: 99, priceC: 100, totalC: 9900, vatPct: 2.6, bookId: null },
     ] }) }).run();
-    const id = mailItemId('<big@orellfuessli.ch>');
+    const id = mailItemId('<big@quillmere.example>');
     const books = a.db.select().from(t.book).all().length;
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'add', for: 'partner' })).statusCode).toBe(403);
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'add', for: 'me' })).statusCode).toBe(200);
@@ -598,14 +598,14 @@ describe('the Inbox', () => {
     const now = new Date().toISOString();
     const lines = JSON.stringify({ invoiceNumber: '1', lines: [{ ean: null, title: 'The Long Tide of Markets', qty: 1, priceC: 1, totalC: 1, vatPct: 2.6, bookId: 'b_tide' }, { ean: null, title: 'Unknown', qty: 1, priceC: 1, totalC: 1, vatPct: 2.6, bookId: null }] });
     a.db.insert(t.mailSeen).values([
-      { messageId: '<mixed@orellfuessli.ch>', kind: 'invoice', parserVersion: 'x', seenAt: now, accepted: 1, authJson: '{}', parsedJson: lines },
+      { messageId: '<mixed@quillmere.example>', kind: 'invoice', parserVersion: 'x', seenAt: now, accepted: 1, authJson: '{}', parsedJson: lines },
       { messageId: 'unverified:lines', kind: 'invoice', parserVersion: 'x', seenAt: now, accepted: 0, authJson: '{}', parsedJson: lines },
     ]).run();
     const items = await list(a);
-    expect(items.find((i) => i.id === mailItemId('<mixed@orellfuessli.ch>'))!.found.map((f) => f.index)).toEqual([1]);
+    expect(items.find((i) => i.id === mailItemId('<mixed@quillmere.example>'))!.found.map((f) => f.index)).toEqual([1]);
     expect(items.map((i) => i.id)).not.toContain(mailItemId('unverified:lines'));
     expect((await post(a, `/api/inbox/${mailItemId('unverified:lines')}/books/1`, { action: 'add' })).statusCode).toBe(404);
-    const id = mailItemId('<mixed@orellfuessli.ch>');
+    const id = mailItemId('<mixed@quillmere.example>');
     expect((await post(a, `/api/inbox/${id}/dismiss`)).statusCode).toBe(204);
     expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'skip' })).statusCode).toBe(409);
     expect(a.db.select().from(t.copy).all()).toEqual([]);
@@ -633,8 +633,8 @@ describe('the Inbox', () => {
     const a = await app();
     const ins = a.db.$client.prepare("INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, 'unknown_layout', '{\"reason\":\"x\"}', 'v', ?, '{}', 1)");
     // 260 failed mails, many on the same second (the cursor breaks ties), 40 of them dismissed; and 70 shares.
-    for (let i = 0; i < 260; i++) ins.run(`<f${i}@orellfuessli.ch>`, `2026-11-0${1 + (i % 5)}T00:00:00.000Z`);
-    for (let i = 0; i < 40; i++) a.db.insert(t.inboxDecision).values({ item: mailItemId(`<f${i}@orellfuessli.ch>`), idx: -1, decision: 'dismissed', decidedAt: 'x' }).run();
+    for (let i = 0; i < 260; i++) ins.run(`<f${i}@quillmere.example>`, `2026-11-0${1 + (i % 5)}T00:00:00.000Z`);
+    for (let i = 0; i < 40; i++) a.db.insert(t.inboxDecision).values({ item: mailItemId(`<f${i}@quillmere.example>`), idx: -1, decision: 'dismissed', decidedAt: 'x' }).run();
     for (let i = 0; i < 70; i++) a.db.insert(t.share).values({ id: `01JC${String(i).padStart(22, '0')}`, personId: 'p_alex', note: 'n', status: 'done', createdAt: `2026-11-0${1 + (i % 7)}T00:00:00.000Z` }).run();
     const seen: string[] = [];
     let cursor: string | null = null;
@@ -671,13 +671,13 @@ describe('the Inbox', () => {
     const ins = a.db.$client.prepare("INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, 'unknown_layout', '{}', 'v', ?, '{}', 1)");
     const dis = a.db.$client.prepare("INSERT INTO inbox_decision (item, idx, decision, decided_at) VALUES (?, -1, 'dismissed', 'x')");
     a.db.$client.transaction(() => {
-      ins.run('<old@orellfuessli.ch>', '2026-01-01T00:00:00.000Z');
-      for (let i = 0; i < PAGE.scan + 100; i++) { ins.run(`<d${i}@orellfuessli.ch>`, '2026-11-01T00:00:00.000Z'); dis.run(mailItemId(`<d${i}@orellfuessli.ch>`)); }
+      ins.run('<old@quillmere.example>', '2026-01-01T00:00:00.000Z');
+      for (let i = 0; i < PAGE.scan + 100; i++) { ins.run(`<d${i}@quillmere.example>`, '2026-11-01T00:00:00.000Z'); dis.run(mailItemId(`<d${i}@quillmere.example>`)); }
     })();
     const first = (await a.app.inject({ url: '/api/inbox', headers: { cookie: a.alex } })).json() as { items: unknown[]; nextCursor: string | null };
     expect(first.items).toEqual([]);
     expect(first.nextCursor).toBeTruthy();
     const second = (await a.app.inject({ url: `/api/inbox?cursor=${first.nextCursor}`, headers: { cookie: a.alex } })).json() as { items: { id: string }[]; nextCursor: string | null };
-    expect(second).toEqual({ items: [expect.objectContaining({ id: mailItemId('<old@orellfuessli.ch>') })], nextCursor: null });
+    expect(second).toEqual({ items: [expect.objectContaining({ id: mailItemId('<old@quillmere.example>') })], nextCursor: null });
   }, 30_000);
 });

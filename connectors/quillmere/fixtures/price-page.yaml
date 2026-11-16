@@ -1,0 +1,9 @@
+# An invented search page of the shop: the lookup must pick the English paperback whose title matches.
+title: The Long Tide of Markets
+authors: [Mira Okafor]
+page: |
+  <ul class="results">
+    <li><a href="/shop/home/artikeldetails/A1000000002">The Long Tide of Markets</a> Mira Okafor Buch (Gebundene Ausgabe) Deutsch Fr. 39.90</li>
+    <li><a href="/shop/home/artikeldetails/A1000000003">The Long Tide of Markets</a> Mira Okafor Buch (Taschenbuch) Englisch Fr. 24.90 Lieferbar in 2-3 Tagen</li>
+  </ul>
+expect: { externalId: A1000000003, priceC: 2490, availability: Lieferbar in 2-3 Tagen }

@@ -5,7 +5,9 @@ import type { FastifyInstance } from 'fastify';
 import { requireAdmin } from '../auth/hook';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { orellFuessli, type PriceSource } from '../books/prices';
+import { searchTiles, type PriceSource } from '../books/prices';
+import { enabledConnectors } from '../connectors/enabled';
+import type { Registry } from '../connectors/load';
 import { refreshCovers, refreshMetadata, refreshPrices, type JobEnv, type Outcome } from '../jobs/books';
 import { closeInterrupted, startJob } from '../jobs/run';
 import { SCHEDULE, Scheduler, dueAt, getCycle } from '../jobs/schedule';
@@ -20,27 +22,36 @@ import type { AiJobs } from '../ai/jobs';
 export const JOBS = ['monthly', 'mail', 'shares', 'prices', 'metadata', 'covers', 'ai_suggest', 'ai_tag', 'ai_explain'] as const;
 
 export interface JobDeps {
-  egress: Egress; push?: Egress; shares?: ShareProcessor; ai?: AiJobs; prices?: PriceSource; env?: JobEnv; mail?: MailDeps; started?: (job: string, done: Promise<void>) => void;
+  egress: Egress; connectors: Registry; push?: Egress; shares?: ShareProcessor; ai?: AiJobs; prices?: PriceSource; env?: JobEnv; mail?: MailDeps; started?: (job: string, done: Promise<void>) => void;
   /** The scheduler: off unless asked for (main.ts); tests drive it by hand with `scheduler.tick()`. */
   schedule?: { now?: () => Date; tickMs?: number; onScheduler?: (s: Scheduler) => void; start?: boolean };
 }
 
 export async function jobRoutes(app: FastifyInstance, cfg: Config, db: Db, deps: JobDeps) {
   closeInterrupted(db);
+  // The price lookups of the enabled bookshops, as they are when the job starts (tests may give their own source).
+  const priceRuns = async (env: JobEnv): Promise<Outcome> => {
+    const sources = deps.prices ? [deps.prices] : enabledConnectors(db, deps.connectors).flatMap((e) => (e.connector.prices ? [searchTiles(e.id, { money: e.connector.money, prices: e.connector.prices }, deps.egress)] : []));
+    if (!sources.length) return { status: 'blocked', detail: 'no enabled bookshop has a price lookup: prices stay as they are' };
+    const outs: Outcome[] = [];
+    for (const s of sources) outs.push(await refreshPrices(db, s, env));
+    const status = outs.some((o) => o.status === 'failed') ? 'failed' : outs.every((o) => o.status === 'blocked') ? 'blocked' : 'done';
+    return { status, detail: outs.map((o, i) => (sources.length > 1 ? `${sources[i]!.id}: ${o.detail}` : o.detail)).join('; ') };
+  };
   const work: Partial<Record<(typeof JOBS)[number], (again: boolean) => Promise<Outcome>>> = {
-    prices: () => refreshPrices(db, deps.prices ?? orellFuessli(deps.egress), deps.env),
+    prices: () => priceRuns(deps.env ?? {}),
     metadata: (again) => refreshMetadata(db, deps.egress, { ...deps.env, again }),
     covers: () => refreshCovers(db, deps.egress, { dataDir: cfg.dataDir, workDir: cfg.workDir }, deps.env),
-    mail: () => refreshMail(db, cfg, deps.mail),
+    mail: () => refreshMail(db, { ...cfg, connectors: deps.connectors }, deps.mail),
     ...(deps.shares ? { shares: () => deps.shares!.kick() } : {}),
     // The AI's jobs (ai/jobs.ts): each through its provider's own client, never this one.
     ...(deps.ai ? { ai_suggest: () => deps.ai!.suggest(), ai_tag: () => deps.ai!.tagBooks(), ai_explain: () => deps.ai!.explain() } : {}),
   };
   // The monthly refresh's steps for a month, each the same job an admin runs by hand (month/refresh.ts).
   const monthlyWork = (month: string, deadline: Date): MonthlyWork => ({
-    mail: () => refreshMail(db, cfg, deps.mail),
+    mail: () => refreshMail(db, { ...cfg, connectors: deps.connectors }, deps.mail),
     ...(deps.shares ? { shares: () => deps.shares!.kick() } : {}),
-    prices: () => refreshPrices(db, deps.prices ?? orellFuessli(deps.egress), { ...deps.env, deadline }),
+    prices: () => priceRuns({ ...deps.env, deadline }),
     plan: async () => { const p = keepPlan(db, month); return { status: 'done', detail: `${p.kept ? 'kept' : 'kept already'}, ${p.lines} picks` }; },
     ...(deps.ai ? { ai_suggest: () => deps.ai!.suggest({ until: deadline }), ai_explain: () => deps.ai!.explain({ month, until: deadline }) } : {}),
   });

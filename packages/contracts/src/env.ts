@@ -26,6 +26,7 @@ export const IMAGE_DEFAULTS: Readonly<Record<string, string>> = {
   PHILOBIBLOS_WORK_DIR: '/work',
   PHILOBIBLOS_WEB_DIR: '/app/web',
   PHILOBIBLOS_MIGRATIONS_DIR: '/app/drizzle',
+  PHILOBIBLOS_BUILTIN_CONNECTORS_DIR: '/app/connectors',
 };
 
 /** The names that together say one thing (their suffixes): new ones of a setting set, old ones of it ignored. */

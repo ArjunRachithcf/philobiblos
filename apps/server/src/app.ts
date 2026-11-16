@@ -18,6 +18,7 @@ import { peopleRoutes } from './routes/people';
 import { stubRoutes } from './routes/stubs';
 import { jobRoutes, type JobDeps } from './routes/jobs';
 import { createEgress, egressRules } from './net/egress';
+import { shopHosts } from './connectors/enabled';
 import { inboxRoutes } from './routes/inbox';
 import { SHARE_BYTES, SHARE_UPLOADS, ShareProcessor } from './shares/shares';
 import type { runMediaJob } from './media/client';
@@ -25,6 +26,9 @@ import { AiJobs, type AiJobOptions } from './ai/jobs';
 import { pushRoutes } from './routes/push';
 import { pushClient } from './push/push';
 import { initHousehold } from './jobs/schedule';
+import { loadConnectors, type Registry } from './connectors/load';
+import { enabledConnectors } from './connectors/enabled';
+import { connectorRoutes } from './routes/connectors';
 import type { Egress } from './net/egress';
 
 /** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md); a
@@ -33,11 +37,13 @@ export const SHARE_LIMITS = { files: 30, fileSize: SHARE_BYTES.video, fields: 10
 
 export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; url: string }[] }
 
-export interface AppOptions { ai?: AiJobOptions; push?: Egress; logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
+export interface AppOptions { connectors?: Registry; ai?: AiJobOptions; push?: Egress; logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   // The household's settings row, with PHILOBIBLOS_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
   initHousehold(db, cfg.timezone);
+  // The bookshop connectors, read once (connectors/load.ts); each counts only once an admin enables it.
+  const connectors = opts.connectors ?? loadConnectors(cfg.connectorDirs);
   const app = Fastify({
     logger: opts.logger ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]'] } : false,
     trustProxy: false,
@@ -77,16 +83,19 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     await peopleRoutes(api, cfg, db);
     await libraryRoutes(api, cfg, db);
     await backlogRoutes(api, cfg, db);
-    await monthRoutes(api, cfg, db);
+    await monthRoutes(api, cfg, db, connectors);
+    await connectorRoutes(api, db, connectors);
     await knowledgeRoutes(api, db);
     await stubRoutes(api, cfg);
     await inboxRoutes(api, cfg, db, shares);
-    // The one HTTP client (ADR 0009) for the book jobs: the manifest's hosts. The AI's calls have their own clients, one
+    // The one HTTP client (ADR 0009) for the book jobs: the manifest's hosts, and the price hosts of the bookshop
+    // connectors enabled at the moment of each request (none otherwise). The AI's calls have their own clients, one
     // host each (ai/model.ts): Ollama's, or Claude's after the opt-in.
     // Web Push has its own client too: the browsers' push services and nothing else (push/push.ts).
     const push = opts.push ?? pushClient(cfg);
     await pushRoutes(api, cfg, db, push);
-    await jobRoutes(api, cfg, db, { egress: createEgress({ rules: egressRules({ ollamaUrl: cfg.ollamaUrl }), enabled: cfg.egress }), shares, ai, push, ...opts.jobs });
+    const rules = () => egressRules({ ollamaUrl: cfg.ollamaUrl, shopHosts: shopHosts(enabledConnectors(db, connectors)) });
+    await jobRoutes(api, cfg, db, { egress: createEgress({ rules, enabled: cfg.egress }), connectors, shares, ai, push, ...opts.jobs });
   }, { prefix: '/api' });
   if (cfg.webDir && existsSync(cfg.webDir)) {
     await app.register(fastifyStatic, { root: cfg.webDir });

@@ -8,7 +8,8 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
 import { lookup, parseWork, pickSearchDoc } from '../src/books/openlibrary';
-import { UNKNOWN_PRICE_C, orellFuessli, parseTiles, pickOffer, textOf, type PriceSource } from '../src/books/prices';
+import * as prices from '../src/books/prices';
+import { QUILLMERE } from './mailkit';
 import { loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { PRICE_PAUSE_MS, booksNeedingPrices, refreshCovers, refreshMetadata, refreshPrices } from '../src/jobs/books';
@@ -45,6 +46,15 @@ function fakeEgress(answer: (url: string, want: Want) => unknown): Egress & { as
   };
 }
 const noSleep = async () => {};
+
+// The search page of the invented example bookshop (connectors/quillmere/connector.yaml `prices`).
+const { UNKNOWN_PRICE_C, textOf } = prices;
+type PriceSource = prices.PriceSource;
+const SHOP = { money: QUILLMERE.money, prices: QUILLMERE.prices! };
+const TILES = prices.tileRules(SHOP);
+const parseTiles = (html: string) => prices.parseTiles(html, TILES);
+const pickOffer = (tiles: prices.Tile[], title: string, authors: string[]) => prices.pickOffer(tiles, title, authors, TILES);
+const shopSource = (e: Egress) => prices.searchTiles('quillmere', SHOP, e);
 
 describe('the price page, read as text', () => {
   it('script and style are dropped; entities decoded', () => {
@@ -98,8 +108,8 @@ describe('the price page, read as text', () => {
 
   it('the source asks the shop\'s search page, title and first author, and nothing else', async () => {
     const e = fakeEgress(() => page([{ id: 'A3000000001', title: 'The Grand Ledger', author: 'Mira Okafor', format: 'Buch (Taschenbuch)', price: 'Fr. 18.50' }]));
-    expect(await orellFuessli(e).find({ title: 'The Grand Ledger', authors: ['Mira Okafor'] })).toMatchObject({ priceC: 1850 });
-    expect(e.asked).toEqual(['https://www.orellfuessli.ch/suche?sq=The+Grand+Ledger+Mira+Okafor']);
+    expect(await shopSource(e).find({ title: 'The Grand Ledger', authors: ['Mira Okafor'] })).toMatchObject({ priceC: 1850 });
+    expect(e.asked).toEqual(['https://www.quillmere.example/suche?sq=The+Grand+Ledger+Mira+Okafor']);
   });
 });
 
@@ -115,7 +125,7 @@ describe('Open Library\'s words reach the screen as text only', () => {
 
 describe('the prices job', () => {
   const NOW = new Date('2026-11-16T10:00:00Z');
-  const source = (find: PriceSource['find']): PriceSource => ({ id: 'orellfuessli', find });
+  const source = (find: PriceSource['find']): PriceSource => ({ id: 'quillmere', find });
 
   it('looks up candidates the household does not own, one every 3 s, and keeps what it found', async () => {
     const db = household();
@@ -127,13 +137,13 @@ describe('the prices job', () => {
     expect(books.every((o) => o.priceC === 2290 && o.seenAt === NOW.toISOString())).toBe(true);
     expect(pauses.every((p) => p === PRICE_PAUSE_MS)).toBe(true);
     // Fresh for 7 days: asked again only after that.
-    expect(booksNeedingPrices(db, 'orellfuessli', new Date(NOW.getTime() + 6 * 86_400_000))).toEqual([]);
-    expect(booksNeedingPrices(db, 'orellfuessli', new Date(NOW.getTime() + 8 * 86_400_000)).length).toBe(books.length);
+    expect(booksNeedingPrices(db, 'quillmere', new Date(NOW.getTime() + 6 * 86_400_000))).toEqual([]);
+    expect(booksNeedingPrices(db, 'quillmere', new Date(NOW.getTime() + 8 * 86_400_000)).length).toBe(books.length);
   });
 
   it('not found this time: a price seen before stays', async () => {
     const db = household();
-    db.insert(t.bookOffer).values({ bookId: 'b_tide', source: 'orellfuessli', externalId: 'A5', priceC: 1990, seenAt: '2026-01-01T00:00:00Z' }).run();
+    db.insert(t.bookOffer).values({ bookId: 'b_tide', source: 'quillmere', externalId: 'A5', priceC: 1990, seenAt: '2026-01-01T00:00:00Z' }).run();
     await refreshPrices(db, source(async () => null), { now: () => NOW, sleep: noSleep });
     expect(db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).get()).toMatchObject({ priceC: 1990, seenAt: NOW.toISOString() });
   });
@@ -142,7 +152,7 @@ describe('the prices job', () => {
     for (const status of [403, 429]) {
       const db = household();
       let calls = 0;
-      const out = await refreshPrices(db, source(async () => { calls++; throw new EgressError('status', `www.orellfuessli.ch answered ${status}`, status); }), { now: () => NOW, sleep: noSleep });
+      const out = await refreshPrices(db, source(async () => { calls++; throw new EgressError('status', `www.quillmere.example answered ${status}`, status); }), { now: () => NOW, sleep: noSleep });
       expect(out).toMatchObject({ status: 'blocked' });
       expect(out.detail).toContain(String(status));
       expect(calls).toBe(1);
@@ -251,7 +261,7 @@ describe('POST /jobs/{job}/run', () => {
     const db = household();
     const runs: Promise<void>[] = [];
     const built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off' }), db,
-      { jobs: { prices: { id: 'orellfuessli', find }, env: { sleep: noSleep }, started: (_j, d) => runs.push(d) } });
+      { jobs: { prices: { id: 'quillmere', find }, env: { sleep: noSleep }, started: (_j, d) => runs.push(d) } });
     return { db, app: built.app, runs, admin: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN }, adult: { cookie: sessionCookie(db, 'p_sam'), origin: ORIGIN } };
   };
 

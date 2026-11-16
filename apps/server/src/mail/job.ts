@@ -1,5 +1,6 @@
-// The mail job (ADR 0007): reads what is new in the Philobiblos-only mailbox, checks who sent it, parses what the bookshop
-// sent (parse.ts) and applies it (effects.ts), recording each verified mail once in mail_seen, keyed by its Message-ID
+// The mail job (ADR 0007): reads what is new in the Philobiblos-only mailbox, checks who sent it (only the bookshops an
+// admin enabled count: connectors/enabled.ts), parses what the bookshop sent (parse.ts, with that connector's rules)
+// and applies it (effects.ts), recording each verified mail once in mail_seen, keyed by its Message-ID
 // as signed (so a mail seen again, after a UIDVALIDITY change say, is not applied twice). Only a verified mail claims
 // its Message-ID: an unverified one is keyed by a hash of its bytes, so a forgery cannot take the id of the genuine
 // mail that follows it. When the checks' settings change (or the reader's version), the window is read again, so a
@@ -22,7 +23,10 @@ import { SealError, isSealed, sealingKey, unseal } from '../household/sealed';
 import { MediaUnavailable, runMediaJob, type MediaOutcome } from '../media/client';
 import type { Config } from '../config';
 import { MAIL_LIMITS, addressParts, openVerified, type VerifiedMail } from './read';
-import { PARSERS, classify, parseInvoice, parseQuote, parseShop, type Parsed } from './parse';
+import { PARSERS, classify, mailRules, parseInvoice, parseQuote, parseShop, type MailRules, type Parsed } from './parse';
+import { enabledConnectors } from '../connectors/enabled';
+import type { Registry } from '../connectors/load';
+import type { ShopMail } from './verify';
 import { applyMail } from './effects';
 
 export const PARSER_VERSION = 'm3d-1';
@@ -47,15 +51,15 @@ export interface MailDeps {
 
 const hash = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 
-export type MailJobConfig = Pick<Config, 'arcSealers' | 'mailRecipients' | 'sealingKey'> & { imap: MailboxConfig | null; workDir?: string | null };
+export type MailJobConfig = Pick<Config, 'arcSealers' | 'mailRecipients' | 'sealingKey'> & { imap: MailboxConfig | null; workDir?: string | null; connectors: Registry };
 
 /** The kind and fields of a verified mail; an invoice's PDFs through the media worker (null: not now, try later). */
-async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Array) => Promise<MediaOutcome>): Promise<Parsed | null> {
-  const k = classify(m.auth.from, m.signedSubject);
+async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Array) => Promise<MediaOutcome>, r: MailRules): Promise<Parsed | null> {
+  const k = classify(r, m.auth.from, m.signedSubject);
   if (m.tooLong) return { kind: 'unknown_layout', parser: PARSERS.classify, expected: k.kind, reason: 'too long' };
   switch (k.kind) {
-    case 'quote_or_confirm': return parseQuote(m.text, address);
-    case 'online_order': case 'click_collect': return parseShop(k.kind, k.number, m.text, address);
+    case 'quote_or_confirm': return parseQuote(m.text, address, r);
+    case 'online_order': case 'click_collect': return parseShop(k.kind, k.number, m.text, address, r);
     case 'other': return { kind: 'other', parser: PARSERS.classify };
     case 'number_unreadable': return { kind: 'unknown_layout', parser: PARSERS.classify, expected: k.expected, reason: 'its order or invoice number is not 4 to 11 digits' };
     case 'invoice': {
@@ -74,7 +78,7 @@ async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Arr
         rows.push(...r.rows);
         truncated ||= r.truncated;
       }
-      return parseInvoice(k.number, rows, truncated, address);
+      return parseInvoice(k.number, rows, truncated, address, r);
     }
   }
 }
@@ -82,6 +86,11 @@ async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Arr
 export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {}): Promise<Outcome> {
   if (!cfg.imap) return { status: 'blocked', detail: 'no mailbox is set up (PHILOBIBLOS_IMAP_HOST, PHILOBIBLOS_IMAP_USER, PHILOBIBLOS_IMAP_PASSWORD)' };
   const now = deps.now ?? (() => new Date());
+  // Only the bookshops an admin enabled, as their files are now: their mail domains are the only senders that count.
+  const enabled = enabledConnectors(db, cfg.connectors).filter((e) => e.connector.mail);
+  if (!enabled.length) return { status: 'blocked', detail: 'no bookshop is enabled: an admin enables one in Settings (Bookshops)' };
+  const shops: ShopMail[] = enabled.map((e) => ({ id: e.id, domains: e.connector.mail!.domains, dkimDomains: e.connector.mail!.dkim_domains ?? e.connector.mail!.domains }));
+  const rulesOf = (id: string) => mailRules(enabled.find((e) => e.id === id)!.connector);
   // The delivery address is sealed (PR #7); it is unsealed here only to find it in the mail and leave it out.
   let address: string[] = [];
   if (isSealed(db, SEALED.deliveryAddress)) {
@@ -91,7 +100,8 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
     }
   }
   const recipients = [...new Set([...cfg.mailRecipients, ...(cfg.imap.user.includes('@') ? [cfg.imap.user] : [])].map((r) => r.toLowerCase()))];
-  const configKey = hash(JSON.stringify([PARSER_VERSION, [...cfg.arcSealers].sort(), [...recipients].sort()]));
+  // Enabling a bookshop (or a new version of one) is a change of the checks: the window is read again under them.
+  const configKey = hash(JSON.stringify([PARSER_VERSION, [...cfg.arcSealers].sort(), [...recipients].sort(), enabled.map((e) => [e.id, e.version])]));
   let box: Mailbox;
   try { box = await (deps.open ?? openMailbox)(cfg.imap); } catch (e) {
     return { status: 'failed', detail: e instanceof MailboxError ? e.message : 'cannot reach the mailbox' };
@@ -108,7 +118,7 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
   const finish = async (m: VerifiedMail, key: string, uid: number, tries: number, unverifiedKey?: string) => {
     done.add(key);
     const where = { ...m.content, uidValidity: box.uidValidity, uid };
-    let parsed = await parse(m, address, pdfText);
+    let parsed = await parse(m, address, pdfText, rulesOf(m.auth.connector));
     if (!parsed && tries + 1 < PDF_TRIES) {
       row(key, { kind: 'pending_pdf', parsedJson: JSON.stringify({ ...where, tries: tries + 1 }), authJson: JSON.stringify(m.auth), accepted: 1 });
       return;
@@ -147,7 +157,7 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
       const raw = await box.source(uid, MAIL_LIMITS.message);
       // Gone from the mailbox (moved or deleted: a UID is never used again under the same UIDVALIDITY), for good.
       if (!raw) { refused(r, tries, 'it is no longer in the mailbox', true); continue; }
-      const opened = await openVerified(raw, { arcSealers: cfg.arcSealers, recipients, resolver: deps.resolver, address });
+      const opened = await openVerified(raw, { shops, arcSealers: cfg.arcSealers, recipients, resolver: deps.resolver, address });
       if (!opened.ok) { refused(r, tries, `${opened.auth.reason}${opened.unreadable ? `; ${opened.unreadable}` : ''}`, tries + 1 >= PDF_TRIES); continue; }
       if (opened.mail.auth.messageId !== r.messageId) { refused(r, tries, 'another mail is at its place in the mailbox', true); continue; }
       await finish(opened.mail, r.messageId, uid, tries);
@@ -178,7 +188,7 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
         record({ kind: 'unread', parsedJson: null, authJson: JSON.stringify({ accepted: false, reason: 'larger than 25 MB, not read' }), accepted: 0 });
         notVerified++; advance(m.uid); continue;
       }
-      const opened = await openVerified(raw, { arcSealers: cfg.arcSealers, recipients, resolver: deps.resolver, address });
+      const opened = await openVerified(raw, { shops, arcSealers: cfg.arcSealers, recipients, resolver: deps.resolver, address });
       if (!opened.ok) {
         const unreadable = opened.unreadable ? { kind: 'unreadable', authJson: JSON.stringify({ ...opened.auth, accepted: false, reason: `${opened.auth.reason}; ${opened.unreadable}` }) } : { kind: 'not_verified', authJson: JSON.stringify(opened.auth) };
         record({ ...unreadable, parsedJson: null, accepted: 0 });
