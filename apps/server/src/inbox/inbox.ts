@@ -6,12 +6,13 @@
 //   that matched no book (notBook lines, toys and games, too), the mail that failed closed or waits for the media
 //   worker, and the mail that was not verified, of which the Inbox shows Shelf's reason and the day only (none of its
 //   content is kept, contracts/connectors.md).
-// - AI suggestions arrive with M3 g.
+// - AI suggestions (M3 g) are their person's alone, like shares: suggestNext's runs for that person, each checked again
+//   against its schema when read; adding one puts it in your own backlog (origin ai), never a kid's or another adult's.
 //
 // Everything shown is data, sent as JSON and rendered as text: no field is ever HTML. Deciding a book is recorded once
 // (inbox_decision); adding acts for yourself or a kid, never for another adult (the Backlog's rule).
 import { createHash } from 'node:crypto';
-import { and, count, desc, eq, gt, inArray, lt, lte, max, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, inArray, isNotNull, lt, lte, max, sql } from 'drizzle-orm';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { ulid } from 'ulid';
 import type { components } from '@shelf/contracts/openapi';
@@ -20,7 +21,8 @@ import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
 import { matchBook } from '../mail/effects';
 import { norm } from '../seed/import';
-import { foundBooks, keptFiles, ownShare, type ShareRow } from '../shares/shares';
+import { foundBooks, keptFiles, ownShare, shareAiNote, type ShareRow } from '../shares/shares';
+import { validateAiOutput, type SuggestNextOut } from '@shelf/contracts';
 
 type S = components['schemas'];
 export type InboxItem = S['InboxItem'];
@@ -40,6 +42,23 @@ const MAIL_TITLE: Record<string, string> = { invoice: 'Invoice', bookshop_quote:
 
 export const mailItemId = (key: string) => `m_${createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 32)}`;
 export const shareItemId = (id: string) => `s_${id}`;
+export const aiItemId = (runId: string) => `a_${runId}`;
+type AiRow = typeof t.aiRun.$inferSelect;
+
+/** A suggestNext run's suggestions, as untrusted data: valid against the contract, or none. */
+function suggestions(r: Pick<AiRow, 'outputJson'>): SuggestNextOut['suggestions'] {
+  let o: unknown;
+  try { o = JSON.parse(r.outputJson ?? 'null'); } catch { return []; }
+  return validateAiOutput('suggestNext', o).ok ? (o as SuggestNextOut).suggestions : [];
+}
+
+function aiItem(r: AiRow, decided: Map<number, string> | undefined): InboxItem | null {
+  const found = suggestions(r).flatMap((x, index): Found[] => (decided?.has(index) ? [] : [{
+    index, title: x.title, author: x.author, verdict: 'add', idea: x.idea, why: x.why, move: x.move, decided: null,
+  }]));
+  if (!found.length) return null;
+  return { id: aiItemId(r.id), kind: 'ai_suggestion', title: `Suggested for you: ${found.length} book${found.length === 1 ? '' : 's'}`, createdAt: r.startedAt, found };
+}
 
 type MailRow = typeof t.mailSeen.$inferSelect;
 interface Line { bookId?: string | null; title?: unknown; author?: unknown; ean?: unknown; notBook?: unknown; eanUnreadable?: unknown; qty?: unknown; priceC?: unknown; totalC?: unknown }
@@ -68,7 +87,7 @@ function shareItem(db: Db, s: ShareRow, decided: Map<number, string> | undefined
     id: shareItemId(s.id), kind: 'share', ...(by ? { by: view(db, by) } : {}),
     title: s.title ?? (s.url ? new URL(s.url).hostname : s.mediaTotal ? `${s.mediaTotal} file${s.mediaTotal === 1 ? '' : 's'}` : 'A note'),
     createdAt: s.createdAt, mediaCount: kept,
-    share: { status: s.status, progress: { done: Math.min(s.mediaTotal, files + s.mediaRefused), total: s.mediaTotal }, refused: s.mediaRefused, url: s.url, note: s.note ?? s.caption },
+    share: { status: s.status, progress: { done: Math.min(s.mediaTotal, files + s.mediaRefused), total: s.mediaTotal }, refused: s.mediaRefused, url: s.url, note: s.note ?? s.caption, aiNote: shareAiNote(s) },
     found,
   };
 }
@@ -108,23 +127,23 @@ export const PAGE = { default: 50, max: 100, scan: 2000, batch: 200 } as const;
 /** The one item that stands for every unverified mail since it was last dismissed. */
 export const UNVERIFIED_ID = 'm_unverified';
 
-interface Pos { at: string; tag: 'm' | 's'; key: string }
+interface Pos { at: string; tag: 'a' | 'm' | 's'; key: string }
 const encode = (p: Pos) => Buffer.from(JSON.stringify([p.at, p.tag, p.key])).toString('base64url');
 export function parseCursor(v: unknown): Pos | null {
   if (typeof v !== 'string' || v.length > 600) return null;
   try {
     const a = JSON.parse(Buffer.from(v, 'base64url').toString('utf8')) as unknown;
-    if (Array.isArray(a) && a.length === 3 && typeof a[0] === 'string' && (a[1] === 'm' || a[1] === 's') && typeof a[2] === 'string') return { at: a[0], tag: a[1], key: a[2] };
+    if (Array.isArray(a) && a.length === 3 && typeof a[0] === 'string' && (a[1] === 'a' || a[1] === 'm' || a[1] === 's') && typeof a[2] === 'string') return { at: a[0], tag: a[1], key: a[2] };
   } catch { /* not a cursor */ }
   return null;
 }
 const before = (a: Pos, b: Pos) => a.at < b.at || (a.at === b.at && (a.tag < b.tag || (a.tag === b.tag && a.key < b.key)));
 
 /** Rows of one source after `after` (in the Inbox's order: newest first), a batch at a time. */
-type Source = { tag: 'm' | 's'; read: (after: Pos | null) => { pos: Pos; item: () => InboxItem | null }[]; done: boolean; buf: { pos: Pos; item: () => InboxItem | null }[]; last: Pos | null };
+type Source = { tag: 'a' | 'm' | 's'; read: (after: Pos | null) => { pos: Pos; item: () => InboxItem | null }[]; done: boolean; buf: { pos: Pos; item: () => InboxItem | null }[]; last: Pos | null };
 
 /** The condition "(at, key) comes after the cursor" for a source with this tag (the cursor names any source). */
-function after(at: AnySQLiteColumn, key: AnySQLiteColumn, tag: 'm' | 's', c: Pos | null) {
+function after(at: AnySQLiteColumn, key: AnySQLiteColumn, tag: 'a' | 'm' | 's', c: Pos | null) {
   if (!c) return undefined;
   if (tag < c.tag) return lte(at, c.at);
   if (tag > c.tag) return lt(at, c.at);
@@ -173,6 +192,17 @@ export function listInbox(db: Db, me: string, filter: Filter = 'all', o: { curso
       } }));
     } });
   }
+  if (filter === 'all' || filter === 'ai') {
+    sources.push({ tag: 'a', done: false, buf: [], last: null, read: (c) => {
+      const rows = db.select().from(t.aiRun).where(and(eq(t.aiRun.job, 'suggestNext'), eq(t.aiRun.personId, me), isNotNull(t.aiRun.outputJson), after(t.aiRun.startedAt, t.aiRun.id, 'a', c)))
+        .orderBy(desc(t.aiRun.startedAt), desc(t.aiRun.id)).limit(PAGE.batch).all();
+      const d = decisions(db, rows.map((r) => aiItemId(r.id)));
+      return rows.map((r) => ({ pos: { at: r.startedAt, tag: 'a' as const, key: r.id }, item: () => {
+        const dd = d.get(aiItemId(r.id));
+        return dd?.has(-1) ? null : aiItem(r, dd);
+      } }));
+    } });
+  }
   if (filter === 'all' || filter === 'mail') {
     if (!cursor) { const u = unverifiedItem(db); if (u) items.push(u); }
     sources.push({ tag: 'm', done: false, buf: [], last: null, read: (c) => {
@@ -209,8 +239,12 @@ export function listInbox(db: Db, me: string, filter: Filter = 'all', o: { curso
 }
 
 /** The item `id` names, as `me` may see it; else 404 (another adult's share included). */
-function resolve(db: Db, me: string, id: string): { kind: 'share'; share: ShareRow } | { kind: 'mail'; row: MailRow } {
-  if (/^s_[0-9A-HJKMNP-TV-Z]{26}$/.test(id)) {
+function resolve(db: Db, me: string, id: string): { kind: 'share'; share: ShareRow } | { kind: 'mail'; row: MailRow } | { kind: 'ai'; run: AiRow } {
+  if (/^a_[0-9A-HJKMNP-TV-Z]{26}$/.test(id)) {
+    // Only your own suggestions: another adult's are not there for you.
+    const run = db.select().from(t.aiRun).where(and(eq(t.aiRun.id, id.slice(2)), eq(t.aiRun.job, 'suggestNext'), eq(t.aiRun.personId, me), isNotNull(t.aiRun.outputJson))).get();
+    if (run) return { kind: 'ai', run };
+  } else if (/^s_[0-9A-HJKMNP-TV-Z]{26}$/.test(id)) {
     const share = ownShare(db, me, id.slice(2));
     if (share) return { kind: 'share', share };
   } else if (/^m_[0-9a-f]{32}$/.test(id)) {
@@ -226,6 +260,7 @@ function itemNow(db: Db, me: string, id: string): InboxItem {
   const it = resolve(db, me, id);
   const dd = decisions(db, [id]).get(id);
   if (it.kind === 'share') return shareItem(db, it.share, dd);
+  if (it.kind === 'ai') return aiItem(it.run, dd) ?? { id, kind: 'ai_suggestion', title: 'Suggested for you', createdAt: it.run.startedAt, found: [] };
   return mailItem(it.row, dd) ?? { id, kind: LINES[it.row.kind] ?? 'mail_failed', title: MAIL_TITLE[it.row.kind] ?? 'A bookshop mail', createdAt: it.row.seenAt, found: [] };
 }
 
@@ -242,10 +277,18 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
 
   let book: { title: string | null; author: string | null; ean: string | null; notBook?: boolean; eanUnreadable?: boolean; invoice?: { qty: number; unitC: number; totalC: number; date: string | null } } | undefined;
   let shareId: string | null = null;
-  if (it.kind === 'share') {
+  let origin: 'share' | 'manual' | 'ai' = 'manual';
+  if (it.kind === 'ai') {
+    const x = suggestions(it.run)[index];
+    if (x) book = { title: x.title, author: x.author, ean: null };
+    // A suggestion grows its person's brain: for them, never for a kid (or another adult).
+    if (b.for !== undefined && b.for !== 'me' && b.action === 'add') throw new InboxError(400, 'a suggestion is for yourself: add it without for');
+    origin = 'ai';
+  } else if (it.kind === 'share') {
     const f = foundBooks(it.share)[index];
     if (f) book = { title: f.title, author: f.author, ean: null };
     shareId = it.share.id;
+    origin = 'share';
   } else {
     const p = json(it.row.parsedJson);
     const l = LINES[it.row.kind] && Array.isArray(p.lines) ? (p.lines as Line[])[index] : undefined;
@@ -294,7 +337,7 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
       if (forWho) tx.insert(t.reading).values({ personId: target.id, bookId, status: 'to_read', updatedAt: iso }).onConflictDoNothing().run();
     } else {
       // Already in that backlog: added all the same.
-      tx.insert(t.candidate).values({ personId: target.id, bookId, origin: shareId ? 'share' : 'manual', shareId, addedAt: iso, touchedAt: iso }).onConflictDoNothing().run();
+      tx.insert(t.candidate).values({ personId: target.id, bookId, origin, shareId, addedAt: iso, touchedAt: iso }).onConflictDoNothing().run();
     }
     record(tx, 'added', bookId);
   });

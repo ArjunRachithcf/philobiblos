@@ -10,10 +10,11 @@ import { closeInterrupted, startJob } from '../jobs/run';
 import type { Egress } from '../net/egress';
 import { refreshMail, type MailDeps } from '../mail/job';
 import type { ShareProcessor } from '../shares/shares';
+import type { AiJobs } from '../ai/jobs';
 
-export const JOBS = ['monthly', 'mail', 'shares', 'prices', 'metadata', 'covers', 'ai_suggest'] as const;
+export const JOBS = ['monthly', 'mail', 'shares', 'prices', 'metadata', 'covers', 'ai_suggest', 'ai_tag', 'ai_explain'] as const;
 
-export interface JobDeps { egress: Egress; shares?: ShareProcessor; prices?: PriceSource; env?: JobEnv; mail?: MailDeps; started?: (job: string, done: Promise<void>) => void }
+export interface JobDeps { egress: Egress; shares?: ShareProcessor; ai?: AiJobs; prices?: PriceSource; env?: JobEnv; mail?: MailDeps; started?: (job: string, done: Promise<void>) => void }
 
 export async function jobRoutes(app: FastifyInstance, cfg: Config, db: Db, deps: JobDeps) {
   closeInterrupted(db);
@@ -23,6 +24,8 @@ export async function jobRoutes(app: FastifyInstance, cfg: Config, db: Db, deps:
     covers: () => refreshCovers(db, deps.egress, { dataDir: cfg.dataDir, workDir: cfg.workDir }, deps.env),
     mail: () => refreshMail(db, cfg, deps.mail),
     ...(deps.shares ? { shares: () => deps.shares!.kick() } : {}),
+    // The AI's jobs (ai/jobs.ts): each through its provider's own client, never this one.
+    ...(deps.ai ? { ai_suggest: () => deps.ai!.suggest(), ai_tag: () => deps.ai!.tagBooks(), ai_explain: () => deps.ai!.explain() } : {}),
   };
   app.post<{ Params: { job: string }; Querystring: { again?: string } }>('/jobs/:job/run', async (req, reply) => {
     if (!requireAdmin(req, reply)) return reply;

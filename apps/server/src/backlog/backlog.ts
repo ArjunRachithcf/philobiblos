@@ -1,7 +1,7 @@
 // The Backlog (spec §4): every candidate of the household, scored by packages/scoring (spec §6; the AI never sets a
 // score, ADR 0004), filtered by the query language of contracts/backlog-query.md (parsed by packages/contracts),
 // sorted, counted per tab and per facet. The backlog is shared by design (docs/security.md): every adult sees it.
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { parseQuery, type ParsedQuery, type Term } from '@shelf/contracts';
 import type { components } from '@shelf/contracts/openapi';
 import { scoreAdult, scoreKid, type Layer, type ScorePart } from '@shelf/scoring';
@@ -50,7 +50,8 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
     if (o.priceC != null && (!offers.has(o.bookId) || o.priceC < offers.get(o.bookId)!)) offers.set(o.bookId, o.priceC);
   }
   const owned = new Set(db.selectDistinct({ id: t.copy.bookId }).from(t.copy).all().map((r) => r.id));
-  const repeats = new Set(db.select({ id: t.redundancy.bookId }).from(t.redundancy).all().map((r) => r.id));
+  // A repeat counts once a person confirmed it: the AI's (checkRedundant) are proposals, and close nothing by themselves.
+  const repeats = new Set(db.select({ id: t.redundancy.bookId }).from(t.redundancy).where(eq(t.redundancy.state, 'confirmed')).all().map((r) => r.id));
   const sharers = new Map(db.select({ id: t.share.id, personId: t.share.personId }).from(t.share).all().map((s) => [s.id, s.personId]));
 
   // Ideas with their layer, for candidates and for read books (main idea = the first counted one).

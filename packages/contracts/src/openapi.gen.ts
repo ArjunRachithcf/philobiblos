@@ -582,7 +582,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What waits for a person: their own shares (and AI suggestions, M3 g), and the household's mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (one item for all of it: a count and the commonest reasons, nothing of any content). Decided and dismissed items drop out. Paged. */
+        /** What waits for a person: their own shares and AI suggestions (each person's own), and the household's mail that needs a person: lines that matched no book (notBook lines too), mail that failed closed or waits for the media worker, and mail that was not verified (one item for all of it: a count and the commonest reasons, nothing of any content). Decided and dismissed items drop out. Paged. */
         get: operations["getInbox"];
         put?: never;
         post?: never;
@@ -758,7 +758,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos) run now in the background (job_run keeps how it went); the others arrive with their slices and change nothing yet. */
+        /** @description Admins only. prices, metadata, covers, mail and shares (the media worker's queue of shared images and videos, then the AI reading them) run now in the background (job_run keeps how it went); ai_suggest (suggestions to each adult's Inbox), ai_tag (ideas, links and repeats proposed for backlog books without ideas) and ai_explain (the why of this month's kept picks) run through the AI provider in Settings; monthly arrives with its slice and changes nothing yet. */
         post: operations["runJob"];
         delete?: never;
         options?: never;
@@ -1044,6 +1044,8 @@ export interface components {
                 refused?: number;
                 url?: string | null;
                 note?: string | null;
+                /** @description what the AI could not read of it (images without a vision model, or nothing), Shelf's words */
+                aiNote?: string | null;
             };
             /** @description kind mail_unverified: every unverified mail since the item was last dismissed */
             unverified?: {
@@ -1080,6 +1082,9 @@ export interface components {
                 layer?: string;
                 theme?: string;
                 buildsOn?: string[];
+                /** @description kind ai_suggestion: the AI's one line, plain text */
+                why?: string;
+                move?: components["schemas"]["Move"];
                 /** @enum {unknown} */
                 decided: "added" | "skipped" | null;
             }[];
@@ -3249,7 +3254,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                job: "monthly" | "mail" | "shares" | "prices" | "metadata" | "covers" | "ai_suggest";
+                job: "monthly" | "mail" | "shares" | "prices" | "metadata" | "covers" | "ai_suggest" | "ai_tag" | "ai_explain";
             };
             cookie?: never;
         };
