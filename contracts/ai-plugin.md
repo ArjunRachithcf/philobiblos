@@ -63,3 +63,11 @@ them on, below), to `api.anthropic.com` only. Turning Claude on is an admin's re
 key is sealed like the delivery address and never answered back. A person's takeaways reach no AI, Ollama included, unless that person turns on `takeawaysToAi` (off by
 default; `apps/server/src/library/ai-context.ts` is the one place that hands them out). Settings shows
 this list (`Settings.ai.leaves`) before the opt-in and while Claude is on. Names of people and kids never leave.
+
+**Where the output goes** (`apps/server/src/ai/jobs.ts`): `extractTitles` → the share's found books (the Inbox offers
+them; without a vision model, the caption only, and the Inbox says so); `tagBook` → proposed book ideas (adults' books;
+kids' themes and a book's audience or fiction flag are not written yet); `proposeLinks` → proposed links through
+`knowledge/from-run.ts`; `checkRedundant` → a proposed `redundancy`, counted only once confirmed; `suggestNext` → the
+person's own Inbox (`ai_suggestion`); `explainPick` → `order_line.why` of the kept plan. Admins run them as
+`ai_suggest`, `ai_tag` and `ai_explain` (`POST /jobs/{job}/run`); shares are read after the media worker.
+
