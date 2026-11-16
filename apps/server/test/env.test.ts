@@ -54,6 +54,44 @@ describe('SHELF_* (until 0.2.0)', () => {
     expect(resolveEnv({}, () => {}).PHILOBIBLOS_DATA_DIR).toBeUndefined();
   });
 
+  it('an empty new name is no value: the old database file still wins, never an in-memory database', () => {
+    expect(loadConfig({ SHELF_DB_FILE: '/srv/d/shelf.sqlite', PHILOBIBLOS_DB_FILE: '' }).dbFile).toBe('/srv/d/shelf.sqlite');
+    expect(() => loadConfig({ PHILOBIBLOS_DB_FILE: '' })).toThrow(/PHILOBIBLOS_DB_FILE is set but empty/);
+  });
+
+  it('an empty new name is no value: the old data folder still wins, never the working folder', () => {
+    expect(loadConfig({ SHELF_DATA_DIR: '/srv/d', PHILOBIBLOS_DATA_DIR: '' })).toMatchObject({ dataDir: '/srv/d', dbFile: '/srv/d/shelf.sqlite' });
+    expect(loadConfig({ SHELF_DATA_DIR: '/srv/d', PHILOBIBLOS_DATA_DIR: '', PHILOBIBLOS_IN_IMAGE: '1' }).dataDir).toBe('/srv/d');
+    // in the image an empty one is the image's folder; outside it, refused
+    expect(loadConfig({ PHILOBIBLOS_DATA_DIR: '', PHILOBIBLOS_IN_IMAGE: '1' })).toMatchObject({ dataDir: '/data', webDir: '/app/web' });
+    expect(() => loadConfig({ PHILOBIBLOS_DATA_DIR: '' })).toThrow(/PHILOBIBLOS_DATA_DIR is set but empty/);
+    expect(() => loadConfig({ PHILOBIBLOS_KEYS_DIR: '' })).toThrow(/PHILOBIBLOS_KEYS_DIR is set but empty/);
+  });
+
+  it('an empty new name is no value: the old sealing key is still the key, never a new one minted', () => {
+    expect(loadConfig({ SHELF_SEALING_KEY: SECRET, PHILOBIBLOS_SEALING_KEY: '' }).sealingKey).toEqual({ value: SECRET });
+    expect(loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_ORIGIN: 'https://b.example.org', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '10.0.0.2', SHELF_SEALING_KEY: SECRET, PHILOBIBLOS_SEALING_KEY: '' }).sealingKey).toEqual({ value: SECRET });
+  });
+
+  it('an empty old name is no value either: nothing is read from it, and no warning', () => {
+    const said: string[] = [];
+    expect(resolveEnv({ SHELF_DATA_DIR: '', PHILOBIBLOS_IN_IMAGE: '1' }, (m) => said.push(m)).PHILOBIBLOS_DATA_DIR).toBe('/data');
+    expect(said).toEqual([]);
+  });
+
+  it('one setting, one generation: a new name of a setting set, its other old names are ignored', () => {
+    const said: string[] = [];
+    const cfg = loadConfig({ SHELF_DB_FILE: '/srv/old/shelf.sqlite', PHILOBIBLOS_DATA_DIR: '/srv/new' });
+    expect(cfg).toMatchObject({ dataDir: '/srv/new', dbFile: '/srv/new/shelf.sqlite' });
+    resetLegacyEnvWarning();
+    expect(resolveEnv({ SHELF_SEALING_KEY: SECRET, PHILOBIBLOS_SEALING_KEY_FILE: '/run/secrets/k' }, (m) => said.push(m)).PHILOBIBLOS_SEALING_KEY).toBeUndefined();
+    expect(loadConfig({ SHELF_SEALING_KEY: SECRET, PHILOBIBLOS_SEALING_KEY_FILE: '/run/secrets/k' }).sealingKey).toEqual({ file: '/run/secrets/k', create: false });
+    expect(said[0]).toMatch(/ignored SHELF_SEALING_KEY \(a PHILOBIBLOS_\* name of the same setting is set/);
+    expect(resolveEnv({ SHELF_IMAP_PASSWORD: 'x-imap-pw', PHILOBIBLOS_IMAP_PASSWORD_FILE: '/run/secrets/p' }, () => {}).PHILOBIBLOS_IMAP_PASSWORD).toBeUndefined();
+    // the other names of the setting, old, still count when no new one is set
+    expect(loadConfig({ SHELF_DB_FILE: '/srv/old/x.sqlite', SHELF_DATA_DIR: '/srv/old' })).toMatchObject({ dataDir: '/srv/old', dbFile: '/srv/old/x.sqlite' });
+  });
+
   it('the old names go in 0.2.0: this release still reads them, the next must not', () => {
     const manifest = /^version: (\S+)$/m.exec(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'))![1]!;
     for (const v of [VERSION, manifest]) {

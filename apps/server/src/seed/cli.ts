@@ -26,7 +26,7 @@ if (!existsSync(dir)) {
   process.exit(1);
 }
 const env = resolveEnv();
-const cfg = loadConfig({ ...env, PHILOBIBLOS_DATA_DIR: env.PHILOBIBLOS_DATA_DIR ?? join(root, 'data') });
+const cfg = loadConfig({ ...env, PHILOBIBLOS_DATA_DIR: env.PHILOBIBLOS_DATA_DIR || join(root, 'data') });
 const db = openDb(cfg.dbFile);
 const counts = importSeed(db, dir);
 console.log(JSON.stringify({ folder: dir.startsWith(root) ? dir.slice(root.length + 1) : dir, db: cfg.dbFile, ...counts }, null, 2));

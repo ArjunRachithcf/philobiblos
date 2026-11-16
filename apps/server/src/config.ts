@@ -62,6 +62,8 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
   const env = resolveEnv(given);
   const mode = env.PHILOBIBLOS_MODE ?? 'standalone';
   if (mode !== 'homerslab' && mode !== 'standalone') throw new Error(`PHILOBIBLOS_MODE must be homerslab or standalone, not ${mode}`);
+  // Empty is a mistake, never a place: resolve('') is the working folder, and better-sqlite3 opens '' in memory.
+  for (const k of ['PHILOBIBLOS_DATA_DIR', 'PHILOBIBLOS_DB_FILE', 'PHILOBIBLOS_KEYS_DIR']) if (env[k] === '') throw new Error(`${k} is set but empty: leave it out, or name the folder or file`);
   const dataDir = resolve(env.PHILOBIBLOS_DATA_DIR ?? './data');
   const port = Number(env.PHILOBIBLOS_PORT ?? 8080);
   // Under HomersLab the address is HomersLab's to give; a guess would make every passkey and Origin check wrong.

@@ -404,6 +404,9 @@ describe('the session cookie\'s old name (until 0.2.0)', () => {
     const alex = createSession(hh, 'p_alex').token, sam = createSession(hh, 'p_sam').token;
     const res = await a.app.inject({ url: '/api/me', headers: { cookie: `shelf_session=${alex}; philobiblos_session=${sam}` } });
     expect(res.json()).toMatchObject({ person: { id: 'p_sam' } });
+    // the old one is cleared even so, and its session is not touched by being read
+    expect(setCookie(res).some((c) => /^shelf_session=;/.test(c))).toBe(true);
+    expect(res.cookies.find((c) => c.name === 'philobiblos_session')).toBeUndefined();
     // a dead new cookie does not fall back to a live old one
     const dead = await a.app.inject({ url: '/api/me', headers: { cookie: `shelf_session=${alex}; philobiblos_session=${'B'.repeat(43)}` } });
     expect(dead.statusCode).toBe(401);

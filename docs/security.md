@@ -110,13 +110,18 @@ it, and `apps/server/test/env.test.ts` fails once the version says 0.2):
 
 - **Settings**: a `SHELF_*` variable is read as its `PHILOBIBLOS_*` name (`packages/contracts/src/env.ts`), with one
   warning per process that names the variables and never their values; when both are set the `PHILOBIBLOS_*` one wins
-  and the warning says the other was ignored. docker-compose.yml reads a `.env`'s `SHELF_*` the same way. The image's
+  and the warning says the other was ignored. An empty value counts as unset, so it never hides an old name or an
+  image default, and an empty `PHILOBIBLOS_DATA_DIR`, `PHILOBIBLOS_DB_FILE` or `PHILOBIBLOS_KEYS_DIR` is refused
+  (`''` would be the working folder or an in-memory database). The names that set one thing together are one setting
+  (the data folder and database file, the sealing key and its file, the IMAP password and its file): once a new name of
+  a setting is set, its old names are all ignored, so old and new never mix. docker-compose.yml reads a `.env`'s `SHELF_*` the same way. The image's
   defaults (`/data`, `/keys`, `/work`, `0.0.0.0:8080`) are applied after the old names, never as the Dockerfile's `ENV`:
   an `ENV PHILOBIBLOS_DATA_DIR=/data` would win over a household's `SHELF_DATA_DIR` and open an empty database elsewhere.
 - **Session cookie**: `shelf_session` is still read when `philobiblos_session` is absent (never when it is there, even
   dead), with the same check (its SHA-256 must be a live session row). The first request that brings it gets
   `philobiblos_session` with the same token, the same attributes and only what is left of the session, and
-  `shelf_session` cleared; sign-in and sign-out end and clear both. Nobody is signed out by the upgrade, and no session
+  `shelf_session` cleared (it is cleared whenever it comes, also next to the new one); sign-in and sign-out end and
+  clear both. Nobody is signed out by the upgrade, and no session
   lives longer than it would have.
 - **Passkeys**: the WebAuthn RP name is now Philobiblos; the RP ID is still the origin's host, which is what a passkey is
   bound to, so every passkey keeps working at the same address.

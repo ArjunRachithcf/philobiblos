@@ -6,13 +6,14 @@ import { LEGACY_SESSION_COOKIE, SESSION_COOKIE, cookieOptions, endSession, liveS
 
 /**
  * The live session the request's cookie names, or null. A request that brought only the old cookie gets the new one
- * (the same token, for what is left of the session) and the old one cleared, whether or not it was still alive.
+ * (the same token, for what is left of the session); the old one is cleared whenever it comes, alive or not, alone or not.
  */
 export function requestSession(db: Db, req: FastifyRequest, reply: FastifyReply, now = new Date()): Session | null {
   const { token, legacy } = sessionToken(req.cookies);
   const s = liveSession(db, token, now);
+  // the old name is cleared whenever it comes, also next to the new one (which is then the one read)
+  if (req.cookies?.[LEGACY_SESSION_COOKIE] !== undefined) void reply.clearCookie(LEGACY_SESSION_COOKIE, { path: '/' });
   if (legacy) {
-    void reply.clearCookie(LEGACY_SESSION_COOKIE, { path: '/' });
     const left = s ? Math.floor((new Date(s.expiresAt).getTime() - now.getTime()) / 1000) : 0;
     if (s && token && left > 0) void reply.setCookie(SESSION_COOKIE, token, cookieOptions(left));
   }
