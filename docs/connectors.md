@@ -42,6 +42,17 @@ the connector is enabled, checked at each request; HomersLab does not yet enforc
 The example that ships, **Quillmere Books** (`connectors/quillmere/`), is invented: its domain is under `.example`, so
 enabling it changes nothing real. It is the template for a real shop.
 
+## Without a connector
+
+A shop whose mail Philobiblos does not read (no connector, or no mail at all) still works: on **This month**, *Record a
+quote or an invoice* takes what the shop answered for the month's order (prices, books it cannot deliver) once the order
+was composed, or an invoice of what was bought, typed a book a row or imported as a CSV (any shop's export, or one you
+write: a header row with `isbn`, `title`, `author`, `qty`, `price`, `available`, `for`; other columns are left out).
+**Check** shows which book each row names and which are new before anything changes; **Record** has the effects the
+shop's mail would have had: copies owned, the order's lines quoted or delivered. An invoice names its shop (an enabled
+connector, or your own name for another shop), and its number counts once for that shop, whether typed, imported or
+read from that connector's mail. Save a CSV as UTF-8 ("CSV UTF-8" in a spreadsheet): another encoding is refused. The rules are in `contracts/connectors.md` ("Typed in or imported").
+
 ## Upgrading from M3
 
 Before M4, one bookshop was built into Philobiblos, with its mail domains, its price host and a default ARC sealer for

@@ -1,5 +1,6 @@
 // This month and its order (spec §4, §5; ADR 0007). Every adult sees the plan and may change their own picks and the
-// kids'; the one-month budget is admins' (like the budget itself); Compose is any adult's. The rules are in src/month/.
+// kids'; the one-month budget is admins' (like the budget itself); Compose is any adult's, and so is an order's quote or an
+// invoice typed in or imported (src/orders/entries.ts). The rules are in src/month/ and src/orders/.
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { requireAdmin } from '../auth/hook';
 import type { Config } from '../config';
@@ -7,13 +8,14 @@ import type { Db } from '../db/open';
 import { SealError, isSealed, keyProblem, sealingKey, unseal } from '../household/sealed';
 import { enabledConnectors, orderAddress } from '../connectors/enabled';
 import type { Registry } from '../connectors/load';
+import { EntryError, recordEntry } from '../orders/entries';
 import { MonthError, changePicks, checkWindow, composeOrder, getMonth, getOrder, setMonthBudget, thisMonth } from '../month/plan';
 
 export const SEALED = { bookshopEmail: 'bookshop_email', deliveryAddress: 'delivery_address' } as const;
 
 export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, connectors: Registry) {
   const fail = (reply: FastifyReply, e: unknown) => {
-    if (e instanceof MonthError) return reply.code(e.status).send({ error: e.message });
+    if (e instanceof MonthError || e instanceof EntryError) return reply.code(e.status).send({ error: e.message });
     if (e instanceof SealError) return reply.code(409).send({ error: 'the addresses were sealed with another key: an admin enters them again in Settings' });
     throw e;
   };
@@ -44,6 +46,15 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, con
       const open = (name: string) => (isSealed(db, name) ? unseal(db, sealingKey(cfg), name) : null);
       const places = { bookshopEmail: orderAddress(open(SEALED.bookshopEmail), enabledConnectors(db, connectors)), deliveryAddress: open(SEALED.deliveryAddress) };
       return reply.code(201).send(composeOrder(db, month, req.caller!.personId, places));
+    } catch (e) { return fail(reply, e); }
+  });
+  // The shops an invoice may name by their connector (the enabled ones in force): any adult, ids and names only.
+  app.get('/orders/shops', async () => ({ shops: enabledConnectors(db, connectors).map((c) => ({ id: c.id, name: c.connector.name })) }));
+  // A quote or an invoice typed in or imported from a CSV: recorded (201), or what it would do (dryRun, 200).
+  app.post('/orders/entries', async (req, reply) => {
+    try {
+      const r = recordEntry(db, req.caller!.personId, req.body, new Date(), enabledConnectors(db, connectors).map((c) => c.id));
+      return reply.code(r.dryRun ? 200 : 201).send(r);
     } catch (e) { return fail(reply, e); }
   });
   app.get<{ Params: { id: string } }>('/orders/:id', async (req, reply) => {

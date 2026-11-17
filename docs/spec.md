@@ -97,7 +97,9 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
    Each month starts at the set budget (or its one-month override): unspent money does not roll over.
 5. A push notification goes to adults. They adjust, then **Compose**: their own mail app opens with the order filled in.
 6. Philobiblos reads the bookshop's reply (quote with prices and delivery), updates the total and marks missing books;
-   they roll over to next month's order. The invoice turns order lines into copies.
+   they roll over to next month's order. The invoice turns order lines into copies. A shop Philobiblos reads no mail
+   from, or none: the quote or the invoice is typed in or imported as a CSV on This month (philobiblos#27), with the
+   same effects.
 
 ## 6. Scoring (pure, deterministic; the AI never sets scores)
 
@@ -161,7 +163,8 @@ Bookshops are connectors, data an admin enables (philobiblos#27, `docs/connector
 with IMAP. Mail (the bookshop's mail forwarded to a Philobiblos-only mailbox, read over IMAP; Compose links instead of
 drafts), price lookup (an enabled connector's search page, read-only, best effort), metadata (Open Library,
 cached; ISBNs and titles only, listed under what leaves, an admin can turn it off), phone share, manual add, imports
-(Goodreads, StoryGraph, generic CSV, pasted). Optional outgoing SMTP, off by default, sends one thing only: a join
+(Goodreads, StoryGraph, generic CSV, pasted), and an order's quote or an invoice typed in or imported as a CSV (any shop,
+or none). Optional outgoing SMTP, off by default, sends one thing only: a join
 rule's 6-digit code (ADR 0011). A book can be ordered from the bookshop by email, so web availability never blocks a
 pick.
 
