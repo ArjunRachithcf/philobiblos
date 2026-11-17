@@ -145,10 +145,18 @@ effects of the mail of its kind in the table above, on the same records, and not
   (`books/isbn.ts`); another product's EAN, or a typo, is refused with its row.
 - **Text** (title, author, the number) is NFKC with format characters stripped, and refused with a control character
   or line break, past its length, or holding a run of 12 or more digits (`safeField`'s rule: a card or account number).
-- **An invoice number** (letters, digits, spaces and `. / _ -`, at most 40; its case does not count) counts once: one typed or imported before,
-  or one a verified mail brought (any connector's), is refused (409); a mail bringing a number typed before is read and
-  counts nothing (`duplicateOf: entry:<id>`). Without a number, an invoice is recorded each time.
-- **Kept** (`order_entry`): the kind, how it came (`typed`, `csv`), the number, the quote's order, who recorded it, the
+- **An invoice number** (letters, digits, spaces and `. / _ -`, at most 40) counts once **per shop**, whatever its case:
+  an invoice names its `shop`, an enabled connector's id (`GET /orders/shops`) or the household's own label for a shop
+  without one (at most 80 characters; none is a shop of its own). The same shop's number again, typed or imported, is
+  refused (409; the unique index `order_entry_number` holds the rule too); so is a number the connector's own verified
+  mail brought. A connector's mail bringing a number typed for that connector is read and counts nothing
+  (`duplicateOf: entry:<id>`). A number typed for another shop, a label, or none never touches a connector's mail: two
+  shops may number their invoices alike, as mail against mail already allows. Without a number, an invoice is recorded
+  each time.
+- **Text that could not be decoded** (U+FFFD, what a decoder writes for a file saved in another encoding than UTF-8) is
+  refused in every field and in the header: such words would match no book and add a broken one. The page decodes a
+  file strictly as UTF-8 and says how to save it again.
+- **Kept** (`order_entry`): the kind, how it came (`typed`, `csv`), the number and the shop, the quote's order, who recorded it, the
   total and each row's book id, copies, price and availability; never the text typed or the file.
 - Amounts are the household's currency's (Settings): with none chosen yet, nothing is recorded (409). Everything is
   checked before anything changes, in one transaction; `dryRun: true` applies it and rolls it back, so it answers

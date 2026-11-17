@@ -251,15 +251,17 @@ CREATE TABLE order_entry (
   id          TEXT PRIMARY KEY NOT NULL,
   kind        TEXT NOT NULL CHECK (kind IN ('quote','invoice')),
   source      TEXT NOT NULL CHECK (source IN ('typed','csv')),
-  number      TEXT,                        -- an invoice's number, counted once (a quote has none)
+  number      TEXT,                        -- an invoice's number, counted once per shop (a quote has none)
+  shop        TEXT NOT NULL DEFAULT '',    -- an invoice's shop: an enabled connector's id, or the household's label ('': none)
   order_id    TEXT REFERENCES "order"(id), -- a quote's order
   person_id   TEXT REFERENCES person(id) ON DELETE SET NULL, -- who recorded it
   total_c     INTEGER NOT NULL,
   lines_json  TEXT NOT NULL,               -- [{ bookId, qty, priceC, available }]
   created_at  TEXT NOT NULL,
-  CHECK (kind = 'invoice' OR number IS NULL)
+  CHECK (kind = 'invoice' OR number IS NULL),
+  CHECK (kind = 'invoice' OR shop = '')
 );
-CREATE UNIQUE INDEX order_entry_number ON order_entry(number);
+CREATE UNIQUE INDEX order_entry_number ON order_entry(upper(shop), upper(number));
 
 -- Sources ----------------------------------------------------------------
 CREATE TABLE share (

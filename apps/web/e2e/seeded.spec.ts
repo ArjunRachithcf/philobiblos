@@ -519,6 +519,8 @@ test('this month: the shop\'s quote typed in, then an invoice imported as a CSV 
   // The invoice: a CSV with a column it does not read; the book of the order and a new one
   await card.getByRole('radio', { name: 'An invoice' }).click();
   await card.getByRole('radio', { name: 'Import a CSV' }).click();
+  await card.getByLabel('Shop').selectOption({ label: 'Another shop…' });
+  await card.getByLabel('The shop’s name').fill('Corner Books');
   await card.getByLabel('Invoice number (optional)').fill('E2E-1');
   await card.getByLabel('Or paste it').fill(`title;qty;price;shelf\n"${title.replace(/"/g, '""')}";1;21,60;a\nPaper Boats of the Commons;2;9.00;b\n`);
   await card.getByRole('button', { name: 'Check' }).click();
@@ -528,11 +530,13 @@ test('this month: the shop\'s quote typed in, then an invoice imported as a CSV 
   await card.getByRole('button', { name: 'Record the invoice' }).click();
   await expect(card.getByText('Recorded.')).toBeVisible();
   await expect(page.getByRole('listitem').filter({ has: page.getByText('Invoice', { exact: true }) })).toHaveAttribute('aria-current', 'step');
-  // The same number again counts once
-  await card.getByLabel('Invoice number (optional)').fill('E2E-1');
+  // The same shop's number again counts once (in any case)
+  await card.getByLabel('Shop').selectOption({ label: 'Another shop…' });
+  await card.getByLabel('The shop’s name').fill('corner books');
+  await card.getByLabel('Invoice number (optional)').fill('e2e-1');
   await card.getByLabel('Or paste it').fill('title,qty,price\nPaper Boats of the Commons,1,9.00\n');
   await card.getByRole('button', { name: 'Record the invoice' }).click();
-  await expect(card.getByText('invoice E2E-1 is recorded already')).toBeVisible();
+  await expect(card.getByText('invoice e2e-1 from corner books is recorded already')).toBeVisible();
   done();
 });
 

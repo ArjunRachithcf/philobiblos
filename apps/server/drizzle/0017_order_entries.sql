@@ -3,6 +3,7 @@ CREATE TABLE `order_entry` (
 	`kind` text NOT NULL,
 	`source` text NOT NULL,
 	`number` text,
+	`shop` text DEFAULT '' NOT NULL,
 	`order_id` text,
 	`person_id` text,
 	`total_c` integer NOT NULL,
@@ -12,7 +13,8 @@ CREATE TABLE `order_entry` (
 	FOREIGN KEY (`person_id`) REFERENCES `person`(`id`) ON UPDATE no action ON DELETE set null,
 	CONSTRAINT "order_entry_kind" CHECK("order_entry"."kind" IN ('quote','invoice')),
 	CONSTRAINT "order_entry_source" CHECK("order_entry"."source" IN ('typed','csv')),
-	CONSTRAINT "order_entry_number_invoice" CHECK("order_entry"."kind" = 'invoice' OR "order_entry"."number" IS NULL)
+	CONSTRAINT "order_entry_number_invoice" CHECK("order_entry"."kind" = 'invoice' OR "order_entry"."number" IS NULL),
+	CONSTRAINT "order_entry_shop_invoice" CHECK("order_entry"."kind" = 'invoice' OR "order_entry"."shop" = '')
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `order_entry_number` ON `order_entry` (`number`);
+CREATE UNIQUE INDEX `order_entry_number` ON `order_entry` (upper("shop"),upper("number"));

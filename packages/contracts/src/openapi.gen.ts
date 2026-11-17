@@ -838,6 +838,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orders/shops": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Any adult: the enabled bookshop connectors (id and name only) an invoice typed in may name as its shop */
+        get: operations["listOrderShops"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orders/entries": {
         parameters: {
             query?: never;
@@ -847,7 +864,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once, typed, imported or read from mail. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
+        /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop's connector's mail. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
         post: operations["recordOrderEntry"];
         delete?: never;
         options?: never;
@@ -1332,8 +1349,10 @@ export interface components {
             kind: "quote" | "invoice";
             /** @description a quote: the month of the composed order it answers */
             month?: string;
-            /** @description an invoice's number (letters, digits, spaces, . / _ -; no run of 12 digits): counted once */
+            /** @description an invoice's number (letters, digits, spaces, . / _ -; no run of 12 digits): counted once per shop, whatever its case */
             number?: string;
+            /** @description an invoice's shop: an enabled connector's id (GET /orders/shops; its mail of the same number then counts once with this entry), or the household's own label for a shop without one */
+            shop?: string;
             /**
              * Format: date
              * @description an invoice: the day it was bought (today by default)
@@ -1370,6 +1389,7 @@ export interface components {
             /** @description a quote's order */
             orderId?: string;
             number: string | null;
+            shop: string | null;
             total: components["schemas"]["Money"];
             /** @description CSV columns it does not read (their cells never read) */
             ignoredColumns: string[];
@@ -3806,6 +3826,33 @@ export interface operations {
             };
         };
     };
+    listOrderShops: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        shops: {
+                            id: string;
+                            name: string;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     recordOrderEntry: {
         parameters: {
             query?: never;
@@ -3857,7 +3904,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that invoice number counts already */
+            /** @description The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that shop's invoice number counts already */
             409: {
                 headers: {
                     [name: string]: unknown;

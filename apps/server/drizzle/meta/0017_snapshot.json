@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "484e8f3d-0e6f-41c8-a38a-6a1c080ef2ac",
+  "id": "ba0fb4d5-92ac-4fa4-b0da-158e8e81845d",
   "prevId": "5d8127d1-d5cf-4606-ae01-27ba19bf11b6",
   "tables": {
     "ai_run": {
@@ -2189,6 +2189,14 @@
           "notNull": false,
           "autoincrement": false
         },
+        "shop": {
+          "name": "shop",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
         "order_id": {
           "name": "order_id",
           "type": "text",
@@ -2229,7 +2237,8 @@
         "order_entry_number": {
           "name": "order_entry_number",
           "columns": [
-            "number"
+            "upper(\"shop\")",
+            "upper(\"number\")"
           ],
           "isUnique": true
         }
@@ -2276,6 +2285,10 @@
         "order_entry_number_invoice": {
           "name": "order_entry_number_invoice",
           "value": "\"order_entry\".\"kind\" = 'invoice' OR \"order_entry\".\"number\" IS NULL"
+        },
+        "order_entry_shop_invoice": {
+          "name": "order_entry_shop_invoice",
+          "value": "\"order_entry\".\"kind\" = 'invoice' OR \"order_entry\".\"shop\" = ''"
         }
       }
     },
@@ -3284,6 +3297,17 @@
     "columns": {}
   },
   "internal": {
-    "indexes": {}
+    "indexes": {
+      "order_entry_number": {
+        "columns": {
+          "upper(\"shop\")": {
+            "isExpression": true
+          },
+          "upper(\"number\")": {
+            "isExpression": true
+          }
+        }
+      }
+    }
   }
 }

@@ -49,8 +49,9 @@ quote or an invoice* takes what the shop answered for the month's order (prices,
 was composed, or an invoice of what was bought, typed a book a row or imported as a CSV (any shop's export, or one you
 write: a header row with `isbn`, `title`, `author`, `qty`, `price`, `available`, `for`; other columns are left out).
 **Check** shows which book each row names and which are new before anything changes; **Record** has the effects the
-shop's mail would have had: copies owned, the order's lines quoted or delivered. An invoice number counts once, whether
-typed, imported or read from mail. The rules are in `contracts/connectors.md` ("Typed in or imported").
+shop's mail would have had: copies owned, the order's lines quoted or delivered. An invoice names its shop (an enabled
+connector, or your own name for another shop), and its number counts once for that shop, whether typed, imported or
+read from that connector's mail. Save a CSV as UTF-8 ("CSV UTF-8" in a spreadsheet): another encoding is refused. The rules are in `contracts/connectors.md` ("Typed in or imported").
 
 ## Upgrading from M3
 

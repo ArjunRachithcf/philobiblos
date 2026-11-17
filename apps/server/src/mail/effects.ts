@@ -134,13 +134,15 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
   const kept = { parser: p.parser, invoiceNumber: p.invoiceNumber, totalC: p.totalC };
   // The same invoice sent again by the same shop (another Message-ID): read, never counted twice.
   const again = p.invoiceNumber != null && tx.select({ id: t.mailSeen.messageId }).from(t.mailSeen)
-    .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber') = ${p.invoiceNumber}`, sql`${t.mailSeen.messageId} <> ${o.key}`,
+    .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`upper(json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber')) = upper(${p.invoiceNumber})`, sql`${t.mailSeen.messageId} <> ${o.key}`,
       // The same shop's number: two shops may number their invoices alike (a row from before connectors names none: it
       // was the one shop's).
       sql`(json_extract(${t.mailSeen.authJson}, '$.connector') = ${m.auth.connector} OR json_extract(${t.mailSeen.authJson}, '$.connector') IS NULL)`)).get();
   if (again) return { ...kept, duplicateOf: again.id };
-  // One a person typed in already (orders/entries.ts) counts as this one: a typed entry names no shop, so any shop's.
-  const typed = p.invoiceNumber != null && tx.select({ id: t.orderEntry.id }).from(t.orderEntry).where(and(eq(t.orderEntry.kind, 'invoice'), sql`upper(${t.orderEntry.number}) = upper(${p.invoiceNumber})`)).get();
+  // One a person typed in already for this connector's shop (orders/entries.ts) counts as this one; one typed for
+  // another shop, or for none, never does.
+  const typed = p.invoiceNumber != null && tx.select({ id: t.orderEntry.id }).from(t.orderEntry)
+    .where(and(eq(t.orderEntry.kind, 'invoice'), sql`upper(${t.orderEntry.number}) = upper(${p.invoiceNumber})`, eq(t.orderEntry.shop, m.auth.connector))).get();
   if (typed) return { ...kept, duplicateOf: `entry:${typed.id}` };
   const books = keys(tx);
   const acquired = m.content.date && !Number.isNaN(Date.parse(m.content.date)) ? new Date(m.content.date).toISOString() : o.now;
