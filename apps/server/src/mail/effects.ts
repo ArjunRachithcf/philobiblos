@@ -140,7 +140,7 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
       sql`(json_extract(${t.mailSeen.authJson}, '$.connector') = ${m.auth.connector} OR json_extract(${t.mailSeen.authJson}, '$.connector') IS NULL)`)).get();
   if (again) return { ...kept, duplicateOf: again.id };
   // One a person typed in already (orders/entries.ts) counts as this one: a typed entry names no shop, so any shop's.
-  const typed = p.invoiceNumber != null && tx.select({ id: t.orderEntry.id }).from(t.orderEntry).where(and(eq(t.orderEntry.kind, 'invoice'), eq(t.orderEntry.number, p.invoiceNumber))).get();
+  const typed = p.invoiceNumber != null && tx.select({ id: t.orderEntry.id }).from(t.orderEntry).where(and(eq(t.orderEntry.kind, 'invoice'), sql`upper(${t.orderEntry.number}) = upper(${p.invoiceNumber})`)).get();
   if (typed) return { ...kept, duplicateOf: `entry:${typed.id}` };
   const books = keys(tx);
   const acquired = m.content.date && !Number.isNaN(Date.parse(m.content.date)) ? new Date(m.content.date).toISOString() : o.now;

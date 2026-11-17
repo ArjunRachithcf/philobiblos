@@ -17,6 +17,8 @@ const EMPTY: Row = { title: '', author: '', isbn: '', qty: '1', price: '', avail
 /** The server's limit, so a file that is too long is refused before it is sent. */
 const CSV_MAX = 64 * 1024;
 const ROWS_MAX = 100;
+/** Refused whole, never cut: a CSV cut short would still read, wrongly. */
+const TOO_LONG = 'That CSV is longer than 64 KB, which Philobiblos reads at most: split it, or leave out the columns it does not need.';
 
 /** An amount as typed (18.90 or 18,90) in hundredths; null for anything else. */
 const hundredths = (s: string): number | null => {
@@ -37,12 +39,14 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
   const [check, setCheck] = useState<{ key: string; result: Result } | null>(null);
   const [done, setDone] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // One request at a time: a second tap on Record while the first runs would record an invoice without a number twice.
+  const [busy, setBusy] = useState(false);
   const k: Kind = quotable ? kind : 'invoice';
 
   /** What would be sent, or what is missing. */
   const entry = (): object | string => {
     const head = { kind: k, ...(k === 'quote' ? { month } : {}), ...(k === 'invoice' && number.trim() ? { number: number.trim() } : {}), ...(k === 'invoice' && date ? { date } : {}) };
-    if (how === 'csv') return csv.trim() ? { ...head, csv } : 'Choose a CSV file or paste one.';
+    if (how === 'csv') return !csv.trim() ? 'Choose a CSV file or paste one.' : csv.length > CSV_MAX ? TOO_LONG : { ...head, csv };
     const lines = [];
     for (const [i, r] of rows.entries()) {
       if (!r.title.trim() && !r.isbn.trim()) return `Book ${i + 1}: give its title or its ISBN.`;
@@ -61,21 +65,25 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
   const shown = check && check.key === key ? check.result : done;
 
   const send = async (dryRun: boolean) => {
+    if (busy) return;
     setError(null); setDone(null);
     if (typeof now === 'string') return setError(now);
+    setBusy(true);
     try {
       const r = await api<Result>('/orders/entries', { method: 'POST', body: { ...now, dryRun } });
       if (dryRun) return setCheck({ key, result: r });
       setCheck(null); setDone(r);
       setRows([{ ...EMPTY }]); setCsv(''); setNumber(''); setDate('');
       onRecorded();
-    } catch (e) { setCheck(null); setError(message(e)); }
+    } catch (e) { setCheck(null); setError(message(e)); } finally { setBusy(false); }
   };
   const readFile = async (f: File | undefined) => {
     setError(null);
     if (!f) return;
-    if (f.size > CSV_MAX) return setError('That file is longer than 64 KB: at most 100 rows are read at once.');
-    setCsv(await f.text());
+    // Measured as the server measures it, in characters (an accented letter is two bytes but one character).
+    const text = f.size > CSV_MAX * 4 ? null : await f.text();
+    if (text === null || text.length > CSV_MAX) return setError(TOO_LONG);
+    setCsv(text);
   };
   const copies = (r: Result) => r.lines.reduce((n, l) => n + (l.qty ?? 0), 0);
 
@@ -119,14 +127,14 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
           </div>
           <div className="field">
             <label className="field-label" htmlFor={`${id}-c`}>Or paste it</label>
-            <textarea className="input textarea" id={`${id}-c`} spellCheck={false} value={csv} onChange={(e) => setCsv(e.target.value.slice(0, CSV_MAX))} aria-describedby={`${id}-ch`} />
+            <textarea className="input textarea" id={`${id}-c`} spellCheck={false} value={csv} onChange={(e) => setCsv(e.target.value)} aria-describedby={`${id}-ch`} />
             <span className="hint" id={`${id}-ch`}>A header row, then a row a book. Columns: isbn, title, author, {k === 'invoice' ? 'qty, price (of a copy) and for (me or a kid’s handle)' : 'price and available (yes or no)'}; any others are left out. Prices as amounts, for example 18.90.</span>
           </div>
         </div>
       )}
       <div className="btn-row">
-        <button type="button" className="btn" onClick={() => void send(true)}>Check</button>
-        <button type="button" className="btn btn-primary" onClick={() => void send(false)}>Record {k === 'invoice' ? 'the invoice' : 'the quote'}</button>
+        <button type="button" className="btn" aria-disabled={busy || undefined} onClick={() => void send(true)}>Check</button>
+        <button type="button" className="btn btn-primary" aria-disabled={busy || undefined} onClick={() => void send(false)}>Record {k === 'invoice' ? 'the invoice' : 'the quote'}</button>
       </div>
       {error && <Notice kind="error">{error}</Notice>}
       <div className="stack" role="status">

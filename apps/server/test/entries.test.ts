@@ -70,8 +70,8 @@ describe('CSV: RFC 4180, bounded and linear', () => {
   it('a header and rows; quoted fields with commas, quotes and the delimiter; CRLF; a BOM; a last line without its newline', () => {
     expect(parseCsv('﻿title,author\r\n"Tide, The","Okafor ""M."""\r\nB,C')).toEqual([['title', 'author'], ['Tide, The', 'Okafor "M."'], ['B', 'C']]);
   });
-  it('the delimiter is the header\'s: semicolons and tabs too; blank lines are skipped', () => {
-    expect(parseCsv('title;price\n\nA;18,90\n')).toEqual([['title', 'price'], ['A', '18,90']]);
+  it('the delimiter is the header\'s: semicolons and tabs too; blank lines, and lines of empty cells, are skipped', () => {
+    expect(parseCsv('title;price\n\nA;18,90\n;\n;;\n')).toEqual([['title', 'price'], ['A', '18,90']]);
     expect(parseCsv('title\tprice\nA\t18.90\n')).toEqual([['title', 'price'], ['A', '18.90']]);
   });
   it('refuses an unclosed quote, text after a closing quote, too many rows, columns, characters or a cell too long', () => {
@@ -133,6 +133,16 @@ describe('an invoice typed in: copies, as a verified invoice would make them', (
     expect(order(db).status).toBe('drafted'); // neither book was in an order
   });
 
+  it('a title that names several books, without an author or ISBN to tell them apart, is refused, never a third book', () => {
+    const db = world();
+    db.insert(t.book).values({ id: 'b_tide2', title: 'The Long Tide of Markets', authorsJson: '["Ola Brandt"]', audience: 'kids', normKey: 'x', createdAt: NOW.toISOString() }).run();
+    const s = snapshot(db);
+    refused(db, { kind: 'invoice', lines: [{ title: 'The Long Tide of Markets', qty: 1, price: 1000 }] }, 400, /row 1.*several books/);
+    expect(snapshot(db)).toBe(s);
+    record(db, { kind: 'invoice', lines: [{ title: 'The Long Tide of Markets', author: 'Ola Brandt', qty: 1, price: 1000 }] });
+    expect(db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide2')).all()).toHaveLength(1);
+  });
+
   it('two lines of the same new book are one book with two copies', () => {
     const db = world();
     record(db, { kind: 'invoice', lines: [{ title: 'Paper Boats', qty: 1, price: 900 }, { title: 'Paper boats', qty: 1, price: 900 }] });
@@ -144,6 +154,7 @@ describe('an invoice typed in: copies, as a verified invoice would make them', (
   it('an invoice number counts once: typed twice, or typed after the bookshop\'s mail brought it, is 409; without a number it is recorded', async () => {
     const db = world();
     record(db, { kind: 'invoice', number: 'R-1001', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
+    refused(db, { kind: 'invoice', number: 'r-1001', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }, 409, /recorded already/);
     refused(db, { kind: 'invoice', number: ' R-1001 ', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }, 409, /recorded already/);
     await mailInvoice(db, '99001122');
     refused(db, { kind: 'invoice', number: '99001122', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }, 409, /bookshop's mail/);
@@ -182,6 +193,17 @@ describe('a quote typed in: the shop\'s answer to the month\'s order', () => {
     expect(order(db)).toMatchObject({ status: 'quoted', quotedC: 1990 });
     expect(db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).get()).toMatchObject({ source: 'quote', priceC: 1990 });
     expect(db.select().from(t.orderEntry).get()).toMatchObject({ kind: 'quote', orderId: 'o_nov', number: null });
+  });
+
+  it('a correction for one book: the answer\'s total is the order\'s, and the delivery a mail quote gave stays', () => {
+    const db = world();
+    db.update(t.orderLine).set({ state: 'quoted', quotedC: 2000, delivery: '3 – 4 days' }).where(eq(t.orderLine.bookId, 'b_tide')).run();
+    db.update(t.orderLine).set({ state: 'quoted', quotedC: 1500, delivery: '1 – 2 weeks' }).where(eq(t.orderLine.bookId, 'b_value')).run();
+    db.update(t.order).set({ status: 'quoted', quotedC: 3500 }).where(eq(t.order.id, 'o_nov')).run();
+    const r = record(db, { kind: 'quote', month: '2026-11', lines: [{ title: 'Value Beyond Price', price: 1600 }] });
+    expect(r.total).toBe(3600);
+    expect(order(db).quotedC).toBe(3600);
+    expect(lines(db)).toMatchObject({ b_tide: { delivery: '3 – 4 days' }, b_value: { delivery: '1 – 2 weeks', quotedC: 1600 } });
   });
 
   it('a line that names no book of that order, or one book twice, is refused (400), and nothing changes', () => {
@@ -258,6 +280,9 @@ describe('a dry run: what would happen, and nothing changes', () => {
     expect(snapshot(db)).toBe(s);
     expect(dry).toMatchObject({ dryRun: true, total: 2890, lines: [{ bookId: 'b_tide', new: false }, { bookId: null, new: true, title: 'Paper Boats' }] });
     expect(dry.id).toBeUndefined();
+    // A second row of the book the dry run would add names no id either (it would not exist).
+    const twice = record(db, { kind: 'invoice', dryRun: true, lines: [{ title: 'Paper Boats', qty: 1, price: 900 }, { title: 'Paper Boats', qty: 1, price: 900 }] });
+    expect(twice.lines.map((l) => [l.bookId, l.new])).toEqual([[null, true], [null, false]]);
     const real = record(db, body);
     expect(real.lines.map((l) => l.new)).toEqual([false, true]);
     expect(real.total).toBe(dry.total);

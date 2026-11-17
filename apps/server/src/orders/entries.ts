@@ -176,6 +176,13 @@ function checkDate(v: unknown, now: Date): string {
   return d.toISOString();
 }
 
+/** How many books a row's title names (by matchBook's own rule: its author, if given; never a book with another ISBN). */
+function titleNames(books: BookKey[], g: Given): number {
+  const title = norm(g.title ?? '');
+  const same = books.filter((b) => norm(b.title) === title && !(g.isbn && b.isbn13 && b.isbn13 !== g.isbn));
+  return g.author ? same.filter((b) => matchBook([b], { ean: null, title: g.title, author: g.author }) === b.id).length : same.length;
+}
+
 /** POST /orders/entries: a quote or an invoice, typed (`lines`) or imported (`csv`); `dryRun` answers what it would do. */
 export function recordEntry(db: Db, me: string, body: unknown, now = new Date()): EntryResult {
   if (!isObject(body)) return bad('a JSON object is needed');
@@ -224,17 +231,20 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date())
   try {
     return db.transaction((tx) => {
       const out: EntryLine[] = [];
+      /** Books this entry adds: in a dry run they will not exist, so no row names their id. */
+      const added = new Set<string>();
       let orderId: string | undefined;
+      let quotedTotal = 0;
       const view = (g: Given, b: BookKey | null, isNew: boolean): EntryLine => ({
-        row: g.row, bookId: b && !(isNew && dryRun) ? b.id : null, new: isNew, title: b?.title ?? g.title!, authors: b?.authors ?? (g.author ? [g.author] : []),
+        row: g.row, bookId: b && !(dryRun && added.has(b.id)) ? b.id : null, new: isNew, title: b?.title ?? g.title!, authors: b?.authors ?? (g.author ? [g.author] : []),
         isbn13: b?.isbn13 ?? g.isbn, qty: kind === 'invoice' ? g.qty : null, price: g.price, available: g.available, for: g.for,
       });
 
       if (kind === 'invoice') {
         if (number !== null) {
-          if (tx.select({ id: t.orderEntry.id }).from(t.orderEntry).where(eq(t.orderEntry.number, number)).get()) throw new EntryError(409, `invoice ${number} is recorded already`);
+          if (tx.select({ id: t.orderEntry.id }).from(t.orderEntry).where(sql`upper(${t.orderEntry.number}) = upper(${number})`).get()) throw new EntryError(409, `invoice ${number} is recorded already`);
           const mailed = tx.select({ id: t.mailSeen.messageId }).from(t.mailSeen)
-            .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber') = ${number}`, sql`json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') IS NULL`)).get();
+            .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`upper(json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber')) = upper(${number})`, sql`json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') IS NULL`)).get();
           if (mailed) throw new EntryError(409, `invoice ${number} came in the bookshop's mail already, and counts from there`);
         }
         const books = keys(tx);
@@ -245,9 +255,12 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date())
           const isNew = !id;
           if (!id) {
             if (!g.title) throw new EntryError(400, `row ${g.row}: no book has this ISBN yet: add its title`);
+            // matchBook's null is none or several: several is refused, never a book more beside them.
+            if (titleNames(books, g) > 1) throw new EntryError(400, `row ${g.row}: its title names several books: add the author or the ISBN`);
             id = ulid();
             tx.insert(t.book).values({ id, title: g.title, authorsJson: JSON.stringify(g.author ? [g.author] : []), isbn13: g.isbn, audience: person?.role === 'kid' ? 'kids' : 'adult', normKey: `${norm(g.title)}|${norm(g.author ?? '')}`, createdAt: iso }).run();
             books.push({ id, title: g.title, authors: g.author ? [g.author] : [], isbn13: g.isbn });
+            added.add(id);
           }
           const ordered = receive(tx, { bookId: id, qty: g.qty, unitC: g.price!, acquiredAt, source: 'manual' }, iso);
           if (ordered) invoiced.set(ordered, (invoiced.get(ordered) ?? 0) + g.price! * g.qty);
@@ -269,12 +282,16 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date())
           if (named.has(id)) throw new EntryError(400, `row ${g.row}: names the book of row ${named.get(id)} twice`);
           named.set(id, g.row);
           out.push(view(g, books.find((b) => b.id === id)!, false));
-          return { bookId: id, available: g.available, priceC: g.available ? g.price : null, delivery: null };
+          // The delivery a shop's mail gave stays: a typed row says nothing about it.
+          const delivery = tx.select({ d: t.orderLine.delivery }).from(t.orderLine).where(and(eq(t.orderLine.orderId, order.id), eq(t.orderLine.bookId, id))).get()?.d ?? null;
+          return { bookId: id, available: g.available, priceC: g.available ? g.price : null, delivery };
         });
         quoteOrder(tx, order, matched, iso, order.mailThreadRef);
+        quotedTotal = tx.select({ c: t.order.quotedC }).from(t.order).where(eq(t.order.id, order.id)).get()?.c ?? 0;
       }
 
-      const total = given.reduce((n, g) => n + (g.available && g.price != null ? g.price * g.qty : 0), 0);
+      // An invoice's total is its own rows'; a quote's is the order's, as quoted now (a correction of one book included).
+      const total = kind === 'quote' ? quotedTotal : given.reduce((n, g) => n + g.price! * g.qty, 0);
       const result: EntryResult = { kind, source, dryRun, ...(month ? { month } : {}), ...(orderId ? { orderId } : {}), number, total, lines: out, ignoredColumns: ignored };
       if (dryRun) throw new DryRun(result);
       const id = ulid();

@@ -2,7 +2,7 @@
 // is linear in its length whatever it holds, and bounded before anything is read (characters, rows, columns, a cell).
 // Fields may be quoted ("…", a quote inside written twice) and hold the delimiter or a line break; the delimiter is the
 // header line's own (a comma, a semicolon or a tab, the one it holds most of outside quotes). A byte order mark is left
-// out, and lines that hold nothing are skipped. Anything it cannot read whole (an unclosed quote, text after a closing
+// out, and lines that hold nothing (no text, or only empty cells) are skipped. Anything it cannot read whole (an unclosed quote, text after a closing
 // quote) is refused, never guessed at.
 
 export const CSV_LIMITS = { chars: 64 * 1024, rows: 101, columns: 20, cell: 1000 } as const;
@@ -45,7 +45,8 @@ export function parseCsv(input: string): string[][] {
   };
   const end = () => {
     push();
-    if (row.length > 1 || row[0] !== '') {
+    // A line of empty cells (`;;;`, as spreadsheets end their exports) holds nothing either.
+    if (row.some((c) => c !== '')) {
       out.push(row);
       if (out.length > CSV_LIMITS.rows) throw new CsvError(`more than ${CSV_LIMITS.rows - 1} rows`);
     }
