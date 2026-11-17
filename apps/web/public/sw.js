@@ -68,7 +68,7 @@ self.addEventListener('push', (e) => {
   const lang = String((self.navigator && self.navigator.language) || 'en').toLowerCase().split('-')[0];
   const text = own(PUSH_TEXT, lang) ? PUSH_TEXT[lang] : PUSH_TEXT.en;
   const body = kind !== 'other' && own(text, kind) ? text[kind] : text.other;
-  e.waitUntil(self.registration.showNotification('Philobiblos', { body, tag: 'philobiblos', icon: '/favicon.svg' }));
+  e.waitUntil(self.registration.showNotification('Philobiblos', { body, tag: 'philobiblos', icon: '/icon-192.png' }));
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
