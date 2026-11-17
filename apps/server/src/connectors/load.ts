@@ -4,7 +4,12 @@
 // - YAML with no aliases, no tags, no duplicate keys; then contracts/connector.schema.json, which refuses every key it
 //   does not name (so no file can carry a setting the core does not have, such as unsigned mail or a private host);
 // - then what a schema cannot say: the id is its folder's name, a quote sender is at one of its own mail domains, a
-//   subject template has words around its number, a price URL's host is exact and its query is the only thing filled.
+//   signing domain is aligned with one of them, a subject template has words around its number, a price URL's host is
+//   exact and its query is the only thing filled.
+// Read once means a file edited on disk shows as changed (and counts for nothing) only after a restart; its bytes are
+// hashed and parsed from one buffer, so what was checked is what was read. An entry that cannot be looked at is a problem
+// row, not a failed start. Accepted (the folders are the trust root): the folder check and the open are two steps, so
+// whoever can write to a connectors folder could swap a folder for a link between them; they could as well write the file.
 // A connector that fails any of it is listed with its reason and can never be enabled. Its version is the SHA-256 of
 // its bytes: an admin's enabling holds for those bytes only (enabled.ts).
 import { createHash } from 'node:crypto';
@@ -12,6 +17,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdir
 import { join } from 'node:path';
 import { parseDocument } from 'yaml';
 import { checkConnectorShape, type Connector } from '@philobiblos/contracts/connector';
+import { relaxedAligned } from '../mail/verify';
 import { fold } from './text';
 
 export const CONNECTOR_LIMITS = { fileBytes: 64 * 1024, perFolder: 64 } as const;
@@ -41,6 +47,8 @@ export function soundness(c: Connector, folder: string): string | null {
   if (c.id !== folder) return `its id (${c.id}) is not its folder's name`;
   if (c.mail) {
     for (const s of c.mail.quote?.senders ?? []) if (!c.mail.domains.includes(domainOf(s))) return `the quote sender ${s} is not at one of its mail domains`;
+    // A signer aligned with none of its From domains could never count (verify.ts): Settings must not show it as one.
+    for (const d of c.mail.dkim_domains ?? []) if (!c.mail.domains.some((m) => relaxedAligned(d, m))) return `the signing domain ${d} is not aligned with any of its mail domains`;
     for (const t of [...(c.mail.shop?.online_order_subjects ?? []), ...(c.mail.shop?.click_collect_subjects ?? []), ...(c.mail.invoice?.subjects ?? [])]) {
       // A subject must say something besides its number, or any number would be the shop's mail.
       if (fold(t.replace('{number}', '')).replace(/[^\p{L}]/gu, '').length < 4) return `the subject ${t.slice(0, 60)} has too few words around its number`;
@@ -98,14 +106,18 @@ function readPlain(path: string, max: number): Buffer | string {
   }
 }
 
-function loadFolder(dir: string, origin: LoadedConnector['origin']): LoadedConnector[] {
+/** How the folders are looked at (tests stand in for an entry that vanishes while Philobiblos starts). */
+export interface ConnectorFs { lstat: (path: string) => { isDirectory(): boolean } }
+
+function loadFolder(dir: string, origin: LoadedConnector['origin'], fs: ConnectorFs): LoadedConnector[] {
   let names: string[];
   try { names = readdirSync(dir).filter((n) => !n.startsWith('.')).sort(); } catch { return []; }
   const out: LoadedConnector[] = [];
   for (const name of names.slice(0, CONNECTOR_LIMITS.perFolder)) {
     const path = join(dir, name);
-    const st = lstatSync(path);
-    if (!st.isDirectory()) continue;
+    let isFolder: boolean;
+    try { isFolder = fs.lstat(path).isDirectory(); } catch { out.push({ id: name, origin, version: '', connector: null, problem: 'its folder cannot be read' }); continue; }
+    if (!isFolder) continue;
     const bytes = readPlain(join(path, CONNECTOR_FILE), CONNECTOR_LIMITS.fileBytes);
     if (typeof bytes === 'string') { out.push({ id: name, origin, version: '', connector: null, problem: bytes }); continue; }
     const version = createHash('sha256').update(bytes).digest('hex');
@@ -116,9 +128,9 @@ function loadFolder(dir: string, origin: LoadedConnector['origin']): LoadedConne
 }
 
 /** The connectors of both folders; the household's own may not reuse an id of one that ships with Philobiblos. */
-export function loadConnectors(dirs: { builtin: string | null; local: string | null }): Registry {
-  const builtin = dirs.builtin ? loadFolder(dirs.builtin, 'builtin') : [];
-  const local = (dirs.local ? loadFolder(dirs.local, 'local') : []).map((c) => (builtin.some((b) => b.id === c.id)
+export function loadConnectors(dirs: { builtin: string | null; local: string | null }, fs: ConnectorFs = { lstat: lstatSync }): Registry {
+  const builtin = dirs.builtin ? loadFolder(dirs.builtin, 'builtin', fs) : [];
+  const local = (dirs.local ? loadFolder(dirs.local, 'local', fs) : []).map((c) => (builtin.some((b) => b.id === c.id)
     ? { ...c, connector: null, problem: 'a connector that ships with Philobiblos has this id' } : c));
   return registry([...builtin, ...local]);
 }

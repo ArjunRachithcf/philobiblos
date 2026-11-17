@@ -3,8 +3,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import type { Egress } from '../net/egress';
-import { requireAdmin } from '../auth/hook';
-import { isFresh } from '../auth/sessions';
+import { requireAdmin, requireFreshSignIn } from '../auth/hook';
 import { PushError, listSubscriptions, notify, resetPushKey, subscribe, unsubscribe, vapidKeys } from '../push/push';
 import { b64u } from '../push/webpush';
 import { Limiter } from '../shares/tokens';
@@ -22,12 +21,10 @@ export async function pushRoutes(app: FastifyInstance, cfg: Config, db: Db, egre
   app.get('/push/key', async (_req, reply) => {
     try { return { publicKey: b64u(vapidKeys(db, cfg).publicKey) }; } catch (e) { return fail(reply, e); }
   });
-  // A new key, every device removed: an admin, with a sign-in of the last few minutes (standalone; HomersLab's own sign-in
-  // otherwise), as for adding a passkey.
+  // A new key, every device removed: an admin, with a sign-in of the last few minutes, as for adding a passkey (refused
+  // under HomersLab until its edge sends a recent sign-in, homeward#253).
   app.delete('/push/key', async (req, reply) => {
-    if (!requireAdmin(req, reply)) return reply;
-    const c = req.caller!;
-    if (c.via !== 'homerslab' && !(c.session && isFresh(c.session))) return reply.code(403).send({ error: 'sign in again to do this' });
+    if (!requireAdmin(req, reply) || !requireFreshSignIn(req, reply)) return reply;
     return resetPushKey(db);
   });
   app.get('/push/subscriptions', async (req) => listSubscriptions(db, req.caller!.personId));

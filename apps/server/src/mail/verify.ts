@@ -6,7 +6,7 @@
 // - a DKIM signature by exactly one of that connector's signing domains, aligned with the From, verifies here (keys
 //   from DNS, nothing else looked up); or, for a forward that broke the signature, the ARC chain verifies, its newest
 //   seal is from a provider the household trusts (PHILOBIBLOS_MAIL_ARC_SEALERS, none by default), and that provider
-//   recorded dkim=pass for one of those signing domains.
+//   recorded dkim=pass for one of those signing domains, aligned with the From as a DKIM signature here must be.
 // Return-Path is not checked: a forwarding filter rewrites it to the forwarder's address (SRS), so it says nothing.
 // And whatever Philobiblos later reads from the headers must be what was signed: a header that may appear once appears
 // once, the passing signature covers the ones Philobiblos reads (From, To, Subject, Date, Message-ID, the MIME headers, and
@@ -15,6 +15,7 @@
 // so a genuine bookshop mail to someone else cannot be replayed into Philobiblos.
 // Anything else is kept as "not verified" and changes nothing.
 import { authenticate } from 'mailauth';
+import { getAlignment } from 'mailauth/lib/tools.js';
 import { dkimKeyResolver, type TxtResolver } from '../net/dns';
 
 /** An enabled connector's mail domains (connectors/enabled.ts), exact: the From's, and the signing ones. */
@@ -36,6 +37,14 @@ export interface MailAuth {
 
 /** Exactly one of these hosts (a connector lists every domain that counts; a subdomain is another host). */
 const isOneOf = (d: string | null | undefined, hosts: string[]) => !!d && hosts.includes(d.toLowerCase());
+/**
+ * Relaxed alignment (RFC 7489 section 3.1.1): the two domains have the same organizational domain (the public suffix
+ * list's, as mailauth reads it). A signing domain counts for a From only so: a connector may list `mail.shop.example`
+ * as a signer of `shop.example`, never another organization's domain (a shared sending service's would let any of
+ * its customers sign as the shop). The DKIM check and the ARC check use it alike, and connectors/load.ts refuses a
+ * signing domain that is aligned with none of its connector's mail domains.
+ */
+export const relaxedAligned = (a: string, b: string) => Boolean(a && b && getAlignment(a.toLowerCase(), [b.toLowerCase()]));
 /** A provider's ARC seal: its own domain or one under it (the household names the provider, e.g. its mail domain). */
 const inDomain = (d: string | null | undefined, domain: string) => !!d && (d.toLowerCase() === domain || d.toLowerCase().endsWith(`.${domain}`));
 
@@ -149,11 +158,14 @@ export async function verifyBookshopMail(raw: Buffer, o: { shops: ShopMail[]; ar
   if (arc?.status?.result === 'pass') {
     const sealer = arc.signature?.signingDomain?.toLowerCase() ?? '';
     if (!o.arcSealers.some((s) => inDomain(sealer, s))) return no(`the forward was sealed by ${sealer.slice(0, 80)}, not a provider Philobiblos trusts`, fromDomain);
-    const ok = (arc.authenticationResults?.dkim ?? []).some((d) => d.result === 'pass' && isOneOf((d.header?.d ?? d.header?.i?.replace(/^.*@/, '')) ?? '', signers));
-    if (!ok) return no(`the forward's seal by ${sealer} does not show the bookshop's DKIM passing`, fromDomain);
+    // The signing domain the provider saw pass: one of the connector's signers, and aligned with the From (as above).
+    const passed = (arc.authenticationResults?.dkim ?? []).filter((d) => d.result === 'pass')
+      .map((d) => (d.header?.d ?? d.header?.i?.replace(/^.*@/, '') ?? '').toLowerCase())
+      .find((d) => isOneOf(d, signers) && relaxedAligned(d, fromDomain));
+    if (!passed) return no(`the forward's seal by ${sealer} does not show the bookshop's DKIM passing`, fromDomain);
     const problem = coverageProblem(arc.signature, hs);
     if (problem) return no(`the forward's seal: ${problem}`, fromDomain);
-    return { accepted: true, via: 'arc', reason: `arc=pass by ${sealer}, which saw dkim=pass for ${fromDomain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null, from: fromAddrs[0]!, connector: shop.id };
+    return { accepted: true, via: 'arc', reason: `arc=pass by ${sealer}, which saw dkim=pass for ${passed}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null, from: fromAddrs[0]!, connector: shop.id };
   }
   return no(why, fromDomain);
 }

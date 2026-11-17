@@ -10,18 +10,45 @@ Settings → **Bookshops** lists the connectors: the ones that ship with Philobi
 and the household's own (`PHILOBIBLOS_CONNECTORS_DIR`, a read-only folder). For each, Settings shows what it allows:
 
 - the mail domains whose mail counts, and the domains whose DKIM signature counts (exact names: a subdomain is
-  another sender);
+  another sender; a signing domain must share its organizational domain with one of the mail domains, so
+  `mail.quillmere.example` may sign for `quillmere.example`, but a shared sending service's domain never can);
 - the addresses its quotes and confirmations come from;
 - the one host its price lookup asks, with a book's title and first author;
 - the address Compose writes to, unless *Where orders go* names another.
 
-A connector counts for nothing until an **admin enables** it there, with a sign-in of the last few minutes. Only then
+A connector counts for nothing until an **admin enables** it there, with a sign-in of the last few minutes. Under
+HomersLab, where Philobiblos has no sign-in of its own, enabling is refused until HomersLab tells Philobiblos that the
+person signed in recently (ArjunRachithcf/homeward#253; ADR 0011): until then, connectors are enabled in standalone mode
+only. Only then
 does its mail count, its price host join the egress allowlist, and Compose know its address. The enabling holds for
 that version of the file (its SHA-256): when the file changes, the connector allows nothing until an admin enables it
 again. Two enabled connectors never share a mail domain. Turning one off takes effect at once.
 
+The files are **read once, at start**. A file edited while Philobiblos runs shows as changed only after a restart, and
+then counts for nothing until an admin enables it again; a new folder appears after a restart too.
+
+**Egress under HomersLab.** A connector's price host is data, not part of Philobiblos's HomersLab manifest
+(`contracts/homerslab-app.yaml`), so HomersLab cannot list it. Philobiblos's own egress allowlist holds it only while
+the connector is enabled, checked at each request; HomersLab does not yet enforce egress per host for connector hosts
+(ArjunRachithcf/homeward#255).
+
 The example that ships, **Quillmere Books** (`connectors/quillmere/`), is invented: its domain is under `.example`, so
 enabling it changes nothing real. It is the template for a real shop.
+
+## Upgrading from M3
+
+Before M4, one bookshop was built into Philobiblos, with its mail domains, its price host and a default ARC sealer for
+one mail provider. M4 removes all three, so after the upgrade the mail and price jobs say `blocked`, and a forwarded
+mail whose DKIM signature broke shows as "not verified", until you:
+
+1. **Put your shop's connector in `PHILOBIBLOS_CONNECTORS_DIR`**: a folder `<id>/connector.yaml` written like
+   `connectors/quillmere/connector.yaml` (see *Adding a bookshop* below), mounted read-only. Restart Philobiblos.
+2. **Enable it** in Settings → Bookshops, as an admin, with a fresh sign-in, after reading what it allows.
+3. **Set `PHILOBIBLOS_MAIL_ARC_SEALERS`** to your forwarding provider's ARC sealing domain, if your mail is forwarded
+   (see *Mail providers* below). There is no default any more: without it, only mail whose own DKIM signature survives
+   the forward counts.
+
+Mail already read stays as it was; the next mail run reads new mail with the connector's words.
 
 ## Adding a bookshop
 
@@ -86,7 +113,9 @@ A connector is **data only**, and it cannot loosen a rule of the core:
 - **No new settings.** Every object of the schema refuses keys it does not name: a connector cannot allow unsigned
   mail, a private address, a redirect to another host or another mail size.
 - **Plain YAML.** No aliases, anchors, tags, merge keys or duplicate keys; at most 64 KB; a plain file in a plain
-  folder (a symbolic link is refused); UTF-8.
+  folder (a symbolic link is refused); UTF-8. No control or format characters in its words (a right-to-left override
+  would show a name reversed in Settings; a zero-width space would make a phrase that never matches).
+- **Aligned signers.** A signing domain in `dkim_domains` shares its organizational domain with one of `domains`.
 - **Bounded.** At most 32 words in a list, 60 characters a word, 8 domains, 16 subjects.
 
 A file that breaks any of these is listed in Settings with its reason and can never be enabled. Every mail still goes

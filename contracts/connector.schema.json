@@ -146,16 +146,16 @@
     }
   },
   "$defs": {
-    "text": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f<>]+$" },
-    "phrase": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f*{}]+$" },
+    "text": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}<>]+$" },
+    "phrase": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}*{}]+$" },
     "phrases": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/phrase" } },
-    "word": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f*{}|]+$" },
-    "words": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f*{}]+\\*?$" } },
+    "word": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}*{}|]+$" },
+    "words": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}*{}]+\\*?$" } },
     "kinds": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/word" } },
-    "symbols": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 8, "pattern": "^[^\\s\\d\\u0000-\\u001f\\u007f-\\u009f*{}]+$" } },
+    "symbols": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 8, "pattern": "^[^\\s\\d\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}*{}]+$" } },
     "subjects": {
       "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
-      "items": { "type": "string", "minLength": 9, "maxLength": 120, "pattern": "^[^{}\\u0000-\\u001f\\u007f-\\u009f*]*\\{number\\}[^{}\\u0000-\\u001f\\u007f-\\u009f*]*$" }
+      "items": { "type": "string", "minLength": 9, "maxLength": 120, "pattern": "^[^{}\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}*]*\\{number\\}[^{}\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}*]*$" }
     },
     "host": { "type": "string", "maxLength": 253, "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$" },
     "hosts": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/host" } },

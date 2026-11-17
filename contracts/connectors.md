@@ -34,7 +34,8 @@ as a secret (`PHILOBIBLOS_IMAP_PASSWORD`, never in the database, the API or logs
   a signature over part of the body (`l=`) does not count;
 - a DKIM signature by exactly one of that connector's signing domains (`dkim_domains`, default its mail domains),
   aligned with the From, must pass, or, for a forward that broke it, the `ARC-Authentication-Results` of the
-  forwarding provider must show `dkim=pass` for one of them; a mail that fails, or has neither, is stored with
+  forwarding provider must show `dkim=pass` for one of them, aligned with the From just as well (relaxed: the same
+  organizational domain; a connector whose signing domain is aligned with none of its mail domains cannot be used); a mail that fails, or has neither, is stored with
   `accepted = 0` and shown in the Inbox as "not verified", and changes nothing (and none of its content is kept). The
   forwarding providers whose ARC seal counts are `PHILOBIBLOS_MAIL_ARC_SEALERS` (none by default: no provider is
   assumed); DNS is asked only for

@@ -1,7 +1,7 @@
 // Bookshops are data (philobiblos#27): connectors/<id>/connector.yaml, read strictly, matched in linear time, and
 // counting for nothing until an admin enables one (with a fresh sign-in) for the version of its file they read. Every
 // connector and mail here is invented. Each guard has a test that fails when the guard is removed.
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -17,7 +17,7 @@ import { refreshMail } from '../src/mail/job';
 import { mailRules, classify } from '../src/mail/parse';
 import { createEgress, egressRules, EgressError } from '../src/net/egress';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
-import { CFG, CONNECTORS, HOUSEHOLD, SEALERS, fakeBox, message, resolver, signed } from './mailkit';
+import { CFG, CONNECTORS, HOUSEHOLD, SEALERS, evil, fakeBox, message, resolver, sealed, signed } from './mailkit';
 import { verifyBookshopMail } from '../src/mail/verify';
 
 const EXAMPLE = readFileSync(new URL('../../../connectors/quillmere/connector.yaml', import.meta.url), 'utf8');
@@ -61,6 +61,14 @@ describe('a connector is data, read strictly', () => {
     ['a * inside a word', () => edited('gesamt*,', 'ges*amt,'), /schema/],
     ['a * in a phrase', () => edited('confirm_phrases: [we have now ordered]', 'confirm_phrases: [we have * ordered]'), /schema/],
     ['a control character', () => edited('by: von', 'by: "v\\u0007on"'), /schema/],
+    // Format characters (\p{Cf}): a right-to-left override would show a name reversed in Settings, and a phrase holding
+    // one would never match (fold drops them from the mail).
+    ['a right-to-left override in its name', () => edited('name: Quillmere Books', 'name: "Quillmere \\u202Eskoob"'), /schema/],
+    ['a zero-width space in a phrase', () => edited('confirm_phrases: [we have now ordered]', 'confirm_phrases: ["we have\\u200Bnow ordered"]'), /schema/],
+    ['a soft hyphen in a word', () => edited('by: von', 'by: "v\\u00ADon"'), /schema/],
+    // A signing domain must be aligned with one of its mail domains (relaxed: the same organizational domain), or its
+    // signature could never count for the shop's From: a shared sending service's domain would let its customers forge it.
+    ['a signing domain not aligned with any of its mail domains', () => edited('  domains: [quillmere.example]', '  domains: [quillmere.example]\n  dkim_domains: [quillmere.example, mailer.example]'), /signing domain mailer\.example is not aligned/],
     ['a phrase over 60 characters', () => edited('confirm_phrases: [we have now ordered]', `confirm_phrases: [${'a'.repeat(61)}]`), /schema/],
     ['more than 32 phrases', () => edited('confirm_phrases: [we have now ordered]', `confirm_phrases: [${Array.from({ length: 33 }, (_, i) => `p${i}`).join(', ')}]`), /schema/],
     // YAML that is more than data.
@@ -74,6 +82,10 @@ describe('a connector is data, read strictly', () => {
     ['a file over 64 KB', () => `${EXAMPLE}#${'x'.repeat(CONNECTOR_LIMITS.fileBytes)}\n`, /larger/],
   ])('refused: %s', (_n, make, why) => {
     expect(problemOf(make())).toMatch(why);
+  });
+
+  it('a signing domain under one of its mail domains is aligned, and sound', () => {
+    expect(read(edited('  domains: [quillmere.example]', '  domains: [quillmere.example]\n  dkim_domains: [mail.quillmere.example]'))).toHaveProperty('connector.mail.dkim_domains', ['mail.quillmere.example']);
   });
 
   it('a file that is not UTF-8 is refused', () => {
@@ -96,6 +108,17 @@ describe('a connector is data, read strictly', () => {
     expect(by('lindenhof').problem).toBeNull();
     expect(reg.all[3]).toMatchObject({ problem: expect.stringMatching(/ships with Philobiblos/), connector: null });
     expect(by('linked')).toMatchObject({ problem: expect.stringMatching(/link/), connector: null });
+  });
+
+  it('an entry that cannot be looked at becomes a problem row, and the rest still load', () => {
+    const local = mkdtempSync(join(tmpdir(), 'philobiblos-connectors-'));
+    mkdirSync(join(local, 'lindenhof'));
+    writeFileSync(join(local, 'lindenhof', 'connector.yaml'), EXAMPLE.replace('id: quillmere', 'id: lindenhof').replaceAll('quillmere.example', 'lindenhof.example'));
+    // An entry that vanishes between the listing and the look at it (a household editing its folder while Philobiblos starts).
+    mkdirSync(join(local, 'gone'));
+    const lstat = (p: string) => { if (p.endsWith('/gone')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); return lstatSync(p); };
+    const reg = loadConnectors({ builtin: null, local }, { lstat });
+    expect(reg.all.map((c) => [c.id, c.problem])).toEqual([['gone', expect.stringMatching(/cannot be read/)], ['lindenhof', null]]);
   });
 });
 
@@ -211,6 +234,19 @@ describe('a connector counts only once an admin enabled it, for the file they re
     expect(await verifyBookshopMail(await signed(message()), { shops: onlyParentSigns, arcSealers: SEALERS, recipients: HOUSEHOLD, resolver })).toMatchObject({ accepted: false });
   });
 
+  it('over ARC as over DKIM: the signing domain must be aligned with the From, and the reason names the one that passed', async () => {
+    // The shop's key is gone from DNS (rotated, say): only the forwarder's ARC record can vouch for the mail.
+    const noShopKey = async (n: string) => (n.startsWith('mail._domainkey.quillmere.example') ? Promise.reject(Object.assign(new Error('nx'), { code: 'ENOTFOUND' })) : resolver(n));
+    const v = (raw: Buffer, dkimDomains: string[]) => verifyBookshopMail(raw, { shops: [{ id: 'quillmere', domains: ['quillmere.example'], dkimDomains }], arcSealers: SEALERS, recipients: HOUSEHOLD, resolver: noShopKey });
+    // A connector that lists another organization's domain as a signer (a shared sending service, say): its signature
+    // never counts for the shop's From, whether verified here or as a trusted forwarder recorded it.
+    expect(await v(await signed(message(), 'evil.example', evil), ['evil.example'])).toMatchObject({ accepted: false });
+    expect(await v(await sealed(message(), 'forwarder.example', 'mx.forwarder.example; dkim=pass header.d=evil.example header.s=mail'), ['evil.example'])).toMatchObject({ accepted: false, via: null });
+    // A signer under the shop's own domain is aligned (relaxed), and the reason says which signature the forwarder saw pass.
+    expect(await v(await sealed(message(), 'forwarder.example', 'mx.forwarder.example; dkim=pass header.d=mail.quillmere.example header.s=mail'), ['mail.quillmere.example']))
+      .toMatchObject({ accepted: true, via: 'arc', reason: 'arc=pass by forwarder.example, which saw dkim=pass for mail.quillmere.example' });
+  });
+
   it('the parsers read a mail with its own connector\'s words: another shop\'s subjects and senders mean nothing to it', () => {
     const text = EXAMPLE.replace('id: quillmere', 'id: lindenhof').replaceAll('Quillmere', 'Lindenhof').replaceAll('quillmere.example', 'lindenhof.example');
     const r = readConnector(Buffer.from(text), 'lindenhof');
@@ -264,6 +300,63 @@ describe('Settings: GET /connectors and PUT /connectors/{id}', () => {
     expect((await ask('PUT', '/api/connectors/quillmere', stale, { enabled: false })).json()).toMatchObject({ enabled: false });
     expect((await ask('PUT', '/api/connectors/quillmere', sessionCookie(db, 'p_admin'), { enabled: true, acceptVersion: 'x' })).statusCode).toBe(409);
     expect((await ask('PUT', '/api/connectors/nowhere', sessionCookie(db, 'p_admin'), { enabled: false })).statusCode).toBe(404);
+  });
+});
+
+describe('under HomersLab, enabling waits for the edge\'s recent sign-in (homeward#253)', () => {
+  it('refused, fail closed: Philobiblos has no step-up of its own there; turning off still works', async () => {
+    const db = openDb(':memory:');
+    db.insert(t.person).values({ id: 'p_admin', externalId: 'hl-admin', name: 'Admin', role: 'admin', handle: 'admin' }).run();
+    const built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '127.0.0.1', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_DATA_DIR: '/nonexistent' }), db, { connectors: CONNECTORS });
+    const h = { 'x-homerslab-person': 'hl-admin', 'x-homerslab-name': 'Admin', 'x-homerslab-role': 'admin', origin: ORIGIN, 'content-type': 'application/json' };
+    const put = (body: unknown) => built.app.inject({ method: 'PUT', url: '/api/connectors/quillmere', headers: h, payload: JSON.stringify(body) });
+    const r = await put({ enabled: true, acceptVersion: CONNECTORS.get('quillmere')!.version });
+    expect(r.statusCode).toBe(403);
+    expect(r.json().error).toMatch(/recent sign-in/);
+    expect(db.select().from(t.connectorEnabled).all()).toEqual([]);
+    expect((await put({ enabled: false })).statusCode).toBe(200);
+    await built.app.close();
+  });
+});
+
+describe('the app\'s book client follows Settings: a price host is reachable only while its connector is enabled', () => {
+  it('enabled through PUT /connectors/{id}: reached; turned off: refused; the same app throughout', async () => {
+    const db = household();
+    db.delete(t.connectorEnabled).run();
+    const asked: string[] = [];
+    const runs: Promise<void>[] = [];
+    const built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY }), db, {
+      connectors: CONNECTORS,
+      // Nothing is looked up for real: the lookup is where the test stops a request the allowlist let through.
+      egress: { resolve: async (host) => { asked.push(host); throw new Error('stop here'); } },
+      jobs: { env: { sleep: async () => {} }, started: (_j, done) => runs.push(done) },
+    });
+    const as = { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN };
+    const put = (body: unknown) => built.app.inject({ method: 'PUT', url: '/api/connectors/quillmere', headers: { ...as, 'content-type': 'application/json' }, payload: JSON.stringify(body) });
+    const url = 'https://www.quillmere.example/suche?sq=x';
+    await expect(built.egress.get(url, 'html')).rejects.toMatchObject({ reason: 'not-allowed' });
+    expect((await put({ enabled: true, acceptVersion: CONNECTORS.get('quillmere')!.version })).statusCode).toBe(200);
+    // The price job's lookup reached the shop's host (and stopped at the test's lookup), with no rebuild of the app.
+    expect((await built.app.inject({ method: 'POST', url: '/api/jobs/prices/run', headers: as })).statusCode).toBe(202);
+    await Promise.all(runs);
+    expect(asked).toEqual(['www.quillmere.example']);
+    await expect(built.egress.get(url, 'html')).rejects.toMatchObject({ reason: 'network' });
+    expect((await put({ enabled: false })).statusCode).toBe(200);
+    await expect(built.egress.get(url, 'html')).rejects.toMatchObject({ reason: 'not-allowed' });
+    expect(asked).toEqual(['www.quillmere.example', 'www.quillmere.example']);
+    await built.app.close();
+  });
+
+  it('enabled when the app was built, turned off through PUT /connectors/{id}: refused at once', async () => {
+    const db = household();
+    const built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY }), db, {
+      connectors: CONNECTORS, egress: { resolve: async () => { throw new Error('stop here'); } },
+    });
+    await expect(built.egress.get('https://www.quillmere.example/suche?sq=x', 'html')).rejects.toMatchObject({ reason: 'network' });
+    const off = await built.app.inject({ method: 'PUT', url: '/api/connectors/quillmere', headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN, 'content-type': 'application/json' }, payload: JSON.stringify({ enabled: false }) });
+    expect(off.statusCode).toBe(200);
+    await expect(built.egress.get('https://www.quillmere.example/suche?sq=x', 'html')).rejects.toMatchObject({ reason: 'not-allowed' });
+    await built.app.close();
   });
 });
 
