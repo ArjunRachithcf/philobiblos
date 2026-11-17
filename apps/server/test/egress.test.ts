@@ -48,8 +48,11 @@ const fails = async (p: Promise<unknown>, reason: EgressError['reason']) => {
 };
 
 describe('what may be reached', () => {
-  it('the manifest\'s hosts; Ollama only when configured; Claude only on the opt-in', () => {
-    expect(egressRules({}).map((r) => r.host)).toEqual(['www.orellfuessli.ch', 'openlibrary.org', 'covers.openlibrary.org']);
+  it('the manifest\'s hosts; no bookshop unless one is enabled; Ollama only when configured; Claude only on the opt-in', () => {
+    expect(egressRules({}).map((r) => r.host)).toEqual(['openlibrary.org', 'covers.openlibrary.org']);
+    expect(egressRules({ shopHosts: ['www.bookshop.example', 'www.bookshop.example'] }).map((r) => r.host)).toEqual(['www.bookshop.example', 'openlibrary.org', 'covers.openlibrary.org']);
+    // A shop's host is plain https on 443 to public addresses: never private, never a redirect target elsewhere.
+    expect(egressRules({ shopHosts: ['www.bookshop.example'] })[0]).toEqual({ host: 'www.bookshop.example' });
     expect(egressRules({ ollamaUrl: 'http://ollama:11434' }).at(-1)).toEqual({ host: 'ollama', scheme: 'http', port: 11434, privateOk: true });
     expect(egressRules({ claude: true }).map((r) => r.host)).toContain('api.anthropic.com');
     expect(egressRules({}).filter((r) => r.privateOk || r.redirectTo).map((r) => r.host)).toEqual(['covers.openlibrary.org']);

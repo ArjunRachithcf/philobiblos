@@ -1,30 +1,44 @@
 # Connectors
 
-All connectors implement `Connector { id; check(): Health; run(since): RunResult }`, run from the job scheduler,
-log to `job_run`, and are idempotent (`mail_seen`, input hashes).
+All sources run from the job scheduler, log to `job_run`, and are idempotent (`mail_seen`, input hashes).
+
+## Bookshops are data (philobiblos#27)
+
+No bookshop is named in the code. A bookshop is a **connector**, `connectors/<id>/connector.yaml` (the ones that ship)
+or the same in `PHILOBIBLOS_CONNECTORS_DIR` (the household's own), following `contracts/connector.schema.json`: its
+mail domains and signing domains, its quote senders, the words of its mails (subjects, labels, currency, reply
+markers, kinds of article), its order address and its price lookup. It is data only: no code, no regular expression
+(words are literals placed into fixed, linear shapes), exact hosts, plain YAML of at most 64 KB, and every object
+refuses keys it does not name, so a connector cannot loosen a rule below. A connector counts for nothing until an admin
+enables it in Settings with a fresh sign-in, for that version of its file (SHA-256); `connector_enabled` keeps which.
+What follows applies to the connectors enabled now, and only to them. How to add one: `docs/connectors.md`.
 
 ## Mail over IMAP (ADR 0007)
 
 No Gmail API and no Google token. The person sets up a filter in their own mail account that forwards **only** the
-bookshop's mail (from `orellfuessli.ch`) to a mailbox used by Philobiblos and nothing else. Philobiblos reads that mailbox over
+bookshop's mail to a mailbox used by Philobiblos and nothing else. Philobiblos reads that mailbox over
 IMAP: TLS only (port 993, certificate verified, no STARTTLS downgrade, no plain auth without TLS), an app password kept
 as a secret (`PHILOBIBLOS_IMAP_PASSWORD`, never in the database, the API or logs), read-only (`EXAMINE`, never `STORE`,
 `MOVE`, `EXPUNGE` or delete; `mail_seen` keeps what was read). New messages after the last run, by UID.
 
 **Every mail is hostile input.** Forwarded mail can be spoofed, so before a mail has any effect:
 
-- the original sender (the forwarded `From`, exactly one address, and `Sender` where present) must be the bookshop's
-  domain; `Return-Path` is not checked, because a forwarding filter rewrites it to the forwarder (SRS) (M3 c);
+- the original sender (the forwarded `From`, exactly one address, and `Sender` where present) must be at exactly one
+  of an enabled connector's mail domains (a subdomain is another sender unless it is listed); with none enabled, no mail
+  counts; `Return-Path` is not checked, because a forwarding filter rewrites it to the forwarder (SRS) (M3 c);
 - it must be addressed (To or Cc) to the household (`PHILOBIBLOS_MAIL_RECIPIENTS`, or the mailbox itself), so a genuine
   bookshop mail to someone else cannot be replayed into Philobiblos;
 - what Philobiblos reads from the headers must be what was signed: a header that may appear once appears once, the passing
   signature covers From, To, Subject, Date, Message-ID, MIME-Version and Content-Type (and Cc, Sender, Reply-To,
   In-Reply-To, References and Content-Transfer-Encoding when present) and no fewer instances than the mail has, and
   a signature over part of the body (`l=`) does not count;
-- the DKIM signature of the bookshop's domain must pass, or, for a forward that broke it, the `ARC-Authentication-Results`
-  of the forwarding provider must show `dkim=pass` for that domain; a mail that fails, or has neither, is stored with
+- a DKIM signature by exactly one of that connector's signing domains (`dkim_domains`, default its mail domains),
+  aligned with the From, must pass, or, for a forward that broke it, the `ARC-Authentication-Results` of the
+  forwarding provider must show `dkim=pass` for one of them, aligned with the From just as well (relaxed: the same
+  organizational domain; a connector whose signing domain is aligned with none of its mail domains cannot be used); a mail that fails, or has neither, is stored with
   `accepted = 0` and shown in the Inbox as "not verified", and changes nothing (and none of its content is kept). The
-  forwarding providers whose ARC seal counts are `PHILOBIBLOS_MAIL_ARC_SEALERS` (default `google.com`); DNS is asked only for
+  forwarding providers whose ARC seal counts are `PHILOBIBLOS_MAIL_ARC_SEALERS` (none by default: no provider is
+  assumed); DNS is asked only for
   DKIM key records (`<selector>._domainkey.<domain>`, a few per mail), never SPF, DMARC or anything a mail names;
 - the header block must be strict RFC 5322 (every line a field, `name:` of printable ASCII, or a continuation; no NUL,
   no lone CR, no other control character but tab, no continuation that is only white space, no encoded word in a
@@ -44,7 +58,7 @@ as a secret (`PHILOBIBLOS_IMAP_PASSWORD`, never in the database, the API or logs
   12 or more digits whatever separates them (other than an ISBN/EAN as the whole field), is dropped;
 - only a verified mail claims its Message-ID (an unverified one is kept under a hash of its bytes, so a forgery cannot
   shadow the genuine mail); the first run reads the last 90 days, by UID SEARCH; when the checks' settings change, that
-  window is read again;
+  window is read again (enabling a connector, or a new version of one, is such a change);
 - links in mail are never followed, fetched or shown as clickable; images are not loaded;
 - MIME is parsed with limits (25 MB per mail, depth 8, 64 parts, 256 KB of headers, no nested message); only
   `application/pdf` attachments (by their bytes, 10 MB) are read, in the media worker (ADR 0009), never in the server;
@@ -52,10 +66,11 @@ as a secret (`PHILOBIBLOS_IMAP_PASSWORD`, never in the database, the API or logs
   creates people, settings or outgoing mail.
 
 Parsers are versioned (`apps/server/src/mail/parse.ts`; `mail_seen.parser_version` is the reader's and the parser's,
-e.g. `m3d-1/quote-1`) and tested against invented fixtures in the layouts below; real mails stay out of the
-repository. The kind comes from the signed headers: the subject for the shop's mails, the sender
-`english-orders@orellfuessli.ch` for quotes and confirmations; any other mail of the bookshop is `other` and changes
-nothing. Each parser is bounded (5,000 lines of at most 1,000 characters, 100 books, 1 MB of text) and linear (lines
+e.g. `m3d-1/quote-1`) and tested against invented fixtures in the layouts below (`connectors/<id>/fixtures/`); real
+mails stay out of the repository. The layouts are the core's; their words are the connector's (the mail's own
+connector, the one whose domain it is from). The kind comes from the signed headers: the connector's subject templates
+for the shop's mails, its quote senders for quotes and confirmations; any other mail of the bookshop is `other` and
+changes nothing. Each parser is bounded (5,000 lines of at most 1,000 characters, 100 books, 1 MB of text) and linear (lines
 split and matched by anchored expressions, never one pattern over the whole text), reads only the bookshop's own lines
 (nothing from the first reply marker on, no `>` line: the household's quoted request is never read), and **fails
 closed**: a recognised mail whose layout is not one it knows is `unknown_layout`, keeps the parser's version and its
@@ -67,11 +82,11 @@ postage), or a PDF the worker cut short.
 
 | Kind | How to recognise | What to extract | Effect |
 |---|---|---|---|
-| `bookshop_quote` | from english-orders@, with prices | per title: ISBN, price, delivery; "not in stock / backorder" | order lines quoted / unavailable; order total = the quoted lines; status quoted |
-| `bookshop_confirm` | from english-orders@: "We have now ordered…", order number | order number | order status drafted → quoted |
-| `online_order` | subject "Ihre Orell Füssli Bestellung (n)" | items: title, author, price; skip non-books (Spielwaren) | lines matched and kept; no Philobiblos order is made (the month's order is Compose's), the invoice makes the copies |
-| `click_collect` | subject "Wir bearbeiten Ihre Bestellung (n)" | "Buch <title> von <author> EAN: <ean> \| Fr. <price>" | as `online_order` |
-| `invoice` | subject "Ihre OrellFüssli-Rechnung Nr. n" + PDF | PDF rows: `EAN  Title  qty ST  price  [discount %]  total CHF  VAT %` | a copy per unit (owned), priced; its order's lines delivered, the order invoiced; the same invoice number again counts once |
+| `bookshop_quote` | from a quote sender (`mail.quote.senders`), with prices | per title: ISBN, price, delivery; a status from `mail.unavailable` | order lines quoted / unavailable; order total = the quoted lines; status quoted |
+| `bookshop_confirm` | from a quote sender, holding a `confirm_phrases` phrase, an order number | order number | order status drafted → quoted |
+| `online_order` | a subject of `online_order_subjects` (e.g. "Ihre Quillmere Bestellung (n)") | items: title, author, price; skip `skip_kinds` (Spielwaren) | lines matched and kept; no Philobiblos order is made (the month's order is Compose's), the invoice makes the copies |
+| `click_collect` | a subject of `click_collect_subjects` | "Buch <title> von <author> EAN: <ean> \| Fr. <price>" | as `online_order` |
+| `invoice` | a subject of `invoice.subjects` (e.g. "Ihre Quillmere-Rechnung Nr. n") + PDF | PDF rows: `EAN  Title  qty <unit>  price  [discount %]  total <currency>  VAT %` | a copy per unit (owned), priced; its order's lines delivered, the order invoiced; the same invoice number again counts once |
 
 A quote or confirmation belongs to a composed order (status drafted or quoted): the one whose `mail_thread_ref` holds
 the mail's signed In-Reply-To (the bookshop's own earlier mail in that thread), or else the one of the month its signed
@@ -87,17 +102,18 @@ run of 4 to 11 digits (spaced, or longer than a kept field allows; format charac
 stripped first) is an unknown layout. In the Inbox, adding an invoice line makes its copies (owned), adding a quote's or
 a shop's line puts its book in a backlog (yours or a kid's), and a line whose EAN is no ISBN can only be skipped.
 
-Layouts (quotes, all must parse; the shop's mails as the fixtures write them):
+Layouts (quotes, all must parse; the example connector's words, as its fixtures write them):
 - `Author: X / Title: Y / ISBN: n / Price: CHF 19.90 / Delivery due: 3 – 4 days` blocks, a field a line (or on one line
   with ` / `)
 - `Paulsen, The Quiet Hedgehog / ISBN: n / Price. CHF 16.90 / delivery due: 2-3 days`
 - one line per book: `- Okafor, Value Beyond Price, CHF 18.90, delivery time 1-3 days` (or `…, not in stock`)
 - online order and click & collect, a line per article: `<kind> <title> von <author> [EAN: <ean>] | [<n> x ]Fr. <price>`,
-  where the kind is `Buch` or `Taschenbuch` (books) or one Philobiblos knows to skip (`Spielwaren`, `Kalender`, …)
-- invoice rows as the media worker splits the PDF (cells at wide gaps); `Versandkosten`/`Porto` and `Total` rows
-  are read for the sum; the PDF's text is never stored
+  where the kind is one of `book_kinds` (`Buch`, `Taschenbuch`) or of `skip_kinds` (`Spielwaren`, `Kalender`, …)
+- invoice rows as the media worker splits the PDF (cells at wide gaps); `postage_words` (`Versandkosten`, `Porto`) and
+  `total_words` rows are read for the sum; the PDF's text is never stored
 
-**Compose** (instead of drafts): Philobiblos builds a `mailto:` link to english-orders@orellfuessli.ch with the subject and
+**Compose** (instead of drafts): Philobiblos builds a `mailto:` link to the bookshop's address (the one an admin set in
+Settings, or else the `order.to` of the one enabled connector that names one) with the subject and
 the text filled in (the books, the delivery address, a request for prices and delivery times). The person's own mail
 app opens it; Philobiblos never sends, and the link has no Cc or Bcc: the request, and whatever the person adds to it, goes
 to the bookshop alone, never to Philobiblos's mailbox (decided 2026-11-16, PR #14 review). **Philobiblos never sees the card
@@ -107,12 +123,14 @@ at rest with a key outside the database (`sealed_secret`, ADR 0009).
 
 ## Price lookup (ADR 0008)
 
-`PriceSource` interface. Orell Füssli implementation: GET `https://www.orellfuessli.ch/suche?sq=<title author>`,
-parse result tiles (title, author, format "Buch (Taschenbuch|Gebundene Ausgabe)", "Fr. 24.90", availability text,
-article id from `/shop/home/artikeldetails/A…`). Choose the English print edition whose normalised title matches.
-1 request / 3 s, cache 7 days, User-Agent identifies Philobiblos. Read-only: never touches wishlist, cart or account.
-The page is hostile input: 2 MB and 10 s at most, no redirects off the host, parsed as text (no script runs), and only
-the fields above are kept.
+`PriceSource` interface, one per enabled connector with `prices` (`kind: search_tiles`): GET its `url` with `{query}`
+replaced by the title and first author (form-encoded, in the query string only), parse result tiles (an article link
+`[https://<host>]<article.path><id_prefix><digits>`, the title, a `print_formats` phrase, an amount with a `money`
+symbol, an `availability` phrase). Choose the print edition in one of `want_languages` whose normalised title matches,
+skipping tiles naming one of `other_languages`. 1 request / 3 s, cache 7 days, User-Agent identifies Philobiblos.
+Read-only: never touches wishlist, cart or account. The page is hostile input: 1 MB and 10 s at most, no redirects off
+the host, parsed as text (no script runs), and only the fields above are kept. Its host is on the egress allowlist only
+while the connector is enabled; with none, prices stay as they are and count as the household's unknown price.
 
 ## Metadata
 
@@ -122,7 +140,8 @@ worker before they are stored, so no original file is ever served. Covers come f
 the Internet Archive (`archive.org`, then a data node `ia<number>.us.archive.org`): the only redirects to another host
 the client follows (ADR 0009).
 
-All outgoing requests go through one HTTP client that allows only the hosts in the manifest's egress list (ADR 0009).
+All outgoing requests go through one HTTP client that allows only the hosts in the manifest's egress list and the
+price hosts of the enabled connectors, asked again at each request (ADR 0009).
 
 ## Phone share (ADR 0006)
 
@@ -145,5 +164,6 @@ All outgoing requests go through one HTTP client that allows only the hosts in t
 
 ## Wishlist import (one-off, optional)
 
-Seed already contains the Orell Füssli wishlist and "To buy" list as of 2026-11-15 (`seed/wishlist.json`, `tobuy` flag).
+Seed already contains the household's bookshop wishlist and "To buy" list as of 2026-11-15 (`seed/wishlist.json`,
+`tobuy` flag; their offers are kept with the source `seed`).
 A later importer may read a logged-in wishlist export if the person provides one; Philobiblos does not log in to retailers.

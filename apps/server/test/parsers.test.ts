@@ -8,13 +8,21 @@ import * as t from '../src/db/schema';
 import { seal } from '../src/household/sealed';
 import { applyMail, matchBook, monthOfSubject, unmatchedLines } from '../src/mail/effects';
 import { PARSER_VERSION, PDF_TRIES, refreshMail, type MailDeps } from '../src/mail/job';
-import { PARSERS, classify, ownLines, parseInvoice, parseQuote, parseShop } from '../src/mail/parse';
+import * as parse from '../src/mail/parse';
 import { addressParts, htmlLines, openVerified, type VerifiedMail } from '../src/mail/read';
 import { SEALED } from '../src/routes/month';
 import type { MediaOutcome } from '../src/media/client';
 import { MediaUnavailable } from '../src/media/client';
 import { TEST_SEALING_KEY, household } from './helpers';
-import { CFG, HOUSEHOLD, SEALERS, fakeBox, message, resolver, signed } from './mailkit';
+import { CFG, CONNECTORS, HOUSEHOLD, RULES, SEALERS, SHOPS, fakeBox, message, resolver, signed } from './mailkit';
+
+// The parsers with the invented example bookshop's rules (connectors/quillmere/connector.yaml).
+const { PARSERS } = parse;
+const classify = (from: string, subject: string | null) => parse.classify(RULES, from, subject);
+const ownLines = (text: string) => parse.ownLines(text, RULES);
+const parseQuote = (text: string, address: string[]) => parse.parseQuote(text, address, RULES);
+const parseShop = (kind: 'online_order' | 'click_collect', n: string, text: string, address: string[]) => parse.parseShop(kind, n, text, address, RULES);
+const parseInvoice = (n: string, rows: string[][], truncated: boolean, address: string[]) => parse.parseInvoice(n, rows, truncated, address, RULES);
 
 const QUOTE = [
   'Dear customer,', '', 'Thank you for your order. Here are the prices:', '',
@@ -123,14 +131,14 @@ describe('quotes: the three layouts, and only the bookshop\'s own lines', () => 
 
 describe('the shop\'s order mails and invoices', () => {
   it('recognised by their signed subject (and the English Bookshop by its sender); anything else is "other"', () => {
-    expect(classify('x@orellfuessli.ch', 'Ihre Orell Füssli Bestellung (4400123)')).toEqual({ kind: 'online_order', number: '4400123' });
-    expect(classify('x@orellfuessli.ch', 'Wir bearbeiten Ihre Bestellung (4400124)')).toEqual({ kind: 'click_collect', number: '4400124' });
-    expect(classify('x@orellfuessli.ch', 'Ihre OrellFüssli-Rechnung Nr. 99001122')).toEqual({ kind: 'invoice', number: '99001122' });
-    expect(classify('english-orders@orellfuessli.ch', 'Re: Book order, November 2026')).toEqual({ kind: 'quote_or_confirm' });
-    expect(classify('newsletter@orellfuessli.ch', 'Re: Book order, November 2026')).toEqual({ kind: 'other' });
+    expect(classify('x@quillmere.example', 'Ihre Quillmere Bestellung (4400123)')).toEqual({ kind: 'online_order', number: '4400123' });
+    expect(classify('x@quillmere.example', 'Wir bearbeiten Ihre Bestellung (4400124)')).toEqual({ kind: 'click_collect', number: '4400124' });
+    expect(classify('x@quillmere.example', 'Ihre Quillmere-Rechnung Nr. 99001122')).toEqual({ kind: 'invoice', number: '99001122' });
+    expect(classify('english-orders@quillmere.example', 'Re: Book order, November 2026')).toEqual({ kind: 'quote_or_confirm' });
+    expect(classify('newsletter@quillmere.example', 'Re: Book order, November 2026')).toEqual({ kind: 'other' });
     // A number that is not one run of 4 to 11 digits (spaced, or very long) fails closed, never "other" (round 2).
-    expect(classify('x@orellfuessli.ch', 'Ihre OrellFüssli-Rechnung Nr. 1234 5678')).toEqual({ kind: 'number_unreadable', expected: 'invoice' });
-    expect(classify('x@orellfuessli.ch', `Wir bearbeiten Ihre Bestellung (${'9'.repeat(41)})`)).toEqual({ kind: 'number_unreadable', expected: 'click_collect' });
+    expect(classify('x@quillmere.example', 'Ihre Quillmere-Rechnung Nr. 1234 5678')).toEqual({ kind: 'number_unreadable', expected: 'invoice' });
+    expect(classify('x@quillmere.example', `Wir bearbeiten Ihre Bestellung (${'9'.repeat(41)})`)).toEqual({ kind: 'number_unreadable', expected: 'click_collect' });
   });
 
   it('click & collect and online orders: one line per article; non-books skipped', () => {
@@ -224,16 +232,16 @@ describe('effects, only from verified mail', () => {
     const db = world();
     const mail = await signed(message({ id: 'q1', subject: 'Re: Book order, November 2026', body: QUOTE }));
     expect((await run(db, fakeBox([{ uid: 1, raw: mail }]))).detail).toBe('1 new: 1 verified, 0 not verified, 0 seen before');
-    expect(order(db)).toMatchObject({ status: 'quoted', quotedC: 1990 + 1690, mailThreadRef: '<q1@orellfuessli.ch>' });
+    expect(order(db)).toMatchObject({ status: 'quoted', quotedC: 1990 + 1690, mailThreadRef: '<q1@quillmere.example>' });
     expect(lines(db)).toMatchObject({
       b_tide: { state: 'quoted', quotedC: 1990, delivery: '3 – 4 days' },
       b_hedgehog: { state: 'quoted', quotedC: 1690 },
       b_value: { state: 'unavailable', quotedC: null },
     });
     expect(db.select().from(t.bookOffer).where(eq(t.bookOffer.source, 'quote')).all().map((o) => [o.bookId, o.priceC]).sort()).toEqual([['b_hedgehog', 1690], ['b_tide', 1990]]);
-    expect(kept(db, '<q1@orellfuessli.ch>')).toMatchObject({ kind: 'bookshop_quote', accepted: 1, parserVersion: `${PARSER_VERSION}/${PARSERS.quote}` });
-    expect(unmatchedLines(db)).toEqual([{ mail: '<q1@orellfuessli.ch>', kind: 'bookshop_quote', index: 3, title: 'A Map of Small Rivers', author: 'Reed', ean: null }]);
-    expect(kept(db, '<q1@orellfuessli.ch>').parsedJson).not.toMatch(/4111|Premium|Dear customer/);
+    expect(kept(db, '<q1@quillmere.example>')).toMatchObject({ kind: 'bookshop_quote', accepted: 1, parserVersion: `${PARSER_VERSION}/${PARSERS.quote}` });
+    expect(unmatchedLines(db)).toEqual([{ mail: '<q1@quillmere.example>', kind: 'bookshop_quote', index: 3, title: 'A Map of Small Rivers', author: 'Reed', ean: null }]);
+    expect(kept(db, '<q1@quillmere.example>').parsedJson).not.toMatch(/4111|Premium|Dear customer/);
   });
 
   it('a quote matches only the order\'s own books: a title in the library but not on the order stays unmatched (PR #14 review)', async () => {
@@ -262,36 +270,36 @@ describe('effects, only from verified mail', () => {
 
   it('a confirmation in the thread of a quote ties to that order by its signed In-Reply-To: drafted becomes quoted', async () => {
     const db = world();
-    db.update(t.order).set({ mailThreadRef: '<q0@orellfuessli.ch>' }).where(eq(t.order.id, 'o_nov')).run();
-    const mail = await signed(message({ id: 'c1', subject: 'Your books', extra: 'In-Reply-To: <q0@orellfuessli.ch>', body: 'We have now ordered your books.\nOrder number: 7712345' }));
+    db.update(t.order).set({ mailThreadRef: '<q0@quillmere.example>' }).where(eq(t.order.id, 'o_nov')).run();
+    const mail = await signed(message({ id: 'c1', subject: 'Your books', extra: 'In-Reply-To: <q0@quillmere.example>', body: 'We have now ordered your books.\nOrder number: 7712345' }));
     await run(db, fakeBox([{ uid: 1, raw: mail }]));
-    expect(order(db)).toMatchObject({ status: 'quoted', mailThreadRef: '<q0@orellfuessli.ch> <c1@orellfuessli.ch>' });
-    expect(JSON.parse(kept(db, '<c1@orellfuessli.ch>').parsedJson!)).toMatchObject({ orderNumber: '7712345', orderId: 'o_nov' });
+    expect(order(db)).toMatchObject({ status: 'quoted', mailThreadRef: '<q0@quillmere.example> <c1@quillmere.example>' });
+    expect(JSON.parse(kept(db, '<c1@quillmere.example>').parsedJson!)).toMatchObject({ orderNumber: '7712345', orderId: 'o_nov' });
   });
 
   it('the same quote, not verified (unsigned), or from another sender of the bookshop: nothing changes', async () => {
     const db = world();
     await run(db, fakeBox([
       { uid: 1, raw: message({ id: 'q3', subject: 'Re: Book order, November 2026', body: QUOTE }) },
-      { uid: 2, raw: await signed(message({ id: 'q4', from: 'newsletter@orellfuessli.ch', subject: 'Re: Book order, November 2026', body: QUOTE })) },
+      { uid: 2, raw: await signed(message({ id: 'q4', from: 'newsletter@quillmere.example', subject: 'Re: Book order, November 2026', body: QUOTE })) },
     ]));
     expect(order(db)).toMatchObject({ status: 'drafted', quotedC: null });
     expect(Object.values(lines(db)).map((l) => l.state)).toEqual(['planned', 'planned', 'planned']);
-    expect(kept(db, '<q4@orellfuessli.ch>')).toMatchObject({ kind: 'other', accepted: 1 });
+    expect(kept(db, '<q4@quillmere.example>')).toMatchObject({ kind: 'other', accepted: 1 });
   });
 
   it('applyMail refuses anything that did not come from openVerified', () => {
     const db = world();
-    const fake = { auth: { accepted: true, via: 'dkim', reason: 'trust me', fromDomain: 'orellfuessli.ch', messageId: '<x@y>', from: 'english-orders@orellfuessli.ch' }, content: { subject: 'Re: Book order, November 2026', date: null, messageId: null, inReplyTo: null, pdfs: 0 }, text: QUOTE, tooLong: false, pdfs: [], threadRef: null } as unknown as VerifiedMail;
+    const fake = { auth: { accepted: true, via: 'dkim', reason: 'trust me', fromDomain: 'quillmere.example', messageId: '<x@y>', from: 'english-orders@quillmere.example' }, content: { subject: 'Re: Book order, November 2026', date: null, messageId: null, inReplyTo: null, pdfs: 0 }, text: QUOTE, tooLong: false, pdfs: [], threadRef: null } as unknown as VerifiedMail;
     expect(() => db.transaction((tx) => applyMail(tx, fake, parseQuote(QUOTE, []), { key: 'x', now: NOW }))).toThrow(/only to a verified mail/);
     expect(order(db).status).toBe('drafted');
   });
 
   it('an online order or click & collect: matched lines recorded, the others to the Inbox; no order is changed', async () => {
     const db = world();
-    const mail = await signed(message({ id: 'cc1', from: 'shop@orellfuessli.ch', subject: 'Wir bearbeiten Ihre Bestellung (4400124)', body: 'Buch The Quiet Hedgehog von Lena Paulsen EAN: 9780000000019 | Fr. 16.90\nBuch A Map of Small Rivers von Tamsin Reed | Fr. 22.50' }));
+    const mail = await signed(message({ id: 'cc1', from: 'shop@quillmere.example', subject: 'Wir bearbeiten Ihre Bestellung (4400124)', body: 'Buch The Quiet Hedgehog von Lena Paulsen EAN: 9780000000019 | Fr. 16.90\nBuch A Map of Small Rivers von Tamsin Reed | Fr. 22.50' }));
     await run(db, fakeBox([{ uid: 1, raw: mail }]));
-    expect(JSON.parse(kept(db, '<cc1@orellfuessli.ch>').parsedJson!)).toMatchObject({ orderNumber: '4400124', lines: [{ bookId: 'b_hedgehog' }, { bookId: null }] });
+    expect(JSON.parse(kept(db, '<cc1@quillmere.example>').parsedJson!)).toMatchObject({ orderNumber: '4400124', lines: [{ bookId: 'b_hedgehog' }, { bookId: null }] });
     expect(unmatchedLines(db).map((l) => l.title)).toEqual(['A Map of Small Rivers']);
     expect(order(db).status).toBe('drafted');
   });
@@ -305,7 +313,7 @@ const invoiceRows = (): MediaOutcome => ({ id: 'j', ok: true, kind: 'pdf.text', 
   ['9780000000026', 'A Map of Small Rivers', '1 ST', '22.50', '22.50 CHF', '2.6 %'],
   ['Total', '76.20 CHF'],
 ] });
-const invoice = (id: string, number = '99001122') => signed(message({ id, from: 'rechnung@orellfuessli.ch', subject: `Ihre OrellFüssli-Rechnung Nr. ${number}`, body: 'Guten Tag, Ihre Rechnung finden Sie im Anhang.', pdf: PDF }));
+const invoice = (id: string, number = '99001122') => signed(message({ id, from: 'rechnung@quillmere.example', subject: `Ihre Quillmere-Rechnung Nr. ${number}`, body: 'Guten Tag, Ihre Rechnung finden Sie im Anhang.', pdf: PDF }));
 
 describe('invoices: copies, through the media worker only', () => {
   it('each copy owned, the order lines delivered and the order invoiced; unmatched rows to the Inbox; no PDF text kept', async () => {
@@ -320,7 +328,7 @@ describe('invoices: copies, through the media worker only', () => {
     expect(order(db)).toMatchObject({ status: 'invoiced', invoicedC: 1990 + 3380 });
     expect(lines(db)).toMatchObject({ b_tide: { state: 'delivered' }, b_hedgehog: { state: 'delivered' }, b_value: { state: 'planned' } });
     expect(unmatchedLines(db).map((l) => l.ean)).toEqual(['9780000000026']);
-    const row = kept(db, '<i1@orellfuessli.ch>');
+    const row = kept(db, '<i1@quillmere.example>');
     expect(row).toMatchObject({ kind: 'invoice', accepted: 1 });
     expect(row.parsedJson).not.toMatch(/Kundennummer|5550001|%PDF/);
   });
@@ -330,20 +338,20 @@ describe('invoices: copies, through the media worker only', () => {
     const box = fakeBox([{ uid: 1, raw: await invoice('i2') }, { uid: 2, raw: await invoice('i3') }]);
     await run(db, box, { pdfText: async () => invoiceRows() });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(3);
-    expect(JSON.parse(kept(db, '<i3@orellfuessli.ch>').parsedJson!)).toMatchObject({ duplicateOf: '<i2@orellfuessli.ch>' });
+    expect(JSON.parse(kept(db, '<i3@quillmere.example>').parsedJson!)).toMatchObject({ duplicateOf: '<i2@quillmere.example>' });
   });
 
   it('no worker yet: the mail waits (only where it is kept); the next run reads it again by its UID and applies it', async () => {
     const db = world();
     const box = fakeBox([{ uid: 4, raw: await invoice('i4') }]);
     await run(db, box, { pdfText: async () => { throw new MediaUnavailable(); } });
-    expect(kept(db, '<i4@orellfuessli.ch>')).toMatchObject({ kind: 'pending_pdf', accepted: 1 });
-    expect(JSON.parse(kept(db, '<i4@orellfuessli.ch>').parsedJson!)).toMatchObject({ uid: 4, uidValidity: 7, tries: 1 });
+    expect(kept(db, '<i4@quillmere.example>')).toMatchObject({ kind: 'pending_pdf', accepted: 1 });
+    expect(JSON.parse(kept(db, '<i4@quillmere.example>').parsedJson!)).toMatchObject({ uid: 4, uidValidity: 7, tries: 1 });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
     box.read.length = 0;
     expect((await run(db, box, { pdfText: async () => invoiceRows() })).detail).toBe('0 new: 0 verified, 0 not verified, 0 seen before; 1 read again');
     expect(box.read).toEqual([4]);
-    expect(kept(db, '<i4@orellfuessli.ch>').kind).toBe('invoice');
+    expect(kept(db, '<i4@quillmere.example>').kind).toBe('invoice');
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(3);
   });
 
@@ -355,8 +363,8 @@ describe('invoices: copies, through the media worker only', () => {
     msgs[0]!.raw = Buffer.from(msgs[0]!.raw.toString().replace('Ihre Rechnung finden', 'Ihre Rechnung: zahlen Sie hier'));
     await run(db, box, { pdfText: async () => invoiceRows() });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
-    expect(kept(db, '<i5@orellfuessli.ch>')).toMatchObject({ kind: 'pending_pdf' });
-    expect(JSON.parse(kept(db, '<i5@orellfuessli.ch>').authJson!)).toMatchObject({ accepted: false, reason: expect.stringMatching(/^read again: /) });
+    expect(kept(db, '<i5@quillmere.example>')).toMatchObject({ kind: 'pending_pdf' });
+    expect(JSON.parse(kept(db, '<i5@quillmere.example>').authJson!)).toMatchObject({ accepted: false, reason: expect.stringMatching(/^read again: /) });
   });
 
   it('read again, another genuine mail at that UID: refused for good, nothing applied', async () => {
@@ -366,7 +374,7 @@ describe('invoices: copies, through the media worker only', () => {
     await run(db, box, { pdfText: async () => { throw new MediaUnavailable(); } });
     msgs[0]!.raw = await invoice('i7', '99001199');
     await run(db, box, { pdfText: async () => invoiceRows() });
-    expect(kept(db, '<i6@orellfuessli.ch>')).toMatchObject({ kind: 'reread_refused', accepted: 1 });
+    expect(kept(db, '<i6@quillmere.example>')).toMatchObject({ kind: 'reread_refused', accepted: 1 });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
   });
 
@@ -378,17 +386,17 @@ describe('invoices: copies, through the media worker only', () => {
     await run(db, renumbered, { pdfText: async () => invoiceRows() });
     expect(renumbered.read).toEqual([4]);
     // Its old place is gone: given up for the re-read (the window still reads it in full if it is there).
-    expect(kept(db, '<i8@orellfuessli.ch>')).toMatchObject({ kind: 'reread_refused' });
-    expect(JSON.parse(kept(db, '<i8@orellfuessli.ch>').authJson!).reason).toMatch(/renumbered/);
-    expect(kept(db, '<i9@orellfuessli.ch>')).toMatchObject({ kind: 'invoice' });
+    expect(kept(db, '<i8@quillmere.example>')).toMatchObject({ kind: 'reread_refused' });
+    expect(JSON.parse(kept(db, '<i8@quillmere.example>').authJson!).reason).toMatch(/renumbered/);
+    expect(kept(db, '<i9@quillmere.example>')).toMatchObject({ kind: 'invoice' });
   });
 
   it('a waiting mail met again under its new UID (a renumbered folder) is read in full and applied', async () => {
     const db = world();
     await run(db, fakeBox([{ uid: 4, raw: await invoice('i10') }]), { pdfText: async () => { throw new MediaUnavailable(); } });
     await run(db, fakeBox([{ uid: 11, raw: await invoice('i10') }], 8), { pdfText: async () => invoiceRows() });
-    expect(kept(db, '<i10@orellfuessli.ch>')).toMatchObject({ kind: 'invoice' });
-    expect(JSON.parse(kept(db, '<i10@orellfuessli.ch>').parsedJson!)).toMatchObject({ uid: 11, uidValidity: 8 });
+    expect(kept(db, '<i10@quillmere.example>')).toMatchObject({ kind: 'invoice' });
+    expect(JSON.parse(kept(db, '<i10@quillmere.example>').parsedJson!)).toMatchObject({ uid: 11, uidValidity: 8 });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(3);
   });
 
@@ -396,8 +404,8 @@ describe('invoices: copies, through the media worker only', () => {
     const db = world();
     const box = fakeBox([{ uid: 4, raw: await invoice('i11') }]);
     for (let i = 0; i < PDF_TRIES; i++) await run(db, box, { pdfText: async () => ({ id: '', ok: false, error: 'busy' }) });
-    expect(kept(db, '<i11@orellfuessli.ch>')).toMatchObject({ kind: 'unknown_layout' });
-    expect(JSON.parse(kept(db, '<i11@orellfuessli.ch>').parsedJson!)).toMatchObject({ reason: 'the media worker did not read the PDF' });
+    expect(kept(db, '<i11@quillmere.example>')).toMatchObject({ kind: 'unknown_layout' });
+    expect(JSON.parse(kept(db, '<i11@quillmere.example>').parsedJson!)).toMatchObject({ reason: 'the media worker did not read the PDF' });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
   });
 
@@ -406,19 +414,19 @@ describe('invoices: copies, through the media worker only', () => {
     const box = fakeBox([{ uid: 50, raw: await invoice('i20') }]);
     await run(db, box, { pdfText: async () => { throw new MediaUnavailable(); } });
     // Behind it in the table: 20 rows from an old UIDVALIDITY and 20 whose mail has left the mailbox.
-    const pending = (id: string, uid: number, uidValidity: number) => ({ messageId: `<${id}@orellfuessli.ch>`, kind: 'pending_pdf', parsedJson: JSON.stringify({ uid, uidValidity, tries: 1 }), parserVersion: PARSER_VERSION, seenAt: NOW, authJson: '{}', accepted: 1 });
+    const pending = (id: string, uid: number, uidValidity: number) => ({ messageId: `<${id}@quillmere.example>`, kind: 'pending_pdf', parsedJson: JSON.stringify({ uid, uidValidity, tries: 1 }), parserVersion: PARSER_VERSION, seenAt: NOW, authJson: '{}', accepted: 1 });
     const rows = [...Array.from({ length: 20 }, (_, i) => pending(`old${i}`, i + 1, 6)), ...Array.from({ length: 20 }, (_, i) => pending(`gone${i}`, 100 + i, 7))];
-    db.delete(t.mailSeen).where(eq(t.mailSeen.messageId, '<i20@orellfuessli.ch>')).run();
+    db.delete(t.mailSeen).where(eq(t.mailSeen.messageId, '<i20@quillmere.example>')).run();
     db.insert(t.mailSeen).values([...rows, pending('i20', 50, 7)]).run();
     await run(db, box, { pdfText: async () => invoiceRows() });
     await run(db, box, { pdfText: async () => invoiceRows() });
-    expect(kept(db, '<i20@orellfuessli.ch>').kind).toBe('invoice');
+    expect(kept(db, '<i20@quillmere.example>').kind).toBe('invoice');
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(3);
-    for (const id of ['<old0@orellfuessli.ch>', '<gone0@orellfuessli.ch>']) {
+    for (const id of ['<old0@quillmere.example>', '<gone0@quillmere.example>']) {
       expect(kept(db, id)).toMatchObject({ kind: 'reread_refused' });
       expect(JSON.parse(kept(db, id).parsedJson!).tries).toBe(2);
     }
-    expect(JSON.parse(kept(db, '<gone0@orellfuessli.ch>').authJson!).reason).toMatch(/no longer in the mailbox/);
+    expect(JSON.parse(kept(db, '<gone0@quillmere.example>').authJson!).reason).toMatch(/no longer in the mailbox/);
   });
 
   it('an invoice row with an EAN no book has is never matched by its title to a book with another ISBN (PR #14 review)', async () => {
@@ -442,24 +450,24 @@ describe('invoices: copies, through the media worker only', () => {
     await run(db, fakeBox([{ uid: 1, raw: await invoice('i23') }]), { pdfText: async () => rows() });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
     expect(lines(db).b_tide!.state).toBe('planned');
-    expect(unmatchedLines(db)).toEqual([{ mail: '<i23@orellfuessli.ch>', kind: 'invoice', index: 0, title: 'The Long Tide of Markets', author: null, ean: null }]);
+    expect(unmatchedLines(db)).toEqual([{ mail: '<i23@quillmere.example>', kind: 'invoice', index: 0, title: 'The Long Tide of Markets', author: null, ean: null }]);
   });
 
   it('a waiting mail given up by the re-read (its folder renumbered) is read in full when the window meets it later (PR #14 review, round 2)', async () => {
     const db = world();
     await run(db, fakeBox([{ uid: 4, raw: await invoice('i24') }]), { pdfText: async () => { throw new MediaUnavailable(); } });
     await run(db, fakeBox([], 8), { pdfText: async () => invoiceRows() });
-    expect(kept(db, '<i24@orellfuessli.ch>').kind).toBe('reread_refused');
+    expect(kept(db, '<i24@quillmere.example>').kind).toBe('reread_refused');
     await run(db, fakeBox([{ uid: 5, raw: await invoice('i24') }], 8), { pdfText: async () => invoiceRows() });
-    expect(kept(db, '<i24@orellfuessli.ch>').kind).toBe('invoice');
+    expect(kept(db, '<i24@quillmere.example>').kind).toBe('invoice');
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(3);
   });
 
   it('an invoice number too long to keep (12 digits) fails closed as an unknown layout, never "other" (PR #14 review)', async () => {
     const db = world();
     await run(db, fakeBox([{ uid: 1, raw: await invoice('i22', '990011223344') }]), { pdfText: async () => invoiceRows() });
-    expect(kept(db, '<i22@orellfuessli.ch>')).toMatchObject({ kind: 'unknown_layout' });
-    expect(JSON.parse(kept(db, '<i22@orellfuessli.ch>').parsedJson!)).toMatchObject({ expected: 'invoice', reason: 'its order or invoice number is not 4 to 11 digits' });
+    expect(kept(db, '<i22@quillmere.example>')).toMatchObject({ kind: 'unknown_layout' });
+    expect(JSON.parse(kept(db, '<i22@quillmere.example>').parsedJson!)).toMatchObject({ expected: 'invoice', reason: 'its order or invoice number is not 4 to 11 digits' });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toEqual([]);
   });
 
@@ -467,11 +475,11 @@ describe('invoices: copies, through the media worker only', () => {
     const db = world();
     const box = fakeBox([{ uid: 2, raw: await signed(message({ id: 'u1', subject: 'Re: Book order, November 2026', body: 'Dear customer,\nSpecial offer: CHF 5.00 off' })) }]);
     await run(db, box);
-    expect(kept(db, '<u1@orellfuessli.ch>')).toMatchObject({ kind: 'unknown_layout', parserVersion: `${PARSER_VERSION}/${PARSERS.quote}` });
+    expect(kept(db, '<u1@quillmere.example>')).toMatchObject({ kind: 'unknown_layout', parserVersion: `${PARSER_VERSION}/${PARSERS.quote}` });
     box.read.length = 0;
     await run(db, box);
     expect(box.read).toEqual([]);
-    db.update(t.mailSeen).set({ parserVersion: 'm3d-0/quote-0' }).where(eq(t.mailSeen.messageId, '<u1@orellfuessli.ch>')).run();
+    db.update(t.mailSeen).set({ parserVersion: 'm3d-0/quote-0' }).where(eq(t.mailSeen.messageId, '<u1@quillmere.example>')).run();
     await run(db, box);
     expect(box.read).toEqual([2]);
   });
@@ -479,13 +487,13 @@ describe('invoices: copies, through the media worker only', () => {
   it('a mail M3 (c) read before the parsers existed ("unclassified") is read again and applied', async () => {
     const db = world();
     const mail = await signed(message({ id: 'old1', subject: 'Re: Book order, November 2026', body: QUOTE }));
-    db.insert(t.mailSeen).values({ messageId: '<old1@orellfuessli.ch>', kind: 'unclassified', parsedJson: JSON.stringify({ uid: 9, uidValidity: 7 }), parserVersion: 'm3c-3', seenAt: NOW, authJson: '{}', accepted: 1 }).run();
+    db.insert(t.mailSeen).values({ messageId: '<old1@quillmere.example>', kind: 'unclassified', parsedJson: JSON.stringify({ uid: 9, uidValidity: 7 }), parserVersion: 'm3c-3', seenAt: NOW, authJson: '{}', accepted: 1 }).run();
     const box = fakeBox([{ uid: 9, raw: mail }]);
     // The cursor is past it, under the same settings: only the re-read path can find it.
-    const configKey = createHash('sha256').update(JSON.stringify([PARSER_VERSION, [...SEALERS].sort(), [...HOUSEHOLD].sort()])).digest('hex');
+    const configKey = createHash('sha256').update(JSON.stringify([PARSER_VERSION, [...SEALERS].sort(), [...HOUSEHOLD].sort(), [['quillmere', CONNECTORS.get('quillmere')!.version]]])).digest('hex');
     db.insert(t.mailCursor).values({ folder: 'INBOX', uidValidity: 7, lastUid: 9, configKey, updatedAt: NOW }).run();
     expect((await run(db, box)).detail).toBe('0 new: 0 verified, 0 not verified, 0 seen before; 1 read again');
-    expect(kept(db, '<old1@orellfuessli.ch>').kind).toBe('bookshop_quote');
+    expect(kept(db, '<old1@quillmere.example>').kind).toBe('bookshop_quote');
     expect(order(db).status).toBe('quoted');
   });
 });
@@ -496,7 +504,7 @@ describe('the delivery address never reaches a kept field', () => {
     seal(db, Buffer.from(TEST_SEALING_KEY, 'base64'), SEALED.deliveryAddress, 'A Reader\nSomewhere Street 1\n8000 Exampletown');
     const body = '- Okafor, Value Beyond Price, CHF 18.90, to Somewhere Street 1';
     await run(db, fakeBox([{ uid: 1, raw: await signed(message({ id: 'a1', subject: 'Re: Book order, November 2026', body })) }]), {}, { ...CFG, sealingKey: { value: TEST_SEALING_KEY } });
-    const k = kept(db, '<a1@orellfuessli.ch>').parsedJson!;
+    const k = kept(db, '<a1@quillmere.example>').parsedJson!;
     expect(JSON.parse(k)).toMatchObject({ lines: [{ title: 'Value Beyond Price', delivery: null, bookId: 'b_value' }] });
     expect(k).not.toMatch(/Somewhere/);
   });
@@ -504,13 +512,13 @@ describe('the delivery address never reaches a kept field', () => {
   it('the generated ids pass safeField too: a Message-ID with a long number is not kept as a field (the row is still keyed by it)', async () => {
     const db = world();
     await run(db, fakeBox([{ uid: 1, raw: await signed(message({ id: '4111111111111111', subject: 'Re: Book order, November 2026', body: QUOTE })) }]));
-    const row = kept(db, '<4111111111111111@orellfuessli.ch>');
+    const row = kept(db, '<4111111111111111@quillmere.example>');
     expect(JSON.parse(row.parsedJson!)).toMatchObject({ messageId: null, inReplyTo: null });
   });
 
   it('openVerified is the one way in: the same checks for a mail read the first time and again', async () => {
     const good = await signed(message({ id: 'v1' }));
-    const o = { arcSealers: SEALERS, recipients: HOUSEHOLD, resolver, address: [] };
+    const o = { shops: SHOPS, arcSealers: SEALERS, recipients: HOUSEHOLD, resolver, address: [] };
     expect(await openVerified(good, o)).toMatchObject({ ok: true });
     expect(await openVerified(Buffer.concat([Buffer.from('Subject: forged\r\n'), good]), o)).toMatchObject({ ok: false });
     expect(await openVerified(Buffer.from(good.toString().replace('To: shelf.household@example.org', 'To: stranger@example.com')), o)).toMatchObject({ ok: false });
@@ -524,14 +532,14 @@ describe('philobiblos#15: the round-3 nits', () => {
     if (p.kind !== 'online_order') throw new Error('an online order');
     expect(p.lines.map((l) => l.notBook ?? false)).toEqual([true, false]);
     const db = world();
-    await run(db, fakeBox([{ uid: 1, raw: await signed(message({ id: 'oo15', from: 'shop@orellfuessli.ch', subject: 'Ihre Orell Füssli Bestellung (4400123)', body: text })) }]));
-    expect(JSON.parse(kept(db, '<oo15@orellfuessli.ch>').parsedJson!)).toMatchObject({ lines: [{ bookId: null, notBook: true }, { bookId: 'b_hedgehog' }] });
+    await run(db, fakeBox([{ uid: 1, raw: await signed(message({ id: 'oo15', from: 'shop@quillmere.example', subject: 'Ihre Quillmere Bestellung (4400123)', body: text })) }]));
+    expect(JSON.parse(kept(db, '<oo15@quillmere.example>').parsedJson!)).toMatchObject({ lines: [{ bookId: null, notBook: true }, { bookId: 'b_hedgehog' }] });
   });
 
   it('classify strips format characters: a zero-width character in or after the number does not hide it', () => {
-    expect(classify('x@orellfuessli.ch', 'Ihre OrellFüssli-Rechnung Nr. 1234​5678')).toEqual({ kind: 'invoice', number: '12345678' });
-    expect(classify('x@orellfuessli.ch', 'Ihre OrellFüssli-Rechnung Nr. 12345678​')).toEqual({ kind: 'invoice', number: '12345678' });
-    expect(classify('x@orellfuessli.ch', 'Wir bearbeiten Ihre Bestellung (4400⁠124)')).toEqual({ kind: 'click_collect', number: '4400124' });
+    expect(classify('x@quillmere.example', 'Ihre Quillmere-Rechnung Nr. 1234​5678')).toEqual({ kind: 'invoice', number: '12345678' });
+    expect(classify('x@quillmere.example', 'Ihre Quillmere-Rechnung Nr. 12345678​')).toEqual({ kind: 'invoice', number: '12345678' });
+    expect(classify('x@quillmere.example', 'Wir bearbeiten Ihre Bestellung (4400⁠124)')).toEqual({ kind: 'click_collect', number: '4400124' });
   });
 
   it('an invoice row read whole but for its EAN is kept as eanUnreadable (with or without a Total), counted, never matched', async () => {

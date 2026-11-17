@@ -5,11 +5,13 @@ import { requireAdmin } from '../auth/hook';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import { SealError, isSealed, keyProblem, sealingKey, unseal } from '../household/sealed';
+import { enabledConnectors, orderAddress } from '../connectors/enabled';
+import type { Registry } from '../connectors/load';
 import { MonthError, changePicks, checkWindow, composeOrder, getMonth, getOrder, setMonthBudget, thisMonth } from '../month/plan';
 
 export const SEALED = { bookshopEmail: 'bookshop_email', deliveryAddress: 'delivery_address' } as const;
 
-export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db) {
+export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, connectors: Registry) {
   const fail = (reply: FastifyReply, e: unknown) => {
     if (e instanceof MonthError) return reply.code(e.status).send({ error: e.message });
     if (e instanceof SealError) return reply.code(409).send({ error: 'the addresses were sealed with another key: an admin enters them again in Settings' });
@@ -40,7 +42,7 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db) {
       const problem = keyProblem(cfg);
       if (problem && (isSealed(db, SEALED.bookshopEmail) || isSealed(db, SEALED.deliveryAddress))) throw new MonthError(409, `the sealing key is ${problem}: the server's PHILOBIBLOS_SEALING_KEY needs fixing`);
       const open = (name: string) => (isSealed(db, name) ? unseal(db, sealingKey(cfg), name) : null);
-      const places = { bookshopEmail: open(SEALED.bookshopEmail), deliveryAddress: open(SEALED.deliveryAddress) };
+      const places = { bookshopEmail: orderAddress(open(SEALED.bookshopEmail), enabledConnectors(db, connectors)), deliveryAddress: open(SEALED.deliveryAddress) };
       return reply.code(201).send(composeOrder(db, month, req.caller!.personId, places));
     } catch (e) { return fail(reply, e); }
   });

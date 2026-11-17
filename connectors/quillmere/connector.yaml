@@ -1,0 +1,63 @@
+# Quillmere Books: an invented bookshop (its name, domain and addresses are made up; .example is reserved, RFC 2606).
+# It is the example connector: the layouts Philobiblos has read since M3, written as data. A real shop is a folder like
+# this one, in this repository (docs/connectors.md) or in the household's own PHILOBIBLOS_CONNECTORS_DIR.
+# Data only (contracts/connector.schema.json): no code, no regular expressions, every host exact. An admin enables a
+# connector in Settings, with a fresh sign-in, after reading what it allows.
+schema: 1
+id: quillmere
+name: Quillmere Books
+locale:
+  currency: CHF
+  language: de
+money:
+  before: [CHF, Fr.]
+  after: [CHF]
+mail:
+  domains: [quillmere.example]
+  reply:
+    separators: [original message, ursprüngliche nachricht, message d'origine, messaggio originale]
+    header_labels: [from, von, de, da, sent, gesendet, envoyé, inviato]
+    attribution_starts: ['on', am, le, il]
+    attribution_verbs: [wrote, schrieb, a écrit, ha scritto]
+  summary: [total, subtotal, sub-total, sum, gesamt*, zwischensumme, rechnungsbetrag, totalbetrag, shipping, postage,
+    delivery charge, versand*, porto, rabatt, discount, mwst, vat]
+  unavailable: [not in stock, out of stock, backorder, back-order, backordered, back-ordered, not available, unavailable,
+    out of print, nicht lieferbar, vergriffen]
+  quote:
+    senders: [english-orders@quillmere.example]
+    labels:
+      author: [author]
+      title: [title]
+      isbn: [isbn]
+      price: [price]
+      delivery: [delivery due, delivery time, delivery, availability]
+    confirm_phrases: [we have now ordered]
+    order_number_labels: [order number, order no., order no]
+  shop:
+    online_order_subjects: ['Ihre Quillmere Bestellung ({number})']
+    click_collect_subjects: ['Wir bearbeiten Ihre Bestellung ({number})']
+    book_kinds: [buch, taschenbuch]
+    skip_kinds: [spielwaren, spiel, geschenk, papeterie, ebook, hörbuch, film, musik, kalender, tonie]
+    by: von
+    ean_label: EAN
+  invoice:
+    subjects: ['Ihre Quillmere-Rechnung Nr. {number}', 'Ihre Quillmere-Rechnung Nr {number}', 'Ihre Quillmere Rechnung Nr. {number}']
+    unit: ST
+    total_words: [total, gesamt*, rechnungsbetrag, totalbetrag]
+    postage_words: [versand*, porto, shipping]
+order:
+  to: english-orders@quillmere.example
+prices:
+  kind: search_tiles
+  url: https://www.quillmere.example/suche?sq={query}
+  article:
+    path: /shop/home/artikeldetails/
+    id_prefix: A
+    id_digits: [6, 14]
+  print_formats: [Buch (Taschenbuch), Buch (Gebundene Ausgabe)]
+  want_languages: [Englisch, English]
+  other_languages: [Deutsch, Französisch, Italienisch, Spanisch]
+  availability:
+    phrases: [Sofort lieferbar, Lieferbar, Versandfertig, Nicht lieferbar, Vorbestellbar, Erscheint]
+    joiners: [in, innerhalb, ab, am]
+    units: [Werktagen, Tagen, Tag, Wochen, Woche]

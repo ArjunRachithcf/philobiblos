@@ -1,12 +1,13 @@
 // Settings (spec §4): the household's monthly budget (one shared budget for the month's order; admins set it, everyone
 // sees it; no rollover) and where orders go (the bookshop's address and the delivery address, sealed on the server; the
-// delivery address is never shown back), when the monthly refresh runs, notifications (Notifications.tsx), the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
+// delivery address is never shown back), the bookshops (Bookshops.tsx), when the monthly refresh runs, notifications (Notifications.tsx), the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
 // arrives with its parts.
 import { useEffect, useId, useState } from 'react';
 import { api, message, type Me, type Settings as S } from '../api';
 import { Notice, PageHead } from '../ui';
 import { ShareTokens } from './ShareTokens';
 import { AiSettings } from './AiSettings';
+import { Bookshops } from './Bookshops';
 import { Notifications } from './Notifications';
 
 const toChf = (c: number) => (c / 100).toFixed(0);
@@ -72,6 +73,7 @@ export function Settings({ me }: { me: Me }) {
             </>
           )}
         </section>
+        <Bookshops admin={admin} />
         <OrderPlaces admin={admin} />
         <MonthlyRefresh admin={admin} />
         <Notifications admin={admin} />

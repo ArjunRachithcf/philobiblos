@@ -68,10 +68,15 @@ export interface Egress {
 /** The largest request body Philobiblos sends (an AI job's images, base64, with its prompt). */
 export const POST_MAX = 32 << 20;
 
-/** What may be reached: the manifest's egress list (contracts/homerslab-app.yaml), Ollama if configured, Claude on opt-in. */
-export function egressRules(o: { ollamaUrl?: string | null; claude?: boolean }): Rule[] {
+/**
+ * What may be reached: the manifest's egress list (contracts/homerslab-app.yaml), the price hosts of the bookshop
+ * connectors an admin enabled (connectors/enabled.ts: no shop's host is here otherwise), Ollama if configured, Claude
+ * on opt-in.
+ */
+export function egressRules(o: { ollamaUrl?: string | null; claude?: boolean; shopHosts?: string[] }): Rule[] {
   const rules: Rule[] = [
-    { host: 'www.orellfuessli.ch' },
+    // Exact names only (a connector's host is checked as one by contracts/connector.schema.json); https, public addresses.
+    ...[...new Set(o.shopHosts ?? [])].map((host) => ({ host })),
     { host: 'openlibrary.org' },
     // Cover images are kept by the Internet Archive: covers.openlibrary.org redirects to archive.org, which redirects
     // to the data node holding the file (ia<number>.us.archive.org). Those two, nothing else under archive.org.
@@ -122,7 +127,8 @@ export type Resolve = (host: string) => Promise<LookupAddress[]>;
 const systemResolve: Resolve = (host) => new Promise((ok, fail) => dnsLookup(host, { all: true, verbatim: true }, (e, a) => (e ? fail(e) : ok(a))));
 
 export interface EgressOptions {
-  rules: Rule[];
+  /** The allowlist, or how to make it now: asked again for every request (connectors are enabled while Philobiblos runs). */
+  rules: Rule[] | (() => Rule[]);
   /** false: nothing leaves (PHILOBIBLOS_EGRESS=off). */
   enabled?: boolean;
   resolve?: Resolve;
@@ -138,9 +144,10 @@ export function createEgress(o: EgressOptions): Egress {
   const timeoutMs = o.timeoutMs ?? TIMEOUT_MS;
   const isPublic = o.test?.isPublic ?? isPublicAddress;
 
+  const rulesNow = () => (typeof o.rules === 'function' ? o.rules() : o.rules);
   function ruleFor(u: URL): Rule | null {
     const scheme = u.protocol.slice(0, -1);
-    return o.rules.find((r) => (r.hostPattern ? r.hostPattern.test(u.hostname) : r.host === u.hostname) && (r.scheme ?? 'https') === scheme && (r.port == null ? u.port === '' : Number(u.port || (scheme === 'https' ? 443 : 80)) === r.port)) ?? null;
+    return rulesNow().find((r) => (r.hostPattern ? r.hostPattern.test(u.hostname) : r.host === u.hostname) && (r.scheme ?? 'https') === scheme && (r.port == null ? u.port === '' : Number(u.port || (scheme === 'https' ? 443 : 80)) === r.port)) ?? null;
   }
 
   async function addressFor(host: string, privateOk: boolean, signal: AbortSignal): Promise<LookupAddress> {

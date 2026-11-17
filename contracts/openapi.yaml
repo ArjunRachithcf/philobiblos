@@ -288,6 +288,10 @@ paths:
     delete: { tags: [settings], operationId: removePushSubscription, parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: 'Not one of yours', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '204': { description: Removed } } }
   /push/test:
     post: { tags: [settings], operationId: testPush, summary: 'A test notification to your own devices (3 in 10 minutes); its text is the service worker''s own', responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '429': { description: Too many tests, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '200': { description: Sent (or why not), content: { application/json: { schema: { type: object, properties: { status: { enum: [done, blocked, failed] }, detail: { type: string } } } } } } } }
+  /connectors:
+    get: { tags: [settings], operationId: listConnectors, summary: 'Admins: the bookshop connectors (connectors/<id>/connector.yaml, the ones that ship and the household''s own), what each allows, whether it is enabled, and why one cannot be used', responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [connectors], properties: { connectors: { type: array, items: { $ref: '#/components/schemas/Connector' } } } } } } } } }
+  /connectors/{connectorId}:
+    put: { tags: [settings], operationId: setConnector, summary: 'Admins: enable a connector for the version Settings showed (with a sign-in of the last 10 minutes, standalone), or turn it off. Nothing a connector names (senders, its price host) counts until it is enabled, and only for that version of its file.', parameters: [{ name: connectorId, in: path, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [enabled], properties: { enabled: { type: boolean }, acceptVersion: { type: string, description: 'the version Settings showed; needed to enable' } } } } } }, responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such connector, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The connector cannot be used, changed since Settings showed it, or shares a mail domain with an enabled one', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Connector' } } } } } }
   /push/key:
     get: { tags: [settings], operationId: pushKey, summary: 'Web Push: the household''s application server key (VAPID, P-256), public half only, for PushManager.subscribe; made and sealed the first time', responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '503': { description: 'No usable sealing key, or one that does not open the sealed notification key (nothing is replaced or removed): no notifications', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [publicKey], properties: { publicKey: { type: string, description: 'base64url, 65 bytes uncompressed' } } } } } } } }
     delete: { tags: [settings], operationId: resetPushKey, summary: 'Admins, with a sign-in of the last 10 minutes (standalone): a new notification key. The sealed key and every device are removed together; each adult turns notifications on again. For a deliberate sealing-key change, or a key someone may have seen.', responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: Removed, content: { application/json: { schema: { type: object, required: [devices], properties: { devices: { type: integer, description: 'devices removed' } } } } } } } }
@@ -320,6 +324,30 @@ components:
     Forbidden: { description: 'Not allowed: a kid (kids have no access), someone HomersLab sends without a role, a non-admin on an admin route, or a request that changes something from another origin', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
     Error: { type: object, required: [error], properties: { error: {type: string} } }
+    Connector:
+      type: object
+      description: 'A bookshop as data (contracts/connectors.md). It allows nothing until an admin enables it, for this version of its file.'
+      required: [id, name, origin, version, usable, enabled, changed]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        origin: { enum: [builtin, local], description: 'builtin: ships with Philobiblos; local: PHILOBIBLOS_CONNECTORS_DIR' }
+        version: { type: string, description: 'SHA-256 of its file; enabling names it' }
+        usable: { type: boolean }
+        problem: { type: string, description: 'why it cannot be used (the file does not follow the connector schema, say)' }
+        enabled: { type: boolean }
+        changed: { type: boolean, description: 'enabled for an earlier version of its file: it allows nothing until enabled again' }
+        currency: { type: string }
+        language: { type: string }
+        allows:
+          type: object
+          required: [mailFrom, signedBy, quoteSenders, priceHost, orderTo]
+          properties:
+            mailFrom: { type: array, items: { type: string }, description: 'the From domains whose mail counts (exact)' }
+            signedBy: { type: array, items: { type: string }, description: 'the DKIM signing domains that count (exact)' }
+            quoteSenders: { type: array, items: { type: string } }
+            priceHost: { type: [string, 'null'], description: 'the one host its price lookup asks (added to the egress allowlist)' }
+            orderTo: { type: [string, 'null'], description: 'where Compose writes unless Settings names another address' }
     Money: { type: integer, description: centimes }
     Me: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, household: { type: array, items: { $ref: '#/components/schemas/Person' } }, mode: { enum: [homerslab, standalone] } } }
     Person: { type: object, required: [id, name, role], properties: { id: {type: string}, name: {type: string}, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'] }, birthYear: { type: [integer, 'null'], description: kids only }, ageBand: { enum: ['0-2','3-5','6-8','9-12', null] }, signsIn: { type: boolean, description: 'standalone: has at least one passkey' } } }

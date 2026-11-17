@@ -289,6 +289,17 @@ describe('through the app', () => {
     expect(a.db.select().from(t.pushSubscription).all()).toEqual([]);
     expect(vapidKeys(a.db, cfg).publicKey.equals(old.publicKey)).toBe(false);
   });
+  it('under HomersLab a new key is refused until the edge sends a recent sign-in (homeward#253): fail closed', async () => {
+    const db = household();
+    const hl = loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '127.0.0.1', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY });
+    const { app: built } = await buildApp(hl, db, { push: fakeEgress().e });
+    subscribe(db, 'p_sam', sub());
+    const r = await built.inject({ method: 'DELETE', url: '/api/push/key', headers: { 'x-homerslab-person': 'hl-alex', 'x-homerslab-name': 'Alex', 'x-homerslab-role': 'admin', origin: ORIGIN } });
+    expect(r.statusCode).toBe(403);
+    expect(r.json().error).toMatch(/recent sign-in/);
+    expect(listSubscriptions(db, 'p_sam')).toHaveLength(1);
+    await built.close();
+  });
   it('after a deliberate sealing-key change, the reset is the way back: a new key under the new sealing key', async () => {
     const db = household();
     vapidKeys(db, cfg);

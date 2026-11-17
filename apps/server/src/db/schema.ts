@@ -414,3 +414,11 @@ export const jobPeriod = sqliteTable('job_period', {
   runId: text('run_id').references(() => jobRun.id, { onDelete: 'set null' }),
   updatedAt: text('updated_at').notNull(),
 }, (t) => [primaryKey({ columns: [t.job, t.period] }), check('job_period_status', sql`${t.status} IN ('running','retry','done','gave_up','void')`)]);
+
+// The bookshop connectors an admin enabled, each for the version of its file they read (connectors/enabled.ts).
+export const connectorEnabled = sqliteTable('connector_enabled', {
+  id: text('id').primaryKey(),
+  version: text('version').notNull(),
+  enabledBy: text('enabled_by').references(() => person.id, { onDelete: 'set null' }),
+  enabledAt: text('enabled_at').notNull(),
+});

@@ -38,11 +38,15 @@ config:
   - { key: PHILOBIBLOS_IMAP_USER, optional: true, description: Its user name }
   - { key: PHILOBIBLOS_IMAP_FOLDER, optional: true, description: 'The folder the bookshop''s mail arrives in (default INBOX)' }
   - { key: PHILOBIBLOS_MAIL_RECIPIENTS, optional: true, description: 'The household''s addresses the bookshop writes to, comma-separated; mail to anyone else is not taken' }
-  - { key: PHILOBIBLOS_MAIL_ARC_SEALERS, optional: true, description: 'Mail providers whose ARC seal vouches for a forward that broke the bookshop''s DKIM (default google.com)' }
+  - { key: PHILOBIBLOS_MAIL_ARC_SEALERS, optional: true, description: 'The household''s mail providers whose ARC seal vouches for a forward that broke the bookshop''s DKIM, comma-separated (none by default: docs/connectors.md lists common ones)' }
+  - { key: PHILOBIBLOS_CONNECTORS_DIR, optional: true, description: 'A folder of the household''s own bookshop connectors (<id>/connector.yaml, docs/connectors.md), read-only; each waits for an admin to enable it' }
   - { key: OLLAMA_URL, optional: true, description: The local Ollama (the default AI provider) }
 network:
   # Enforced by Philobiblos's own HTTP client as well (ADR 0009): nothing else is reachable from the app.
-  egress: [www.orellfuessli.ch, openlibrary.org, covers.openlibrary.org, '${PHILOBIBLOS_IMAP_HOST}:993', '${OLLAMA_URL}']
+  egress: [openlibrary.org, covers.openlibrary.org, '${PHILOBIBLOS_IMAP_HOST}:993', '${OLLAMA_URL}']
+  # The price host of each bookshop connector an admin enabled in Settings (Bookshops), https on 443, and nothing else
+  # of the shop's; none until one is enabled (connectors/enabled.ts). HomersLab cannot know them in advance.
+  connector_egress: 'the priceHost of each enabled connector (GET /api/connectors)'
   # Only as redirect targets of covers.openlibrary.org (https, at most two hops, src/net/egress.ts): the Internet Archive
   # keeps Open Library's covers on archive.org and its data nodes ia<number>.us.archive.org.
   egress_redirects: [archive.org, 'ia<number>.us.archive.org']

@@ -1,9 +1,12 @@
-// Is this mail really from the bookshop? (ADR 0007, contracts/connectors.md "Every mail is hostile input".) Forwarded
-// mail is easy to forge, so a mail counts only when:
-// - its From is exactly one address at the bookshop's domain (a Sender, if there is one, too), and
-// - a DKIM signature of that domain, aligned with the From, verifies here (keys from DNS, nothing else looked up); or,
-//   for a forward that broke the signature, the ARC chain verifies, its newest seal is from a provider Philobiblos trusts
-//   (PHILOBIBLOS_MAIL_ARC_SEALERS), and that provider recorded dkim=pass for the bookshop's domain.
+// Is this mail really from a bookshop the household enabled? (ADR 0007, contracts/connectors.md "Every mail is hostile
+// input".) Which shops count, and their domains, is data: the connectors an admin enabled (connectors/enabled.ts); no
+// shop is named here. Forwarded mail is easy to forge, so a mail counts only when:
+// - its From is exactly one address whose domain is exactly one of an enabled connector's mail domains (no subdomain
+//   counts unless it is listed; a Sender, if there is one, too), and
+// - a DKIM signature by exactly one of that connector's signing domains, aligned with the From, verifies here (keys
+//   from DNS, nothing else looked up); or, for a forward that broke the signature, the ARC chain verifies, its newest
+//   seal is from a provider the household trusts (PHILOBIBLOS_MAIL_ARC_SEALERS, none by default), and that provider
+//   recorded dkim=pass for one of those signing domains, aligned with the From as a DKIM signature here must be.
 // Return-Path is not checked: a forwarding filter rewrites it to the forwarder's address (SRS), so it says nothing.
 // And whatever Philobiblos later reads from the headers must be what was signed: a header that may appear once appears
 // once, the passing signature covers the ones Philobiblos reads (From, To, Subject, Date, Message-ID, the MIME headers, and
@@ -12,9 +15,11 @@
 // so a genuine bookshop mail to someone else cannot be replayed into Philobiblos.
 // Anything else is kept as "not verified" and changes nothing.
 import { authenticate } from 'mailauth';
+import { getAlignment } from 'mailauth/lib/tools.js';
 import { dkimKeyResolver, type TxtResolver } from '../net/dns';
 
-export const BOOKSHOP_DOMAIN = 'orellfuessli.ch';
+/** An enabled connector's mail domains (connectors/enabled.ts), exact: the From's, and the signing ones. */
+export interface ShopMail { id: string; domains: string[]; dkimDomains: string[] }
 
 export interface MailAuth {
   accepted: boolean;
@@ -24,10 +29,23 @@ export interface MailAuth {
   fromDomain: string | null;
   /** The Message-ID as signed (the verified header's value), when accepted. */
   messageId?: string | null;
-  /** The From's one address as signed (lowercase), when accepted: the parsers tell the English Bookshop by it. */
+  /** The From's one address as signed (lowercase), when accepted: the parsers tell a shop's kinds of mail by it. */
   from?: string;
+  /** The connector whose mail it is, when accepted. */
+  connector?: string;
 }
 
+/** Exactly one of these hosts (a connector lists every domain that counts; a subdomain is another host). */
+const isOneOf = (d: string | null | undefined, hosts: string[]) => !!d && hosts.includes(d.toLowerCase());
+/**
+ * Relaxed alignment (RFC 7489 section 3.1.1): the two domains have the same organizational domain (the public suffix
+ * list's, as mailauth reads it). A signing domain counts for a From only so: a connector may list `mail.shop.example`
+ * as a signer of `shop.example`, never another organization's domain (a shared sending service's would let any of
+ * its customers sign as the shop). The DKIM check and the ARC check use it alike, and connectors/load.ts refuses a
+ * signing domain that is aligned with none of its connector's mail domains.
+ */
+export const relaxedAligned = (a: string, b: string) => Boolean(a && b && getAlignment(a.toLowerCase(), [b.toLowerCase()]));
+/** A provider's ARC seal: its own domain or one under it (the household names the provider, e.g. its mail domain). */
 const inDomain = (d: string | null | undefined, domain: string) => !!d && (d.toLowerCase() === domain || d.toLowerCase().endsWith(`.${domain}`));
 
 /**
@@ -96,8 +114,7 @@ export function coverageProblem(sig: { signingHeaders?: { keys?: string[] | stri
   return null;
 }
 
-export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[]; recipients: string[]; resolver?: TxtResolver; domain?: string }): Promise<MailAuth> {
-  const domain = o.domain ?? BOOKSHOP_DOMAIN;
+export async function verifyBookshopMail(raw: Buffer, o: { shops: ShopMail[]; arcSealers: string[]; recipients: string[]; resolver?: TxtResolver }): Promise<MailAuth> {
   const hb = headerBlock(raw);
   if ('problem' in hb) return { accepted: false, via: null, reason: hb.problem, fromDomain: null };
   const hs = hb.fields;
@@ -110,8 +127,11 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
   const fromAddrs = of('from').length === 1 ? addresses(of('from')[0]!) : [];
   const fromDomain = fromAddrs.length === 1 ? fromAddrs[0]!.slice(fromAddrs[0]!.lastIndexOf('@') + 1) : null;
   if (!fromDomain) return no('the From is not exactly one address');
-  if (!inDomain(fromDomain, domain)) return no('not from the bookshop', fromDomain);
-  if (of('sender').length && !addressDomains(of('sender')[0]!).every((d) => inDomain(d, domain))) return no('its Sender is not the bookshop', fromDomain);
+  if (!o.shops.length) return no('no bookshop is enabled (Settings, Bookshops)', fromDomain);
+  const shop = o.shops.find((s) => isOneOf(fromDomain, s.domains));
+  if (!shop) return no('not from an enabled bookshop', fromDomain);
+  const signers = shop.dkimDomains;
+  if (of('sender').length && !addressDomains(of('sender')[0]!).every((d) => isOneOf(d, shop.domains))) return no('its Sender is not the bookshop', fromDomain);
   const to = [...of('to'), ...of('cc')].flatMap(addresses);
   const household = o.recipients.map((r) => r.toLowerCase());
   if (!household.length) return no('no household address is set up to receive the bookshop\'s mail (PHILOBIBLOS_MAIL_RECIPIENTS)', fromDomain);
@@ -128,9 +148,9 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
   }
   let why = 'no valid signature of the bookshop';
   for (const r of res.dkim?.results ?? []) {
-    if (r.status?.result !== 'pass' || !inDomain(r.signingDomain, domain) || !inDomain(r.status?.aligned || '', domain)) continue;
+    if (r.status?.result !== 'pass' || !isOneOf(r.signingDomain, signers) || !isOneOf(r.status?.aligned || '', [...signers, ...shop.domains])) continue;
     const problem = coverageProblem(r as Parameters<typeof coverageProblem>[0], hs);
-    if (!problem) return { accepted: true, via: 'dkim', reason: `dkim=pass for ${r.signingDomain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null, from: fromAddrs[0]! };
+    if (!problem) return { accepted: true, via: 'dkim', reason: `dkim=pass for ${r.signingDomain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null, from: fromAddrs[0]!, connector: shop.id };
     why = problem;
   }
 
@@ -138,11 +158,14 @@ export async function verifyBookshopMail(raw: Buffer, o: { arcSealers: string[];
   if (arc?.status?.result === 'pass') {
     const sealer = arc.signature?.signingDomain?.toLowerCase() ?? '';
     if (!o.arcSealers.some((s) => inDomain(sealer, s))) return no(`the forward was sealed by ${sealer.slice(0, 80)}, not a provider Philobiblos trusts`, fromDomain);
-    const ok = (arc.authenticationResults?.dkim ?? []).some((d) => d.result === 'pass' && inDomain((d.header?.d ?? d.header?.i?.replace(/^.*@/, '')) ?? '', domain));
-    if (!ok) return no(`the forward's seal by ${sealer} does not show the bookshop's DKIM passing`, fromDomain);
+    // The signing domain the provider saw pass: one of the connector's signers, and aligned with the From (as above).
+    const passed = (arc.authenticationResults?.dkim ?? []).filter((d) => d.result === 'pass')
+      .map((d) => (d.header?.d ?? d.header?.i?.replace(/^.*@/, '') ?? '').toLowerCase())
+      .find((d) => isOneOf(d, signers) && relaxedAligned(d, fromDomain));
+    if (!passed) return no(`the forward's seal by ${sealer} does not show the bookshop's DKIM passing`, fromDomain);
     const problem = coverageProblem(arc.signature, hs);
     if (problem) return no(`the forward's seal: ${problem}`, fromDomain);
-    return { accepted: true, via: 'arc', reason: `arc=pass by ${sealer}, which saw dkim=pass for ${domain}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null, from: fromAddrs[0]! };
+    return { accepted: true, via: 'arc', reason: `arc=pass by ${sealer}, which saw dkim=pass for ${passed}`, fromDomain, messageId: of('message-id')[0]?.slice(0, 300) ?? null, from: fromAddrs[0]!, connector: shop.id };
   }
   return no(why, fromDomain);
 }

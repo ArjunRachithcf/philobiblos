@@ -30,8 +30,12 @@ services:
       PHILOBIBLOS_IMAP_USER: ${PHILOBIBLOS_IMAP_USER:-${SHELF_IMAP_USER:-}}
       PHILOBIBLOS_IMAP_PASSWORD: ${PHILOBIBLOS_IMAP_PASSWORD:-${SHELF_IMAP_PASSWORD:-}}
       PHILOBIBLOS_IMAP_FOLDER: ${PHILOBIBLOS_IMAP_FOLDER:-${SHELF_IMAP_FOLDER:-INBOX}}
-      # Whose ARC seal vouches for a forward that broke the bookshop's DKIM: your mail provider's (Gmail: google.com).
-      PHILOBIBLOS_MAIL_ARC_SEALERS: ${PHILOBIBLOS_MAIL_ARC_SEALERS:-${SHELF_MAIL_ARC_SEALERS:-google.com}}
+      # Whose ARC seal vouches for a forward that broke the bookshop's DKIM: your own mail provider's sealing domain, if
+      # you forward through one (docs/connectors.md lists common ones). None by default: no provider is assumed.
+      PHILOBIBLOS_MAIL_ARC_SEALERS: ${PHILOBIBLOS_MAIL_ARC_SEALERS:-${SHELF_MAIL_ARC_SEALERS:-}}
+      # Your own bookshop connectors (docs/connectors.md): add "./connectors:/connectors:ro,Z" to volumes and set this to
+      # /connectors. Each waits for an admin to enable it in Settings.
+      PHILOBIBLOS_CONNECTORS_DIR: ${PHILOBIBLOS_CONNECTORS_DIR:-}
       # The household's addresses the bookshop writes to (comma-separated); mail to anyone else is not taken.
       PHILOBIBLOS_MAIL_RECIPIENTS: ${PHILOBIBLOS_MAIL_RECIPIENTS:-${SHELF_MAIL_RECIPIENTS:-}}
     # work/ is shared with the media worker (:z, shared label): in/ the server's, out/ the worker's; only jobs in flight.

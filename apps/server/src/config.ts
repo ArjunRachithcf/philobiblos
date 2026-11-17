@@ -1,6 +1,7 @@
 // Settings from the environment (contracts/homerslab-app.yaml, docker-compose.yml). Secrets are read here and
 // nowhere else, and never logged.
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveEnv } from '@philobiblos/contracts/env';
 import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY, wildcardTooBroad } from './push/hosts';
 import { validTimeZone } from './jobs/zone';
@@ -39,8 +40,17 @@ export interface Config {
    * (PHILOBIBLOS_IMAP_PASSWORD or PHILOBIBLOS_IMAP_PASSWORD_FILE), never in the database, the API or a log. null: not set up.
    */
   imap: { host: string; user: string; password: { value: string } | { file: string }; folder: string } | null;
-  /** Mail providers whose ARC seal Philobiblos trusts for a forward that broke the bookshop's DKIM (PHILOBIBLOS_MAIL_ARC_SEALERS). */
+  /**
+   * Mail providers whose ARC seal Philobiblos trusts for a forward that broke the bookshop's DKIM
+   * (PHILOBIBLOS_MAIL_ARC_SEALERS): none unless the household names its own (no provider is assumed, philobiblos#27).
+   */
   arcSealers: string[];
+  /**
+   * Where the bookshop connectors are read from (connectors/load.ts): the folder that ships with Philobiblos
+   * (PHILOBIBLOS_BUILTIN_CONNECTORS_DIR; the repository's connectors/, /app/connectors in the image) and the
+   * household's own (PHILOBIBLOS_CONNECTORS_DIR, none by default). Each connector still waits for an admin to enable it.
+   */
+  connectorDirs: { builtin: string | null; local: string | null };
   /**
    * The push services a device's subscription may name (PHILOBIBLOS_PUSH_HOSTS, comma-separated host names or `*.domain`;
    * default the browsers' own, push/push.ts DEFAULT_PUSH_HOSTS). Every send still goes to public addresses over https only.
@@ -100,7 +110,11 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
     } : null,
     mailRecipients: (env.PHILOBIBLOS_MAIL_RECIPIENTS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter((d) => /^[^@\s]+@[^@\s]+$/.test(d)),
     pushHosts: parsePushHosts(env.PHILOBIBLOS_PUSH_HOSTS),
-    arcSealers: (env.PHILOBIBLOS_MAIL_ARC_SEALERS ?? 'google.com').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
+    arcSealers: (env.PHILOBIBLOS_MAIL_ARC_SEALERS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
+    connectorDirs: {
+      builtin: env.PHILOBIBLOS_BUILTIN_CONNECTORS_DIR === 'none' ? null : resolve(env.PHILOBIBLOS_BUILTIN_CONNECTORS_DIR || fileURLToPath(new URL('../../../connectors', import.meta.url))),
+      local: env.PHILOBIBLOS_CONNECTORS_DIR ? resolve(env.PHILOBIBLOS_CONNECTORS_DIR) : null,
+    },
   };
 }
 
@@ -137,6 +151,6 @@ function parseOllama(v: string): string {
 
 /** A host name only (no scheme, port or path): the IMAP port is always 993. */
 function parseHost(v: string): string {
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v)) throw new Error('PHILOBIBLOS_IMAP_HOST must be a host name, e.g. imap.gmail.com (the port is always 993)');
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v)) throw new Error('PHILOBIBLOS_IMAP_HOST must be a host name, e.g. imap.example.org (the port is always 993)');
   return v.toLowerCase();
 }

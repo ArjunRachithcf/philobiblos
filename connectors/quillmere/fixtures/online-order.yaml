@@ -1,0 +1,15 @@
+# An invented web order confirmation: one line per article, a toy skipped.
+from: shop@quillmere.example
+subject: Ihre Quillmere Bestellung (4400123)
+text: |
+  Guten Tag
+  Buch The Quiet Hedgehog von Lena Paulsen EAN: 9780000000019 | Fr. 16.90
+  Spielwaren Wooden Train Set von Toyworks | Fr. 39.00
+  Taschenbuch Value Beyond Price von Mira Okafor | 2 x Fr. 18.90
+  Total Fr. 92.70
+expect:
+  kind: online_order
+  orderNumber: '4400123'
+  lines:
+    - { title: The Quiet Hedgehog, author: Lena Paulsen, ean: '9780000000019', qty: 1, priceC: 1690 }
+    - { title: Value Beyond Price, author: Mira Okafor, ean: null, qty: 2, priceC: 1890 }

@@ -12,6 +12,7 @@ import { EgressError, type Egress } from '../src/net/egress';
 import * as t from '../src/db/schema';
 import { currentMonth } from '../src/month/plan';
 import { UNVERIFIED_ID, mailItemId } from '../src/inbox/inbox';
+import { enableShop } from './mailkit';
 
 /** Plans are made for this month and the next only: the tests use the server's this month (PHILOBIBLOS_TZ default). */
 export const THIS_MONTH = currentMonth('Europe/Zurich');
@@ -85,6 +86,7 @@ const PARAMS: Record<string, Record<string, string>> = {
   renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
   getShare: { id: SHARE_ID }, removePushSubscription: { id: 'ps_alex' }, decideFound: { itemId: mailItemId('<inv-1@bookshop.example>'), index: '0' }, dismissInboxItem: { itemId: UNVERIFIED_ID },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
+  setConnector: { connectorId: 'quillmere' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
 };
 
@@ -103,6 +105,7 @@ const BODIES: Record<string, unknown> = {
   reviewLink: { state: 'confirmed' }, reviewBookIdea: { state: 'confirmed' }, reviewIdeaProposal: { state: 'confirmed' }, editIdea: { name: 'Markets and value' },
   addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
   decideFound: { action: 'skip' },
+  setConnector: { enabled: false },
   addPushSubscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/contract-new', keys: { p256dh: RFC8291_UA_KEY, auth: 'BTBZMqHH6r4Tts7J_aSIgg' } },
   setMonthBudget: { min: 10000, max: 15000 }, changePicks: { recompute: true }, createOrderDraft: { month: THIS_MONTH },
 };
@@ -170,6 +173,8 @@ export function household(): Db {
   for (const id of ['pk1', 'pk2']) {
     db.insert(t.passkey).values({ id, personId: 'p_alex', publicKey: Buffer.from([1]), label: id, createdAt: now }).run();
   }
+  // The invented example bookshop, enabled as an admin would (connectors/quillmere).
+  enableShop(db);
   return db;
 }
 

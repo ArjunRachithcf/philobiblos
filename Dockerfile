@@ -34,6 +34,8 @@ WORKDIR /app
 COPY --from=build /out/node_modules ./node_modules
 COPY --from=build /out/dist ./dist
 COPY --from=build /out/drizzle ./drizzle
+# The bookshop connectors that ship (data only, docs/connectors.md); a household adds its own with PHILOBIBLOS_CONNECTORS_DIR.
+COPY --from=build /src/connectors ./connectors
 COPY --from=build /out/web ./web
 # The media worker (ADR 0009) has its own tree: sharp and pdfjs-dist live only there, run as `node /app/worker/dist/main.js`
 # in its own container without a network (docker-compose.yml).

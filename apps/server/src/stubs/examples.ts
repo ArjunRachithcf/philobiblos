@@ -44,7 +44,7 @@ export const order: S['Order'] = {
   id: 'o_2026_12',
   month: '2026-12',
   status: 'picked',
-  composeUrl: 'mailto:english-orders@orellfuessli.ch?subject=Book%20order&body=Dear%20English%20Bookshop%20Team',
+  composeUrl: 'mailto:orders@bookshop.example?subject=Book%20order&body=Hello',
   estimate: 4990,
   lines: [
     { book: valueBeyondPrice, for: alex.id, estimate: 2490, state: 'planned' },

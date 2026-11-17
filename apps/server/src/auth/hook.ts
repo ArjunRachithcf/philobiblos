@@ -15,7 +15,7 @@ import * as t from '../db/schema';
 import { getPerson, syncHomersLabPerson } from '../household/people';
 import { resolveIdentity } from '../identity';
 import { requestSession } from './cookie';
-import type { Session } from './sessions';
+import { isFresh, type Session } from './sessions';
 import { Limiter, findShareToken } from '../shares/tokens';
 
 export type AuthMode = 'public' | 'person' | 'person-or-share-token';
@@ -93,5 +93,22 @@ export function authHook(cfg: Config, db: Db) {
 export function requireAdmin(req: FastifyRequest, reply: FastifyReply): boolean {
   if (req.caller?.role === 'admin') return true;
   void reply.code(403).send({ error: 'admins only' });
+  return false;
+}
+
+/**
+ * A change that widens what Philobiblos trusts or lets go (a bookshop connector enabled, a new notification key) needs a
+ * sign-in of the last few minutes: standalone, the session's own (ADR 0010). Under HomersLab Philobiblos has no sessions
+ * and no step-up of its own, and the edge does not yet say when the person last signed in (ArjunRachithcf/homeward#253),
+ * so such a change is refused there until it does (fail closed, ADR 0011). Sends the 403 and answers false when refused.
+ */
+export function requireFreshSignIn(req: FastifyRequest, reply: FastifyReply): boolean {
+  const c = req.caller;
+  if (c?.via === 'homerslab') {
+    void reply.code(403).send({ error: 'this needs a recent sign-in, which HomersLab does not tell Philobiblos yet' });
+    return false;
+  }
+  if (c?.session && isFresh(c.session)) return true;
+  void reply.code(403).send({ error: 'sign in again to do this' });
   return false;
 }

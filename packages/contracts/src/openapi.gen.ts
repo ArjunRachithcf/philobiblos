@@ -752,6 +752,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admins: the bookshop connectors (connectors/<id>/connector.yaml, the ones that ship and the household's own), what each allows, whether it is enabled, and why one cannot be used */
+        get: operations["listConnectors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connectors/{connectorId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Admins: enable a connector for the version Settings showed (with a sign-in of the last 10 minutes, standalone), or turn it off. Nothing a connector names (senders, its price host) counts until it is enabled, and only for that version of its file. */
+        put: operations["setConnector"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/push/key": {
         parameters: {
             query?: never;
@@ -860,6 +894,37 @@ export interface components {
     schemas: {
         Error: {
             error: string;
+        };
+        /** @description A bookshop as data (contracts/connectors.md). It allows nothing until an admin enables it, for this version of its file. */
+        Connector: {
+            id: string;
+            name: string;
+            /**
+             * @description builtin: ships with Philobiblos; local: PHILOBIBLOS_CONNECTORS_DIR
+             * @enum {unknown}
+             */
+            origin: "builtin" | "local";
+            /** @description SHA-256 of its file; enabling names it */
+            version: string;
+            usable: boolean;
+            /** @description why it cannot be used (the file does not follow the connector schema, say) */
+            problem?: string;
+            enabled: boolean;
+            /** @description enabled for an earlier version of its file: it allows nothing until enabled again */
+            changed: boolean;
+            currency?: string;
+            language?: string;
+            allows?: {
+                /** @description the From domains whose mail counts (exact) */
+                mailFrom: string[];
+                /** @description the DKIM signing domains that count (exact) */
+                signedBy: string[];
+                quoteSenders: string[];
+                /** @description the one host its price lookup asks (added to the egress allowlist) */
+                priceHost: string | null;
+                /** @description where Compose writes unless Settings names another address */
+                orderTo: string | null;
+            };
         };
         /** @description centimes */
         Money: number;
@@ -3408,6 +3473,89 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             /** @description Too many tests */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listConnectors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        connectors: components["schemas"]["Connector"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setConnector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connectorId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                    /** @description the version Settings showed; needed to enable */
+                    acceptVersion?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Connector"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such connector */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The connector cannot be used, changed since Settings showed it, or shares a mail domain with an enabled one */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -6,6 +6,10 @@
 
 Status: **Accepted** · 2026-11-15
 
+> **Superseded in part** (2026-11-16, philobiblos#27): the lookup is a connector's (`prices` in
+> `connectors/<id>/connector.yaml`), one `PriceSource` per enabled connector; no shop is built in. The shop named below
+> was the first, and its layout is now the invented example connector's.
+
 **Decision**: Prices are estimates from a read-only lookup; the bookshop's quote is the truth.
 
 - Orell Füssli has no public API. Lookup = their search page, rate-limited (1 req/3 s), cached 7 days, behind a

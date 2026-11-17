@@ -142,7 +142,7 @@ export function importSeed(db: Db, dir: string, now = new Date().toISOString()):
       if (ownedIds.has(bookId)) continue;
       const isEbook = /ebook/i.test(w.fmt ?? '');
       if (!isEbook && w.id) {
-        const r = tx.insert(t.bookOffer).values({ bookId, source: 'orellfuessli', externalId: w.id, priceC: parsePriceC(w.p), availability: w.av ?? null, seenAt: now }).onConflictDoNothing().run();
+        const r = tx.insert(t.bookOffer).values({ bookId, source: 'seed', externalId: w.id, priceC: parsePriceC(w.p), availability: w.av ?? null, seenAt: now }).onConflictDoNothing().run();
         c.offers += r.changes;
       }
       const forId = isKids(w.t) ? kidId : adultId;

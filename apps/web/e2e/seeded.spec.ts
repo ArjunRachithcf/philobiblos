@@ -462,7 +462,7 @@ test('the inbox, share tokens with their QR code, and phone shares (by token, by
   // The bookshop's mail as the mail job keeps it (invented): an invoice with lines that matched no book, and a forgery.
   const db = new DatabaseSync(join(dataDir(SEEDED_PORT), 'shelf.sqlite'), { timeout: 5000 });
   const now = new Date().toISOString();
-  db.prepare('INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, ?, ?, ?, ?, ?, ?)').run('<e2e-inv@orellfuessli.ch>', 'invoice', JSON.stringify({ invoiceNumber: '99001122', lines: [
+  db.prepare('INSERT INTO mail_seen (message_id, kind, parsed_json, parser_version, seen_at, auth_json, accepted) VALUES (?, ?, ?, ?, ?, ?, ?)').run('<e2e-inv@quillmere.example>', 'invoice', JSON.stringify({ invoiceNumber: '99001122', lines: [
     { ean: '9780000000330', title: 'Gardens of the Commons', qty: 1, priceC: 1500, totalC: 1500, vatPct: 2.6, bookId: null },
     { ean: null, notBook: true, title: 'Wooden Train Set', qty: 1, priceC: 3900, totalC: 3900, vatPct: 8.1, bookId: null },
   ] }), 'm3d-1/invoice-1', now, '{}', 1);
@@ -620,8 +620,8 @@ test('an empty first page with more after it is followed: never "Nothing waiting
   const dis = db.prepare("INSERT INTO inbox_decision (item, idx, decision, decided_at) VALUES (?, -1, 'dismissed', 'x')");
   const itemId = (key: string) => `m_${createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 32)}`;
   db.exec('BEGIN');
-  ins.run('<e2e-old@orellfuessli.ch>', JSON.stringify({ subject: 'An old quote Philobiblos could not read', reason: 'a price Philobiblos cannot place' }), '2020-01-01T00:00:00.000Z');
-  for (let i = 0; i < 2100; i++) { ins.run(`<e2e-d${i}@orellfuessli.ch>`, '{}', '2030-01-01T00:00:00.000Z'); dis.run(itemId(`<e2e-d${i}@orellfuessli.ch>`)); }
+  ins.run('<e2e-old@quillmere.example>', JSON.stringify({ subject: 'An old quote Philobiblos could not read', reason: 'a price Philobiblos cannot place' }), '2020-01-01T00:00:00.000Z');
+  for (let i = 0; i < 2100; i++) { ins.run(`<e2e-d${i}@quillmere.example>`, '{}', '2030-01-01T00:00:00.000Z'); dis.run(itemId(`<e2e-d${i}@quillmere.example>`)); }
   db.exec('COMMIT');
   db.close();
   await page.goto('/inbox');
