@@ -229,6 +229,27 @@ test('the backlog: the filter bar, labels, tabs, a score\'s parts, grouping, bul
   done();
 });
 
+test('the currency: none is assumed; an admin chooses it, and every amount is in it (philobiblos#27)', async () => {
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByText('The household has no currency yet.')).toBeVisible();
+  await expect(page.getByLabel('At least (amount)')).toHaveValue('100');
+  // The example bookshop waits for it: its Enable button is off, with the reason.
+  await expect(page.getByRole('button', { name: 'Enable Quillmere Books' })).toBeDisabled();
+  await expect(page.getByText(/It cannot be enabled now: the household has no currency yet/)).toBeVisible();
+  await page.getByLabel('The household’s currency').selectOption('CHF');
+  await page.getByLabel(/^An unknown price counts as/).fill('30');
+  await page.getByRole('button', { name: 'Save the currency' }).click();
+  await expect(page.getByText(/^Amounts are in/)).toContainText('CHF');
+  await expect(page.getByText(/^Amounts are in/)).toContainText(/CHF\s30/);
+  await expect(page.getByRole('button', { name: 'Enable Quillmere Books' })).toBeEnabled();
+  await expect(page.getByText(/It cannot be enabled now/)).toHaveCount(0);
+  await page.getByLabel(/^An unknown price counts as/).fill('25');
+  await page.getByRole('button', { name: 'Save the currency' }).click();
+  await expect(page.getByText(/^Amounts are in/)).toContainText(/CHF\s25/);
+  await page.evaluate(() => scrollTo(0, 0));
+  await expectAccessible(page, 'settings, the currency');
+});
+
 test('the budget: an admin sets it; it is not carried over', async () => {
   await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Monthly budget' })).toBeVisible();
@@ -412,22 +433,22 @@ test('this month: picks, the budget bar by keyboard, a pick removed, Compose', a
 
   // the budget bar: arrows move a draft only; a button applies it for this month
   const max = page.getByRole('slider', { name: 'Budget, highest total' });
-  await expect(max).toHaveAttribute('aria-valuetext', 'CHF 180');
+  await expect(max).toHaveAttribute('aria-valuetext', /^CHF\s180$/);
   await max.focus();
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('ArrowLeft');
-  await expect(max).toHaveAttribute('aria-valuetext', 'CHF 170');
+  await expect(max).toHaveAttribute('aria-valuetext', /^CHF\s170$/);
   await expect(page.getByText('Monthly budget', { exact: true })).toBeVisible(); // nothing applied yet
   await page.keyboard.press('PageDown');
-  await expect(max).toHaveAttribute('aria-valuetext', 'CHF 120');
+  await expect(max).toHaveAttribute('aria-valuetext', /^CHF\s120$/);
   const min = page.getByRole('slider', { name: 'Budget, lowest total' });
   await min.focus();
   await page.keyboard.press('End'); // never past the other end
-  await expect(min).toHaveAttribute('aria-valuetext', 'CHF 120');
+  await expect(min).toHaveAttribute('aria-valuetext', /^CHF\s120$/);
   await page.keyboard.press('Home');
   await page.getByRole('button', { name: 'Use for this month' }).click();
   await expect(page.getByText('This month only', { exact: true })).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: 'This month’s budget is CHF 0 to CHF 120' })).toBeAttached();
+  await expect(page.getByRole('status').filter({ hasText: /This month’s budget is CHF\s0 to CHF\s120/ })).toBeAttached();
   await page.getByRole('button', { name: 'Back to the usual budget' }).click();
   await expect(page.getByText('Monthly budget', { exact: true })).toBeVisible();
 

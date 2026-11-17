@@ -1,9 +1,12 @@
 // Settings, "Bookshops" (philobiblos#27): the bookshop connectors and what each allows. A connector is a file of data
 // (connectors/<id>/connector.yaml); it counts for nothing until an admin reads what it allows here and enables it, with a
 // sign-in of the last few minutes. Enabling names the version this page showed, so a file that changed since is refused.
+// When the server says an admin cannot enable one now (enableBlocked: the household's currency, or HomersLab's missing
+// recent sign-in), the button stays and is turned off, with the reason next to it.
 import { useEffect, useId, useState } from 'react';
 import { api, message, type Connector } from '../api';
 import { Notice } from '../ui';
+import { useMoney } from '../money';
 
 export function Bookshops({ admin }: { admin: boolean }) {
   const id = useId();
@@ -11,7 +14,9 @@ export function Bookshops({ admin }: { admin: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState('');
   const load = () => api<{ connectors: Connector[] }>('/connectors').then((r) => setList(r.connectors), (e) => setError(message(e)));
-  useEffect(() => { if (admin) void load(); }, [admin]);
+  // Read again when the household's currency changes (Settings, above): what stands in a connector's way changes with it.
+  const { currency } = useMoney();
+  useEffect(() => { if (admin) void load(); }, [admin, currency]);
 
   const set = async (c: Connector, enabled: boolean) => {
     setError(null); setOk('');
@@ -49,8 +54,9 @@ export function Bookshops({ admin }: { admin: boolean }) {
                 <div className="btn-row">
                   {c.enabled
                     ? <button type="button" className="btn" onClick={() => void set(c, false)}>Turn {c.name} off</button>
-                    : c.usable && <button type="button" className="btn btn-primary" onClick={() => void set(c, true)}>Enable {c.name}</button>}
+                    : c.usable && <button type="button" className="btn btn-primary" disabled={Boolean(c.enableBlocked)} aria-describedby={c.enableBlocked ? `${id}-${c.id}-why` : undefined} onClick={() => void set(c, true)}>Enable {c.name}</button>}
                 </div>
+                {!c.enabled && c.usable && c.enableBlocked && <p className="footnote" id={`${id}-${c.id}-why`}>It cannot be enabled now: {c.enableBlocked}.</p>}
               </div>
             ))}
             {error && <Notice kind="error">{error === 'sign in again to do this' ? 'Sign in again to enable a bookshop: it needs a sign-in of the last few minutes.' : error}</Notice>}

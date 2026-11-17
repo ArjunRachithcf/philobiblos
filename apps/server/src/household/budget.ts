@@ -6,7 +6,7 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 
 export interface Budget { min: number; max: number }
-export const BUDGET_CEILING_C = 1_000_000; // CHF 10,000: a typo guard, not a policy
+export const BUDGET_CEILING_C = 1_000_000; // 10,000 of the household's currency: a typo guard, not a policy
 
 export class BudgetError extends Error {}
 

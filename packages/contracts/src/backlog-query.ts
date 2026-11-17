@@ -33,7 +33,7 @@ export type Term =
   | (Base & { key: 'source'; value: SourceValue })
   | (Base & { key: 'reason'; value: ReasonValue })
   | (Base & { key: 'idea' | 'theme' | 'author'; value: string })
-  /** score and links: plain numbers; price: CHF (the API's money is in centimes, compare against price / 100). */
+  /** score and links: plain numbers; price: whole units of the household's currency (the API's money is in hundredths, compare against price / 100). */
   | (Base & { key: 'score' | 'price' | 'links'; cmp: Comparator; value: number })
   /** added: age in days, `added:<30d` = added less than 30 days ago. */
   | (Base & { key: 'added'; cmp: Comparator; days: number })

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, message, type InboxItem, type Me } from '../api';
 import { Choice, MenuButton, Notice, PageHead } from '../ui';
+import { useMoney } from '../money';
 
 type Found = InboxItem['found'][number];
 interface Page { items: InboxItem[]; nextCursor: string | null }
@@ -13,7 +14,6 @@ const KIND: Record<InboxItem['kind'], string> = {
   unmatched_shop_line: 'Shop order', mail_failed: 'Could not read', mail_waiting: 'Waiting', mail_unverified: 'Not verified',
 };
 const SHARE_STATUS: Record<string, string> = { received: 'Waiting for the media worker', reading: 'Reading the images and videos', done: 'Received', failed: 'Failed' };
-const chf = (c?: number | null) => (c == null ? null : `CHF ${(c / 100).toFixed(2)}`);
 const day = (iso?: string | null) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null; };
 
 export function Inbox({ me }: { me: Me }) {
@@ -138,11 +138,12 @@ function Book({ it, f, kids, busy, onDecide }: {
   it: InboxItem; f: Found; kids: { handle?: string | null; name: string }[]; busy: boolean;
   onDecide: (it: InboxItem, f: Found, a: 'add' | 'skip', forWho?: { handle: string; name: string }) => void;
 }) {
+  const money = useMoney().format;
   const name = f.title ?? 'A line without a title';
   const invoice = it.kind === 'unmatched_invoice_line';
   // A toy (no ISBN), or a row whose EAN could not be read (a position number as much as a book): skip only.
   const addable = !f.notBook && !f.eanUnreadable && Boolean(f.title);
-  const facts = [f.author, f.ean ? `EAN ${f.ean}` : null, f.qty && f.qty > 1 ? `${f.qty} copies` : null, chf(f.priceC)].filter(Boolean).join(' · ');
+  const facts = [f.author, f.ean ? `EAN ${f.ean}` : null, f.qty && f.qty > 1 ? `${f.qty} copies` : null, f.priceC == null ? null : money(f.priceC, 'always')].filter(Boolean).join(' · ');
   return (
     <li className="row pr-row">
       <span className="row-main">

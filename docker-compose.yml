@@ -20,6 +20,8 @@ services:
       PHILOBIBLOS_WORK_DIR: /work
       # The household's time zone at the first start only; Settings holds it after.
       PHILOBIBLOS_TZ: Europe/Zurich
+      # The household's currency (ISO 4217) for a household that has none yet; empty: an admin chooses it in Settings.
+      PHILOBIBLOS_CURRENCY: ${PHILOBIBLOS_CURRENCY:-}
       # AI: Ollama is the default; Claude only after the opt-in in Settings.
       OLLAMA_URL: ${OLLAMA_URL:-}
       # off: nothing leaves (prices, Open Library and covers stay as they are); docs/security.md

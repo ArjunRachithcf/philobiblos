@@ -2,7 +2,6 @@
 // the month's budget; then Compose (order-mail.ts). Until a person changes something the plan is computed on each look;
 // the first change keeps it as the month's order (status `picked`), and Compose turns it into `drafted`. Who may
 // change what follows the Backlog: your own picks and the kids' (adults act for them), not another adult's.
-import { UNKNOWN_PRICE_C } from '../books/prices';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { components } from '@philobiblos/contracts/openapi';
@@ -11,6 +10,7 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { allCandidates, publicView, type Row } from '../backlog/backlog';
 import { BUDGET_CEILING_C, getBudget, type Budget } from '../household/budget';
+import { getMoney } from '../household/money';
 import { actsFor, getPerson, household, view, type Person } from '../household/people';
 import { getLibrary } from '../library/library';
 import { personSettings } from '../library/settings';
@@ -60,8 +60,9 @@ export function monthBudget(db: Db, month: string): { budget: Budget; isOverride
 const adults = (db: Db) => household(db).filter((p) => p.role !== 'kid');
 const kids = (db: Db) => household(db).filter((p) => p.role === 'kid');
 const orderOf = (db: Db, month: string) => db.select().from(t.order).where(eq(t.order.month, month)).get();
-// A price nobody knows counts as CHF 25 for the budget (ADR 0008); the screen still says it is unknown.
-const lineOf = (r: Row): Line => ({ bookId: r.book.id, forPerson: r.personId, move: r.move ?? null, estimateC: r.price ?? UNKNOWN_PRICE_C });
+// A price nobody knows counts as the household's unknown price for the budget (ADR 0008, Settings); the screen still
+// says it is unknown.
+const lineOf = (unknownC: number) => (r: Row): Line => ({ bookId: r.book.id, forPerson: r.personId, move: r.move ?? null, estimateC: r.price ?? unknownC });
 
 /** Rows that may be picked: open, and not already in another month's composed order. */
 function pickable(db: Db, month: string, viewer: string): Row[] {
@@ -78,6 +79,8 @@ function compute(db: Db, month: string, viewer: string, o: { keep?: Line[]; pick
   const rows = pickable(db, month, viewer);
   const hh = db.select().from(t.householdSettings).where(eq(t.householdSettings.id, 1)).get();
   const { budget } = monthBudget(db, month);
+  const unknownC = getMoney(db).unknownPrice;
+  const line = lineOf(unknownC);
   const out: Line[] = [...(o.keep ?? [])];
   const taken = new Set(out.map((l) => l.bookId));
   for (const p of adults(db).filter((a) => !o.pickFor || o.pickFor.includes(a.id))) {
@@ -87,7 +90,7 @@ function compute(db: Db, month: string, viewer: string, o: { keep?: Line[]; pick
     const mine = rows.filter((r) => r.personId === p.id && !taken.has(r.book.id));
     const ids = pickAdults(mine.map((r) => ({ id: r.id, score: r.score ?? null, move: r.move ?? null, excluded: r.score == null, isFiction: r.isFiction })),
       { count, mix: s.mix as Mix, broadenMonth: broadenMonth(month), allowFiction: s.fiction });
-    for (const id of ids) { const l = lineOf(mine.find((r) => r.id === id)!); out.push(l); taken.add(l.bookId); }
+    for (const id of ids) { const l = line(mine.find((r) => r.id === id)!); out.push(l); taken.add(l.bookId); }
   }
   const ownedAuthors = new Set(db.selectDistinct({ a: t.book.authorsJson }).from(t.copy).innerJoin(t.book, eq(t.book.id, t.copy.bookId)).all()
     .map((r) => (JSON.parse(r.a) as string[])[0]?.toLowerCase()).filter(Boolean));
@@ -95,9 +98,9 @@ function compute(db: Db, month: string, viewer: string, o: { keep?: Line[]; pick
   const total = out.reduce((n, l) => n + (l.estimateC ?? 0), 0);
   const { ids } = pickKids(kidRows.map((r) => ({
     id: r.id, kidId: r.personId, score: r.score!, theme: r.themes[0] ?? `none:${r.book.id}`, author: r.authors[0] ?? `none:${r.book.id}`,
-    priceC: r.price ?? UNKNOWN_PRICE_C, authorOnShelf: Boolean(r.authors[0]) && ownedAuthors.has(r.authors[0]!),
+    priceC: r.price ?? unknownC, authorOnShelf: Boolean(r.authors[0]) && ownedAuthors.has(r.authors[0]!),
   })), { kids: kids(db).map((k) => k.id), totalC: total, minC: budget.min, maxC: budget.max, skipShelfAuthors: (hh?.newAuthorsOnly ?? 1) === 1 });
-  out.push(...ids.map((id) => lineOf(kidRows.find((r) => r.id === id)!)));
+  out.push(...ids.map((id) => line(kidRows.find((r) => r.id === id)!)));
   return out;
 }
 
@@ -224,10 +227,11 @@ export function changePicks(db: Db, month: string, me: string, body: unknown): S
   if (!add.length && !remove.length && !b.recompute) throw new MonthError(400, 'add, remove or recompute');
   for (const r of [...add, ...remove]) mayChange(db, me, r.for);
   const rows = new Map(pickable(db, month, me).map((r) => [r.id, r]));
+  const lineFor = lineOf(getMoney(db).unknownPrice);
   const adding = add.map((r) => {
     const row = rows.get(`${r.for}.${r.bookId}`);
     if (!row) throw new MonthError(404, 'no open candidate for that person and book');
-    return lineOf(row);
+    return lineFor(row);
   });
   const o = keep(db, month, me);
   editable(o);

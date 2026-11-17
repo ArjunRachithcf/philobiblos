@@ -8,7 +8,8 @@ Status: **Accepted** · 2026-11-15
 
 > **Superseded in part** (2026-11-16, philobiblos#27): the lookup is a connector's (`prices` in
 > `connectors/<id>/connector.yaml`), one `PriceSource` per enabled connector; no shop is built in. The shop named below
-> was the first, and its layout is now the invented example connector's.
+> was the first, and its layout is now the invented example connector's. The unknown price is the household's own, in
+> its own currency (Settings, 25 by default; philobiblos#27 slice 2): no currency is built in.
 
 **Decision**: Prices are estimates from a read-only lookup; the bookshop's quote is the truth.
 

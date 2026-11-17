@@ -7,6 +7,7 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { requireAdmin } from '../auth/hook';
+import { getMoney } from '../household/money';
 import { createInvite } from '../auth/invites';
 import { clearSessionCookies } from '../auth/cookie';
 import { endAllSessions, isFresh } from '../auth/sessions';
@@ -71,6 +72,8 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     person: view(db, getPerson(db, req.caller!.personId)!),
     household: household(db).map((p) => view(db, p)),
     mode: cfg.mode,
+    // The household's currency and unknown price: every screen writes amounts in it (household/money.ts).
+    money: getMoney(db),
   }));
 
   app.post('/people', async (req, reply) => {

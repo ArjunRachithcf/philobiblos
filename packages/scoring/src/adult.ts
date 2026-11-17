@@ -19,11 +19,11 @@ export interface AdultWeights {
   sinkAfterMonths: number;
   sinkFloor: number;
   pricePenalty: number;
-  /** CHF: above this, `pricePenalty` applies. */
+  /** In the household's currency: above this, `pricePenalty` applies. */
   priceHigh: number;
-  /** CHF: above this, the candidate is excluded (a per-person setting). */
+  /** In the household's currency: above this, the candidate is excluded (a per-person setting). */
   priceMax: number;
-  /** CHF: the price assumed when it is unknown (ADR 0008). */
+  /** In the household's currency: the price assumed when it is unknown (ADR 0008; the household's own, Settings). */
   priceUnknown: number;
 }
 
@@ -97,7 +97,7 @@ export function adultMove(f: AdultCandidateFacts, layerFill: number): Move {
 
 export function scoreAdult(f: AdultCandidateFacts, w: AdultWeights = DEFAULT_ADULT_WEIGHTS): AdultScore {
   const price = f.priceC == null ? w.priceUnknown : f.priceC / 100;
-  if (price > w.priceMax) return { excluded: true, score: null, move: null, parts: [{ label: `Over CHF ${w.priceMax}`, value: 0, kind: 'excluded' }] };
+  if (price > w.priceMax) return { excluded: true, score: null, move: null, parts: [{ label: `Over ${w.priceMax}`, value: 0, kind: 'excluded' }] };
 
   const layerFill = layerFillPoints(f, w);
   const bridge = Math.max(0, f.bridge);

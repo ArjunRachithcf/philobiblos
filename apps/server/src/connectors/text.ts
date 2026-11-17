@@ -54,7 +54,7 @@ export function subjectMatcher(template: string): (subject: string) => string | 
   };
 }
 
-/** Money as the connector writes it: a symbol before the amount (`CHF 19.90`, `Fr. 16.90`) or after it (`19.90 CHF`). */
+/** Money as the connector writes it: a symbol before the amount (`<symbol> 19.90`) or after it (`19.90 <symbol>`). */
 export interface Money { before: string[]; after: string[] }
 
 /** Centimes (up to 9999.99) of the first amount in a line, or null. */

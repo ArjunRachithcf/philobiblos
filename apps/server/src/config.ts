@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveEnv } from '@philobiblos/contracts/env';
 import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY, wildcardTooBroad } from './push/hosts';
 import { validTimeZone } from './jobs/zone';
+import { validCurrency } from './household/currency';
 
 export type Mode = 'homerslab' | 'standalone';
 
@@ -16,6 +17,11 @@ export interface Config {
   port: number;
   /** PHILOBIBLOS_TZ: only the zone the household starts with (its settings row, made at the first start); never read after. */
   timezone: string;
+  /**
+   * PHILOBIBLOS_CURRENCY (ISO 4217): the currency of a household that has none yet, at a start (household/money.ts
+   * initCurrency); one it has is never replaced. null: none is assumed, an admin chooses it in Settings.
+   */
+  currency: string | null;
   /** homerslab: the only address whose X-HomersLab-Person header is trusted. */
   trustedProxy: string | null;
   webDir: string | null;
@@ -92,6 +98,7 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
     host: env.PHILOBIBLOS_HOST ?? '127.0.0.1',
     port,
     timezone: parseTimeZone(env.PHILOBIBLOS_TZ),
+    currency: parseCurrency(env.PHILOBIBLOS_CURRENCY),
     trustedProxy: env.PHILOBIBLOS_TRUSTED_PROXY || null,
     webDir: env.PHILOBIBLOS_WEB_DIR ?? null,
     origin: origin.origin,
@@ -124,6 +131,14 @@ function parseTimeZone(v: string | undefined): string {
   const tz = v.trim();
   if (!validTimeZone(tz)) throw new Error(`PHILOBIBLOS_TZ: a time zone such as Europe/Zurich, not ${v.trim().slice(0, 80)}`);
   return tz;
+}
+
+/** PHILOBIBLOS_CURRENCY: an ISO 4217 code this server knows, any case; empty or unset is none. */
+function parseCurrency(v: string | undefined): string | null {
+  if (v === undefined || !v.trim()) return null;
+  const code = v.trim().toUpperCase();
+  if (!validCurrency(code)) throw new Error(`PHILOBIBLOS_CURRENCY: an ISO 4217 code this server knows, not ${v.trim().slice(0, 20)}`);
+  return code;
 }
 
 function parsePushHosts(v: string | undefined): string[] {

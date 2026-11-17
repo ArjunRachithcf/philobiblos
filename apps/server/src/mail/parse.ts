@@ -53,7 +53,7 @@ export interface MailRules {
   subjects: ['online_order' | 'click_collect' | 'invoice', (subject: string) => string | null][];
   amount: (s: string) => number | null;
   hasAmount: (s: string) => boolean;
-  /** A part that is an amount with its symbol first (`CHF 18.90`). */
+  /** A part that is an amount with its symbol first (`<symbol> 18.90`). */
   startsWithAmount: RegExp;
   summary: (l: string) => boolean;
   unavailable: (l: string) => boolean;
@@ -197,7 +197,7 @@ export function parseQuote(text: string, address: string[], r: MailRules): Parse
       cur = b;
       continue;
     }
-    // "- Okafor, Value Beyond Price, CHF 18.90, delivery time 1-3 days"
+    // "- Okafor, Value Beyond Price, <symbol> 18.90, delivery time 1-3 days"
     const bullet = /^[-–•*]\s(.+)$/.exec(l);
     if (bullet) {
       flush();

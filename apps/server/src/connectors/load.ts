@@ -4,8 +4,8 @@
 // - YAML with no aliases, no tags, no duplicate keys; then contracts/connector.schema.json, which refuses every key it
 //   does not name (so no file can carry a setting the core does not have, such as unsigned mail or a private host);
 // - then what a schema cannot say: the id is its folder's name, a quote sender is at one of its own mail domains, a
-//   signing domain is aligned with one of them, a subject template has words around its number, a price URL's host is
-//   exact and its query is the only thing filled.
+//   signing domain is aligned with one of them, its currency is one this server knows, a subject template has words
+//   around its number, a price URL's host is exact and its query is the only thing filled.
 // Read once means a file edited on disk shows as changed (and counts for nothing) only after a restart; its bytes are
 // hashed and parsed from one buffer, so what was checked is what was read. An entry that cannot be looked at is a problem
 // row, not a failed start. Accepted (the folders are the trust root): the folder check and the open are two steps, so
@@ -19,6 +19,7 @@ import { parseDocument } from 'yaml';
 import { checkConnectorShape, type Connector } from '@philobiblos/contracts/connector';
 import { relaxedAligned } from '../mail/verify';
 import { fold } from './text';
+import { validCurrency } from '../household/currency';
 
 export const CONNECTOR_LIMITS = { fileBytes: 64 * 1024, perFolder: 64 } as const;
 export const CONNECTOR_FILE = 'connector.yaml';
@@ -45,6 +46,8 @@ const domainOf = (address: string) => address.slice(address.lastIndexOf('@') + 1
 /** What the schema cannot check. Null when the connector is sound. */
 export function soundness(c: Connector, folder: string): string | null {
   if (c.id !== folder) return `its id (${c.id}) is not its folder's name`;
+  // Its amounts are read as the household's (household/money.ts): a code no screen can write is no currency.
+  if (!validCurrency(c.locale.currency)) return `its currency ${c.locale.currency} is not an ISO 4217 code this server knows`;
   if (c.mail) {
     for (const s of c.mail.quote?.senders ?? []) if (!c.mail.domains.includes(domainOf(s))) return `the quote sender ${s} is not at one of its mail domains`;
     // A signer aligned with none of its From domains could never count (verify.ts): Settings must not show it as one.

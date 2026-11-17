@@ -1,6 +1,6 @@
 // Price estimates (ADR 0008): a read-only lookup behind `PriceSource`, so it can be swapped or turned off. The bookshop's
-// quote stays the truth; an estimate only helps the month's plan fit the budget, and an unknown price counts as CHF 25
-// in packages/scoring (`priceUnknown`).
+// quote stays the truth; an estimate only helps the month's plan fit the budget, and an unknown price counts as the
+// household's own amount (Settings, household/money.ts), in the plan and in packages/scoring (`priceUnknown`).
 //
 // Which shop is asked, and how its page reads, is the connector's (`prices` in connectors/<id>/connector.yaml): the
 // search URL, the article links, the print formats, the languages and the availability words. Nothing here names a shop.
@@ -11,9 +11,6 @@ import type { Connector } from '@philobiblos/contracts/connector';
 import type { Egress } from '../net/egress';
 import { norm, parsePriceC } from '../seed/import';
 import { alternation, contains, literal } from '../connectors/text';
-
-/** What an unknown price counts as in a month's budget, centimes (ADR 0008; packages/scoring's `priceUnknown`). */
-export const UNKNOWN_PRICE_C = 2500;
 
 export interface Offer { externalId: string; priceC: number | null; availability: string | null }
 export interface PriceSource {
