@@ -49,7 +49,7 @@ describe.each(shipped.map((c) => [c.id, c] as const))('connector %s', (id, loade
 
   it.each(fixtures(id).filter(([, f]) => f.page))('%s: the price lookup picks the expected offer', (_n, f) => {
     const p = c.prices!;
-    if (p.kind === 'jsonld') { expect(pickProduct(schemaNodes(ldBlocks(f.page!)), f.title!, f.authors ?? [], c.locale.currency)).toEqual(f.expect); return; }
+    if (p.kind === 'jsonld') { expect(pickProduct(schemaNodes(ldBlocks(f.page!)).nodes, f.title!, f.authors ?? [], c.locale.currency)).toEqual(f.expect); return; }
     const rules = tileRules({ money: c.money, prices: p });
     expect(pickOffer(parseTiles(f.page!, rules), f.title!, f.authors ?? [], rules)).toEqual(f.expect);
   });

@@ -174,13 +174,19 @@ export function pickProduct(nodes: LdNode[], title: string, authors: string[], c
   return { externalId: best.externalId, priceC: best.priceC, availability: best.availability };
 }
 
+/** The offer for this book on a search page (pickProduct), or none when the page holds more markup than is read. */
+export function pageOffer(html: string, title: string, authors: string[], currency: string): Offer | null {
+  const { nodes, overflow } = schemaNodes(ldBlocks(html.slice(0, PAGE_MAX), html.length > PAGE_MAX));
+  return overflow ? null : pickProduct(nodes, title, authors, currency);
+}
+
 /** A connector's price lookup through its search page's Product markup (`prices.kind: jsonld`), in its currency. */
 export function markupPrices(id: string, c: Pick<Connector, 'locale'> & { prices: { url: string } }, egress: Egress): PriceSource {
   return {
     id,
     async find(b) {
       const page = await egress.get(searchUrl(c.prices.url, b), 'html');
-      return pickProduct(schemaNodes(ldBlocks(page.body.toString('utf8').slice(0, PAGE_MAX))), b.title, b.authors, c.locale.currency);
+      return pageOffer(page.body.toString('utf8'), b.title, b.authors, c.locale.currency);
     },
   };
 }

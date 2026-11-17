@@ -12,9 +12,9 @@ import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { refreshMail } from '../src/mail/job';
 import { mailRules, parseMarkup, PARSERS } from '../src/mail/parse';
-import { openVerified } from '../src/mail/read';
+import { openVerified, TEXT_MAX } from '../src/mail/read';
 import { EgressError, type Egress } from '../src/net/egress';
-import { markupPrices, pickProduct } from '../src/books/prices';
+import { markupPrices, pageOffer } from '../src/books/prices';
 import { MARKUP_LIMITS, ldBlocks, schemaNodes } from '../src/schemaorg/jsonld';
 import { CFG, CONNECTORS, HOUSEHOLD, enableShop, fakeBox, message, resolver, signed } from './mailkit';
 
@@ -32,21 +32,36 @@ const offer = (o: { name?: string; author?: unknown; isbn?: string; price?: unkn
 const order = (offers: unknown[], more: Record<string, unknown> = {}) => ({ '@context': CTX, '@type': 'Order', orderNumber: 'LK-20417', merchant: { '@type': 'Organization', name: 'Larkspur Books' }, acceptedOffer: offers, ...more });
 const invoice = (offers: unknown[], more: Record<string, unknown> = {}) => ({ '@context': CTX, '@type': 'Invoice', confirmationNumber: 'INV-88120', totalPaymentDue: { '@type': 'MonetaryAmount', value: '19.90', currency: 'EUR' }, referencesOrder: order(offers), ...more });
 const parse = (html: string, address: string[] = []) => parseMarkup(ldBlocks(html), address, RULES);
+const blocks = (b: string[]) => ({ blocks: b, overflow: false });
 
 describe('the markup in a page: bounded and linear', () => {
   it('a letter whose lowercase is longer (U+0130) before a block does not shift what is read', () => {
-    expect(ldBlocks(`<p>${'İ'.repeat(5)}stanbul</p>${ld({ a: 1 })}`)).toEqual(['{"a":1}']);
+    expect(ldBlocks(`<p>${'İ'.repeat(5)}stanbul</p>${ld({ a: 1 })}`).blocks).toEqual(['{"a":1}']);
   });
 
   it('only JSON-LD script blocks are read, whatever the case and quoting of their type', () => {
     const html = `<p>Hi</p><script>var a = 1</script><SCRIPT TYPE='application/ld+json'>{"a":1}</SCRIPT><script type=application/ld+json >{"b":2}</script><script type="text/json">{"c":3}</script>`;
-    expect(ldBlocks(html)).toEqual(['{"a":1}', '{"b":2}']);
+    expect(ldBlocks(html)).toEqual({ blocks: ['{"a":1}', '{"b":2}'], overflow: false });
   });
 
-  it('at most a few blocks, each of bounded size; an unclosed block ends the reading', () => {
-    expect(ldBlocks(ld({ a: 1 }).repeat(MARKUP_LIMITS.blocks + 5))).toHaveLength(MARKUP_LIMITS.blocks);
-    expect(ldBlocks(`<script type="application/ld+json">${'x'.repeat(MARKUP_LIMITS.blockBytes + 1)}</script>${ld({ a: 1 })}`)).toEqual(['{"a":1}']);
-    expect(ldBlocks('<script type="application/ld+json">{"a":1}')).toEqual([]);
+  it('at most a few blocks, each of bounded size: beyond them, or an unclosed block, the markup is more than is read', () => {
+    expect(ldBlocks(ld({ a: 1 }).repeat(MARKUP_LIMITS.blocks))).toMatchObject({ overflow: false });
+    expect(ldBlocks(ld({ a: 1 }).repeat(MARKUP_LIMITS.blocks + 1))).toMatchObject({ overflow: true });
+    expect(ldBlocks(`<script type="application/ld+json">${'x'.repeat(MARKUP_LIMITS.blockChars + 1)}</script>${ld({ a: 1 })}`)).toMatchObject({ overflow: true });
+    expect(ldBlocks('<script type="application/ld+json">{"a":1}')).toMatchObject({ blocks: [], overflow: true });
+    // An HTML part cut before the end (read.ts reads at most 4 MB of it) is more than is read too.
+    expect(ldBlocks(ld({ a: 1 }), true)).toMatchObject({ overflow: true });
+  });
+
+  it('only a real script tag outside comments, as a browser reads it', () => {
+    expect(ldBlocks(`<scriptx type="application/ld+json">{"a":1}</scriptx></script>`).blocks).toEqual([]);
+    expect(ldBlocks(`<!-- ${ld({ hidden: 1 })} -->${ld({ a: 1 })}`).blocks).toEqual(['{"a":1}']);
+    expect(ldBlocks(`<script\ntype="application/ld+json">{"a":1}</script>`).blocks).toEqual(['{"a":1}']);
+    expect(ldBlocks('<!-- never closed <script type="application/ld+json">{"a":1}</script>')).toMatchObject({ blocks: [] });
+    const t0 = Date.now();
+    ldBlocks(`${'<!-- x -->'.repeat(100_000)}${ld({ a: 1 })}`);
+    ldBlocks(`${'<scriptx>'.repeat(100_000)}`);
+    expect(Date.now() - t0).toBeLessThan(2000);
   });
 
   it('linear on hostile pages: a megabyte of unclosed tags and script openings', () => {
@@ -58,23 +73,32 @@ describe('the markup in a page: bounded and linear', () => {
   });
 
   it('only schema.org nodes; @graph and lists are opened; anything else is not markup', () => {
-    const nodes = schemaNodes([
+    const { nodes } = schemaNodes(blocks([
       JSON.stringify({ '@context': 'http://schema.org/', '@type': 'Order', orderNumber: '1' }),
       JSON.stringify({ '@context': 'https://evil.example/vocab', '@type': 'Order', orderNumber: '2' }),
       JSON.stringify({ '@context': CTX, '@graph': [{ '@type': 'Invoice' }, { '@type': 'Thing' }] }),
       JSON.stringify([{ '@context': CTX, '@type': 'Product' }]),
-      '{not json',
       JSON.stringify({ '@type': 'Order', orderNumber: '3' }),
-    ]);
+    ]));
     expect(nodes.map((n) => n['@type'])).toEqual(['Order', 'Invoice', 'Thing', 'Product']);
   });
 
   it('a nesting or a node count beyond the limits is cut, never followed', () => {
     const deep = `{"@context":"${CTX}","@graph":${'['.repeat(100_000)}{"@type":"Thing"}${']'.repeat(100_000)}}`;
-    expect(() => schemaNodes([deep])).not.toThrow();
-    expect(schemaNodes([deep])).toEqual([]);
-    const many = Array.from({ length: MARKUP_LIMITS.nodes * 3 }, () => ({ '@type': 'Thing' }));
-    expect(schemaNodes([JSON.stringify({ '@context': CTX, '@graph': many })]).length).toBeLessThanOrEqual(MARKUP_LIMITS.nodes);
+    expect(() => schemaNodes(blocks([deep]))).not.toThrow();
+    expect(schemaNodes(blocks([deep]))).toMatchObject({ overflow: true });
+    const many = (n: number) => JSON.stringify({ '@context': CTX, '@graph': Array.from({ length: n }, () => ({ '@type': 'Thing' })) });
+    expect(schemaNodes(blocks([many(MARKUP_LIMITS.nodes)]))).toMatchObject({ overflow: false });
+    const over = schemaNodes(blocks([many(MARKUP_LIMITS.nodes * 3)]));
+    expect(over.nodes.length).toBeLessThanOrEqual(MARKUP_LIMITS.nodes);
+    expect(over.overflow).toBe(true);
+    // The cap is across blocks: eight blocks of the most one may hold are more than is read.
+    expect(schemaNodes(blocks(Array.from({ length: 8 }, () => many(MARKUP_LIMITS.nodes))))).toMatchObject({ overflow: true });
+    expect(schemaNodes(blocks(Array.from({ length: 8 }, () => many(Math.floor(MARKUP_LIMITS.nodes / 8)))))).toMatchObject({ overflow: false });
+    expect(schemaNodes(blocks([many(MARKUP_LIMITS.nodes), JSON.stringify({ '@context': CTX, '@type': 'Thing' })]))).toMatchObject({ overflow: true });
+    // A block that is not JSON, and a @type list longer than is read, are markup Philobiblos cannot read.
+    expect(schemaNodes(blocks(['{not json']))).toMatchObject({ overflow: true });
+    expect(schemaNodes(blocks([JSON.stringify({ '@context': CTX, '@type': Array.from({ length: 9 }, (_, i) => `T${i}`) })]))).toMatchObject({ overflow: true });
   });
 });
 
@@ -134,6 +158,31 @@ describe('Order markup', () => {
     expect(parse(ld(order([offer()], { orderStatus: status })))).toMatchObject({ kind: 'online_order' });
   });
 
+  it('a quantity above 99 is no count; an amount above 9999.99 is none Philobiblos reads', () => {
+    expect(parse(ld(order([offer({ qty: 99 })])))).toMatchObject({ kind: 'online_order', lines: [{ qty: 99 }] });
+    expect(parse(ld(order([offer({ qty: 100 })])))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/quantity/) });
+    expect(parse(ld(order([offer({ price: '9999.99' })])))).toMatchObject({ kind: 'online_order', lines: [{ priceC: 999999 }] });
+    expect(parse(ld(order([offer({ price: '10000' })])))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/price/) });
+  });
+
+  it('an ISBN-10 is read as its ISBN-13; one whose check digit is wrong is an ISBN Philobiblos cannot read', () => {
+    expect(parse(ld(order([offer({ isbn: '0-00-000000-0' })])))).toMatchObject({ kind: 'online_order', lines: [{ ean: '9780000000002' }] });
+    expect(parse(ld(order([offer({ isbn: '000000006X' })])))).toMatchObject({ kind: 'online_order', lines: [{ ean: '9780000000064' }] });
+    expect(parse(ld(order([offer({ isbn: '0000000011' })])))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/ISBN/) });
+  });
+
+  it.each([
+    ['a ninth block', () => ld({ '@context': CTX, '@type': 'Thing' }).repeat(8) + ld(invoice([offer()]))],
+    ['a block over the size cap', () => `<script type="application/ld+json">${JSON.stringify({ ...invoice([offer()]), pad: 'x'.repeat(MARKUP_LIMITS.blockChars) })}</script>${ld(order([offer()]))}`],
+    ['more nodes than are read', () => ld({ '@context': CTX, '@graph': [...Array.from({ length: MARKUP_LIMITS.nodes }, () => ({ '@type': 'Thing' })), invoice([offer()])] }) + ld(order([offer()]))],
+    ['an HTML part cut short', () => null],
+    ['an invoice referencing two orders', () => ld({ ...invoice([offer()]), referencesOrder: [order([offer()]), order([offer({ name: 'A Map of Small Rivers', isbn: '9780000000026' })])] })],
+  ])('%s: more markup than Philobiblos reads is an unknown layout, never a part of it', (_what, html) => {
+    const h = html();
+    const p = h == null ? parseMarkup(ldBlocks(ld(order([offer()])), true), [], RULES) : parse(h);
+    expect(p).toMatchObject({ kind: 'unknown_layout' });
+  });
+
   it('two orders in one mail, or too many books: an unknown layout', () => {
     expect(parse(ld(order([offer()])) + ld(order([offer()])))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/more than one/) });
     expect(parse(ld(order(Array.from({ length: 101 }, () => offer()))))).toMatchObject({ kind: 'unknown_layout', reason: 'too many books' });
@@ -187,6 +236,11 @@ describe('Invoice markup', () => {
 
   it('the author stays on an invoice\'s line: without an ISBN, a book is matched by title and author', () => {
     expect(parse(ld(invoice([offer({ isbn: '' })])))).toMatchObject({ kind: 'invoice', lines: [{ author: 'Mira Okafor', ean: null }] });
+  });
+
+  it.each(['OrderCancelled', 'https://schema.org/OrderReturned', 'OrderProblem'])('an invoice for an order that is %s makes no copies: an unknown layout', (status) => {
+    const p = parse(ld({ ...invoice([offer()]), referencesOrder: { ...order([offer()]), orderStatus: status } }));
+    expect(p).toMatchObject({ kind: 'unknown_layout', parser: PARSERS.markupInvoice, reason: expect.stringMatching(/cancelled|returned|problem/) });
   });
 
   it('its identifier stands for a confirmation number', () => {
@@ -308,7 +362,11 @@ describe('through the mail job: only a verified mail of an enabled connector', (
     const raw = await mail('o3', ld(order([offer()])));
     const shops = [{ id: 'larkspur', domains: LARKSPUR.mail!.domains, dkimDomains: LARKSPUR.mail!.domains }];
     const opened = await openVerified(raw, { shops, arcSealers: [], recipients: HOUSEHOLD, resolver, address: [] });
-    expect(opened.ok && opened.mail.markup.length).toBe(1);
+    expect(opened.ok && opened.mail.markup.blocks.length).toBe(1);
+    // An HTML part longer than is read: more markup than is read, whatever was in its first part.
+    const long = await mail('o4', ld(order([offer()])) + `<p>${'x'.repeat(4 * TEXT_MAX)}</p>`);
+    const cut = await openVerified(long, { shops, arcSealers: [], recipients: HOUSEHOLD, resolver, address: [] });
+    expect(cut.ok && cut.mail.markup).toMatchObject({ blocks: [expect.any(String)], overflow: true });
   });
 });
 
@@ -319,12 +377,13 @@ describe('the jsonld price lookup', () => {
     offers: o.offers ?? { '@type': 'Offer', price: o.price ?? '18.50', priceCurrency: o.currency ?? 'EUR', availability: o.availability ?? 'https://schema.org/InStock' },
   });
   const page = (...ps: unknown[]) => `<html><body><h1>Results</h1>${ps.map(ld).join('')}</body></html>`;
-  const pick = (html: string, title = 'The Long Tide of Markets', authors = ['Mira Okafor']) => pickProduct(schemaNodes(ldBlocks(html)), title, authors, 'EUR');
+  const pick = (html: string, title = 'The Long Tide of Markets', authors = ['Mira Okafor']) => pageOffer(html, title, authors, 'EUR');
 
   it('the product whose title and author match, its price in the connector\'s currency, and its availability as words', () => {
     expect(pick(page(product({ name: 'Another Book' }), product()))).toEqual({ externalId: 'LK-1001', priceC: 1850, availability: 'in stock' });
     expect(pick(page(product({ availability: 'https://schema.org/PreOrder' })))).toMatchObject({ availability: 'pre-order' });
     expect(pick(page(product({ availability: 'javascript:alert(1)' })))).toMatchObject({ availability: null });
+    for (const proto of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) expect(pick(page(product({ availability: proto })))).toMatchObject({ availability: null });
   });
 
   it('an ItemList of results, an AggregateOffer\'s lowest price; the cheapest of several matches', () => {
@@ -338,6 +397,9 @@ describe('the jsonld price lookup', () => {
     expect(pick(page(product({ author: 'Someone Else' })))).toBeNull();
     expect(pick(page(product({ currency: 'USD' })))).toBeNull();
     expect(pick('<p>no markup</p>')).toBeNull();
+    // More markup than is read: no price rather than a guess from part of the page.
+    expect(pick(page(product()) + ld({ '@context': CTX, '@type': 'Thing' }).repeat(8))).toBeNull();
+    expect(pick(page(product(), { '@context': CTX, '@graph': Array.from({ length: MARKUP_LIMITS.nodes }, () => ({ '@type': 'Thing' })) }))).toBeNull();
   });
 
   it('an author written "Surname, Given" matches; an e-book or an audiobook is never the price of a printed book', () => {

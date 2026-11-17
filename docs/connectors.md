@@ -132,17 +132,21 @@ prices:
 With `markup: true`, a verified mail of that connector that none of its own layouts recognises (no subject template,
 not from a quote sender) is read for one schema.org `Order` (its lines are kept, as a web order's; an order whose
 `orderStatus` is not processing or payment due, such as a cancellation or a shipping update, is no new order) or one
-`Invoice` (a copy per unit, owned, as a PDF invoice makes; the Order it references, also by a local `@id`, is its own). Settings shows that it counts. Each book is an offer's product: its name,
+`Invoice` (a copy per unit, owned, as a PDF invoice makes; the one Order it references, also by a local `@id`, is its own,
+and an invoice for a cancelled, returned or problem order makes no copies). Settings shows that it counts. Each book is an offer's product: its name,
 first author, ISBN or GTIN-13, quantity and price. Philobiblos **fails closed**: an amount in another currency than
 the connector's, or with none, a price that is not plain digits with a `.` for decimals, a book without a title or a
-price, an ISBN that is not 13 digits, more than one order in a mail, or an invoice without a number Philobiblos can
+price, an ISBN that is neither 13 digits nor an ISBN-10 whose check digit holds (that one is read as its ISBN-13), a
+quantity above 99 or an amount above 9999.99, more than one order in a mail, more markup than Philobiblos reads (a ninth
+block, a block over 256 K characters, an unclosed one, one that is not JSON, more than 500 nodes in all, an HTML part
+cut short): none of it is read rather than a part, or an invoice without a number Philobiblos can
 keep (each shop's invoice number counts once), or whose stated total is not the sum of its lines, makes the mail an unknown layout that changes
 nothing. A product that is no book (no ISBN, not a `Book`) is a line that is no book. Only blocks under the schema.org
 context count; nothing in them is followed, run or stored.
 
 `prices.kind: jsonld` asks the search URL as `search_tiles` does and reads only its Product markup: the Book or
 Product whose name is the title and whose author holds the first author's surname, never an e-book or an audiobook,
-its offers in the connector's currency, the cheapest. Its availability is one of schema.org's values, shown in a few fixed words.
+its offers in the connector's currency, the cheapest; a page with more markup than is read gives no price. Its availability is one of schema.org's values, shown in a few fixed words.
 
 ### What a connector cannot do
 
@@ -161,8 +165,9 @@ A connector is **data only**, and it cannot loosen a rule of the core:
   would show a name reversed in Settings; a zero-width space would make a phrase that never matches).
 - **A known currency.** `locale.currency` is an ISO 4217 code the server knows, and the connector counts only while it is
   the household's currency.
-- **Markup only as data.** `markup` and `kind: jsonld` read schema.org JSON-LD blocks (at most 8, 256 KB each, a
-  few hundred nodes); a block under another vocabulary is no markup, and no link in one is followed.
+- **Markup only as data.** `markup` and `kind: jsonld` read schema.org JSON-LD blocks (at most 8, 256 K characters
+  each, 500 nodes in all; beyond a limit, none of it counts); only real `<script>` tags outside HTML comments; a block
+  under another vocabulary is no markup, and no link in one is followed.
 - **Aligned signers.** A signing domain in `dkim_domains` shares its organizational domain with one of `domains`.
 - **Bounded.** At most 32 words in a list, 60 characters a word, 8 domains, 16 subjects.
 

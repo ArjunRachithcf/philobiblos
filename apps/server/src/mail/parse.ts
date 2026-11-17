@@ -13,7 +13,7 @@
 import type { Connector } from '@philobiblos/contracts/connector';
 import { alternation, amountFinder, amountTest, contains, literal, startsWith, subjectMatcher } from '../connectors/text';
 import { safeField } from './read';
-import { hundredths, isType, list, node, schemaNodes, text, type LdNode } from '../schemaorg/jsonld';
+import { hundredths, isType, list, node, schemaNodes, text, type LdNode, type Markup } from '../schemaorg/jsonld';
 
 /** One version per parser: a row records the one that read it (and an unknown layout is read again under a new one). */
 export const PARSERS = { quote: 'quote-1', confirm: 'confirm-1', online: 'online-1', collect: 'collect-1', invoice: 'invoice-1', classify: 'classify-1', markupOrder: 'markup-order-1', markupInvoice: 'markup-invoice-1' } as const;
@@ -132,6 +132,17 @@ export function classify(r: MailRules, from: string, subject: string | null): Ki
 }
 
 const refuse = (expected: string, parser: string, reason: string): Parsed => ({ kind: 'unknown_layout', parser, expected, reason });
+
+/** An EAN as kept: 13 digits as they are, an ISBN-10 whose check digit holds as its ISBN-13 (978…); else undefined. */
+export function isbn13(s: string): string | undefined {
+  if (/^\d{13}$/.test(s)) return s;
+  if (!/^\d{9}[\dX]$/i.test(s)) return undefined;
+  const d = [...s.toUpperCase()].map((c) => (c === 'X' ? 10 : Number(c)));
+  if (d.reduce((n, x, i) => n + x * (10 - i), 0) % 11 !== 0) return undefined;
+  const twelve = `978${s.slice(0, 9)}`;
+  const sum = [...twelve].reduce((n, c, i) => n + Number(c) * (i % 2 ? 3 : 1), 0);
+  return twelve + ((10 - (sum % 10)) % 10);
+}
 
 /**
  * The text's own lines: NFKC, format characters gone, trimmed; the quoted request (from the first reply marker on,
@@ -335,10 +346,12 @@ const MARKUP_NUMBER = /^[A-Za-z0-9][A-Za-z0-9-]{2,38}[A-Za-z0-9]$/;
  * not 13 digits, an invoice without a number or whose stated total is not the sum of its lines, is `unknown_layout`.
  * A product that is no Book (and has no ISBN) is a line that is no book. Every string passes `safeField`.
  */
-export function parseMarkup(blocks: string[], address: string[], r: MailRules): Parsed | null {
-  if (!r.markup || !blocks.length) return null;
+export function parseMarkup(markup: Markup, address: string[], r: MailRules): Parsed | null {
+  if (!r.markup || (!markup.blocks.length && !markup.overflow)) return null;
   const currency = r.markup.currency;
-  const nodes = schemaNodes(blocks);
+  const { nodes, overflow } = schemaNodes(markup);
+  // More markup than is read: an unknown layout, never the part that was read (an order's other books may be beyond it).
+  if (overflow) return refuse('online_order', PARSERS.markupOrder, 'more markup than Philobiblos reads');
   // A node another one names by its @id (`{"@id": "#order"}`, the same mail's markup only: nothing is looked up).
   const byId = new Map(nodes.flatMap((n) => (typeof n['@id'] === 'string' ? [[n['@id'], n] as const] : [])));
   const resolve = (v: unknown): LdNode | null => { const n = node(v); return n && typeof n['@id'] === 'string' && !('@type' in n) ? byId.get(n['@id']) ?? null : n; };
@@ -369,7 +382,11 @@ export function parseMarkup(blocks: string[], address: string[], r: MailRules): 
     return c == null ? { problem: 'a price Philobiblos cannot read' } : { c };
   };
   const top = isInvoice ? invoices[0]! : orders[0]!;
+  // An invoice for one order, which is no cancellation, return or problem: an invoice naming two orders, or for an order
+  // that was not delivered as placed, makes no copies.
+  if (isInvoice && Array.isArray(top.referencesOrder) && top.referencesOrder.length > 1) return no('an invoice for more than one order');
   const ord = isInvoice ? resolve(top.referencesOrder) ?? top : top;
+  if (isInvoice && ord !== top && ['OrderCancelled', 'OrderReturned', 'OrderProblem'].includes(String(ord.orderStatus).replace(/^(?:schema:|https?:\/\/schema\.org\/)/, ''))) return no('an invoice for a cancelled, returned or problem order');
   // Each article: its Offers (their itemOffered), or else its OrderItems (their orderedItem, their own price): an order
   // that lists its books both ways names each book once, not twice.
   const offers = list(ord.acceptedOffer, LIMITS.books + 1);
@@ -385,8 +402,8 @@ export function parseMarkup(blocks: string[], address: string[], r: MailRules): 
     const title = text(product.name);
     if (!title || !title.trim()) return no('a book without a title');
     const rawIsbn = text(product.isbn) ?? text(product.gtin13);
-    const ean = rawIsbn == null ? null : rawIsbn.replace(/[\s-]/g, '');
-    if (ean != null && !/^\d{13}$/.test(ean)) return no('an ISBN Philobiblos cannot read');
+    const ean = rawIsbn == null ? null : isbn13(rawIsbn.replace(/[\s-]/g, ''));
+    if (ean === undefined) return no('an ISBN Philobiblos cannot read');
     const price = amountOf(o.price !== undefined || o.priceSpecification !== undefined ? o : node(o.offers) ?? node(product.offers));
     if ('problem' in price) return no(price.problem);
     const q = o.eligibleQuantity !== undefined ? node(o.eligibleQuantity)?.value ?? o.eligibleQuantity : o.orderQuantity !== undefined ? node(o.orderQuantity)?.value ?? o.orderQuantity : 1;
