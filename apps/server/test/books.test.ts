@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
 import { lookup, parseWork, pickSearchDoc } from '../src/books/openlibrary';
 import * as prices from '../src/books/prices';
+import type { SearchTiles } from '@philobiblos/contracts/connector';
 import { QUILLMERE } from './mailkit';
 import { DEFAULT_UNKNOWN_PRICE_C } from '../src/household/money';
 import { loadConfig } from '../src/config';
@@ -51,7 +52,7 @@ const noSleep = async () => {};
 // The search page of the invented example bookshop (connectors/quillmere/connector.yaml `prices`).
 const { textOf } = prices;
 type PriceSource = prices.PriceSource;
-const SHOP = { money: QUILLMERE.money, prices: QUILLMERE.prices! };
+const SHOP = { money: QUILLMERE.money, prices: QUILLMERE.prices as SearchTiles };
 const TILES = prices.tileRules(SHOP);
 const parseTiles = (html: string) => prices.parseTiles(html, TILES);
 const pickOffer = (tiles: prices.Tile[], title: string, authors: string[]) => prices.pickOffer(tiles, title, authors, TILES);

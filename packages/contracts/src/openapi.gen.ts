@@ -927,6 +927,8 @@ export interface components {
                 priceHost: string | null;
                 /** @description where Compose writes unless Settings names another address */
                 orderTo: string | null;
+                /** @description schema.org Order and Invoice markup (JSON-LD) in its signed mail counts: an order's lines are kept, an invoice makes copies */
+                markup: boolean;
             };
         };
         /** @description hundredths of the household's currency (HouseholdMoney) */

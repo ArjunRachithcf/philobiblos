@@ -1,0 +1,24 @@
+# Larkspur Books: an invented bookshop (its name, domain and addresses are made up; .example is reserved, RFC 2606).
+# It is the example of a shop Philobiblos reads through schema.org markup alone (philobiblos#27): its order and invoice
+# mails carry Order and Invoice JSON-LD, and its product pages carry Product JSON-LD, so it needs no words of its own.
+# Data only (contracts/connector.schema.json). An admin enables it in Settings, with a fresh sign-in, after reading
+# what it allows, and only in the household's currency.
+schema: 1
+id: larkspur
+name: Larkspur Books
+locale:
+  currency: EUR
+  language: en
+money:
+  before: [EUR]
+  after: [EUR]
+mail:
+  domains: [larkspur.example]
+  # Order and Invoice markup (schema.org JSON-LD) in its signed mail counts; nothing else of its mail is read.
+  markup: true
+order:
+  to: orders@larkspur.example
+prices:
+  # Its search page, read for Product markup only (no script runs).
+  kind: jsonld
+  url: https://shop.larkspur.example/search?q={query}

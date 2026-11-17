@@ -244,14 +244,18 @@ test('the currency: none is assumed; an admin chooses it, and every amount is in
   await page.keyboard.press('Enter');
   await expect(page.getByText('Quillmere Books is enabled.')).toHaveCount(0);
   await expect(page.getByText(/counts only in the household/)).toHaveCount(0); // no request was sent (it would be a 409)
-  await expect(page.getByText(/It cannot be enabled now; the household has no currency yet/)).toBeVisible();
+  const why = (id: string) => page.locator(`[id$="-${id}-why"]`);
+  await expect(why('quillmere')).toHaveText(/It cannot be enabled now; the household has no currency yet/);
   await page.getByLabel('The household’s currency').selectOption('CHF');
   await page.getByLabel(/^An unknown price counts as/).fill('30');
   await page.getByRole('button', { name: 'Save the currency' }).click();
   await expect(page.getByText(/^Amounts are in/)).toContainText('CHF');
   await expect(page.getByText(/^Amounts are in/)).toContainText(/CHF\s30/);
   await expect(page.getByRole('button', { name: 'Enable Quillmere Books' })).not.toHaveAttribute('aria-disabled', 'true');
-  await expect(page.getByText(/It cannot be enabled now/)).toHaveCount(0);
+  await expect(why('quillmere')).toHaveCount(0);
+  // The example that ships in euros waits, and says why.
+  await expect(why('larkspur')).toHaveText(/its amounts are in EUR, the household's currency is CHF/);
+  await expect(page.getByRole('button', { name: 'Enable Larkspur Books' })).toHaveAttribute('aria-disabled', 'true');
   await page.getByLabel(/^An unknown price counts as/).fill('25');
   await page.getByRole('button', { name: 'Save the currency' }).click();
   await expect(page.getByText(/^Amounts are in/)).toContainText(/CHF\s25/);

@@ -23,7 +23,7 @@ import { SealError, isSealed, sealingKey, unseal } from '../household/sealed';
 import { MediaUnavailable, runMediaJob, type MediaOutcome } from '../media/client';
 import type { Config } from '../config';
 import { MAIL_LIMITS, addressParts, openVerified, type VerifiedMail } from './read';
-import { PARSERS, classify, mailRules, parseInvoice, parseQuote, parseShop, type MailRules, type Parsed } from './parse';
+import { PARSERS, classify, mailRules, parseInvoice, parseMarkup, parseQuote, parseShop, type MailRules, type Parsed } from './parse';
 import { enabledConnectors } from '../connectors/enabled';
 import type { Registry } from '../connectors/load';
 import type { ShopMail } from './verify';
@@ -60,7 +60,8 @@ async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Arr
   switch (k.kind) {
     case 'quote_or_confirm': return parseQuote(m.text, address, r);
     case 'online_order': case 'click_collect': return parseShop(k.kind, k.number, m.text, address, r);
-    case 'other': return { kind: 'other', parser: PARSERS.classify };
+    // A mail none of the connector's layouts knows: its schema.org markup, if the connector's counts (parse.ts parseMarkup).
+    case 'other': return parseMarkup(m.markup, address, r) ?? { kind: 'other', parser: PARSERS.classify };
     case 'number_unreadable': return { kind: 'unknown_layout', parser: PARSERS.classify, expected: k.expected, reason: 'its order or invoice number is not 4 to 11 digits' };
     case 'invoice': {
       if (!m.pdfs.length) return { kind: 'unknown_layout', parser: PARSERS.invoice, expected: 'invoice', reason: 'no PDF' };

@@ -342,13 +342,14 @@ components:
         language: { type: string }
         allows:
           type: object
-          required: [mailFrom, signedBy, quoteSenders, priceHost, orderTo]
+          required: [mailFrom, signedBy, quoteSenders, priceHost, orderTo, markup]
           properties:
             mailFrom: { type: array, items: { type: string }, description: 'the From domains whose mail counts (exact)' }
             signedBy: { type: array, items: { type: string }, description: 'the DKIM signing domains that count (exact)' }
             quoteSenders: { type: array, items: { type: string } }
             priceHost: { type: [string, 'null'], description: 'the one host its price lookup asks (added to the egress allowlist)' }
             orderTo: { type: [string, 'null'], description: 'where Compose writes unless Settings names another address' }
+            markup: { type: boolean, description: 'schema.org Order and Invoice markup (JSON-LD) in its signed mail counts: an order''s lines are kept, an invoice makes copies' }
     Money: { type: integer, description: 'hundredths of the household''s currency (HouseholdMoney)' }
     Me: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, household: { type: array, items: { $ref: '#/components/schemas/Person' } }, mode: { enum: [homerslab, standalone] }, money: { $ref: '#/components/schemas/HouseholdMoney' } } }
     HouseholdMoney:

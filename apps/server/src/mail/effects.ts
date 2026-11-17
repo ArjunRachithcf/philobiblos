@@ -120,9 +120,12 @@ function quote(tx: Tx, m: VerifiedMail, lines: QuoteLine[], parser: string, now:
 
 function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }>, o: { key: string; now: string }): Applied {
   const kept = { parser: p.parser, invoiceNumber: p.invoiceNumber, totalC: p.totalC };
-  // The same invoice sent again (another Message-ID): read, never counted twice.
+  // The same invoice sent again by the same shop (another Message-ID): read, never counted twice.
   const again = p.invoiceNumber != null && tx.select({ id: t.mailSeen.messageId }).from(t.mailSeen)
-    .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber') = ${p.invoiceNumber}`, sql`${t.mailSeen.messageId} <> ${o.key}`)).get();
+    .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber') = ${p.invoiceNumber}`, sql`${t.mailSeen.messageId} <> ${o.key}`,
+      // The same shop's number: two shops may number their invoices alike (a row from before connectors names none: it
+      // was the one shop's).
+      sql`(json_extract(${t.mailSeen.authJson}, '$.connector') = ${m.auth.connector} OR json_extract(${t.mailSeen.authJson}, '$.connector') IS NULL)`)).get();
   if (again) return { ...kept, duplicateOf: again.id };
   const books = keys(tx);
   const acquired = m.content.date && !Number.isNaN(Date.parse(m.content.date)) ? new Date(m.content.date).toISOString() : o.now;

@@ -13,9 +13,10 @@
 import type { Connector } from '@philobiblos/contracts/connector';
 import { alternation, amountFinder, amountTest, contains, literal, startsWith, subjectMatcher } from '../connectors/text';
 import { safeField } from './read';
+import { hundredths, isType, list, node, schemaNodes, text, type LdNode, type Markup } from '../schemaorg/jsonld';
 
 /** One version per parser: a row records the one that read it (and an unknown layout is read again under a new one). */
-export const PARSERS = { quote: 'quote-1', confirm: 'confirm-1', online: 'online-1', collect: 'collect-1', invoice: 'invoice-1', classify: 'classify-1' } as const;
+export const PARSERS = { quote: 'quote-1', confirm: 'confirm-1', online: 'online-1', collect: 'collect-1', invoice: 'invoice-1', classify: 'classify-1', markupOrder: 'markup-order-1', markupInvoice: 'markup-invoice-1' } as const;
 export const LIMITS = { lines: 5000, lineChars: 1000, books: 100 } as const;
 
 /**
@@ -27,7 +28,7 @@ interface NotBook { notBook?: true }
 export interface QuoteLine extends NotBook { title: string | null; author: string | null; ean: string | null; priceC: number | null; delivery: string | null; available: boolean }
 export interface ShopLine extends NotBook { title: string | null; author: string | null; ean: string | null; qty: number; priceC: number }
 /** `eanUnreadable`: an invoice row read whole but for its EAN (spaced, cut, not 13 digits): never matched, to the Inbox. */
-export interface InvoiceLine extends NotBook { title: string | null; ean: string | null; qty: number; priceC: number; discountPct: number | null; totalC: number; vatPct: number; eanUnreadable?: true }
+export interface InvoiceLine extends NotBook { title: string | null; author?: string | null; ean: string | null; qty: number; priceC: number; discountPct: number | null; totalC: number; vatPct: number | null; eanUnreadable?: true }
 const ISBN = /^97[89]\d{10}$/;
 const notBook = (ean: string | null | undefined): NotBook => (ean && !ISBN.test(ean) ? { notBook: true } : {});
 
@@ -61,6 +62,8 @@ export interface MailRules {
   quote: { field: RegExp; labels: Map<string, QuoteField>; split: RegExp; confirm: (l: string) => boolean; orderNumber: RegExp; deliveryLabel: RegExp } | null;
   shop: { books: Set<string>; skip: Set<string>; right: RegExp; ean: RegExp; by: string } | null;
   invoice: { total: (l: string) => boolean; postage: (l: string) => boolean; unit: string; currency: string } | null;
+  /** schema.org Order and Invoice markup counts (`mail.markup`), its amounts in this currency only. */
+  markup: { currency: string } | null;
 }
 type QuoteField = 'author' | 'title' | 'isbn' | 'price' | 'delivery';
 
@@ -76,8 +79,11 @@ export function mailRules(c: Connector): MailRules {
   const q = m.quote;
   const labels = new Map<string, QuoteField>();
   if (q) for (const f of ['author', 'title', 'isbn', 'price', 'delivery'] as const) for (const l of q.labels[f]) labels.set(l.toLowerCase(), f);
-  const attributionStart = new RegExp(`^${alternation(m.reply.attribution_starts)} `, 'iu');
-  const attributionVerb = contains(m.reply.attribution_verbs);
+  // A connector read through its markup alone has no words for these: nothing then matches them.
+  const never = () => false;
+  const reply = m.reply;
+  const attributionStart = reply ? new RegExp(`^${alternation(reply.attribution_starts)} `, 'iu') : null;
+  const attributionVerb = reply ? contains(reply.attribution_verbs) : never;
   const r: MailRules = {
     quoteSenders: q?.senders ?? [],
     subjects: [
@@ -88,13 +94,13 @@ export function mailRules(c: Connector): MailRules {
     amount: amountFinder(c.money),
     hasAmount: amountTest(c.money),
     startsWithAmount: new RegExp(`^${alternation(c.money.before)}\\s?\\d`, 'iu'),
-    summary: startsWith(m.summary),
-    unavailable: contains(m.unavailable),
+    summary: m.summary ? startsWith(m.summary) : never,
+    unavailable: m.unavailable ? contains(m.unavailable) : never,
     reply: [
-      tester(new RegExp(`^-{2,} ?${alternation(m.reply.separators)}`, 'iu')),
+      ...(reply ? [tester(new RegExp(`^-{2,} ?${alternation(reply.separators)}`, 'iu'))] : []),
       (l) => /^_{8,}$/.test(l),
-      tester(new RegExp(`^${alternation(m.reply.header_labels)} ?: `, 'iu')),
-      (l) => attributionStart.test(l) && l.endsWith(':') && attributionVerb(l),
+      ...(reply ? [tester(new RegExp(`^${alternation(reply.header_labels)} ?: `, 'iu'))] : []),
+      (l) => Boolean(attributionStart?.test(l)) && l.endsWith(':') && attributionVerb(l),
     ],
     quote: q ? {
       field: new RegExp(`^(${alternation([...labels.keys()])})\\s?[:.]\\s?(.*)$`, 'iu'),
@@ -110,6 +116,7 @@ export function mailRules(c: Connector): MailRules {
       ean: new RegExp(` ${literal(m.shop.ean_label)}: ?(\\d{13})$`, 'iu'),
     } : null,
     invoice: m.invoice ? { total: startsWith(m.invoice.total_words), postage: startsWith(m.invoice.postage_words), unit: m.invoice.unit.toUpperCase(), currency: c.locale.currency } : null,
+    markup: m.markup ? { currency: c.locale.currency } : null,
   };
   compiled.set(c, r);
   return r;
@@ -125,6 +132,30 @@ export function classify(r: MailRules, from: string, subject: string | null): Ki
 }
 
 const refuse = (expected: string, parser: string, reason: string): Parsed => ({ kind: 'unknown_layout', parser, expected, reason });
+
+/**
+ * A schema.org OrderStatus as its name: a string or a `{"@id": …}` reference, `schema:` or the schema.org URL (http or
+ * https) stripped; anything else (another vocabulary's, a list, a number, a node) is null, a status that never counts.
+ */
+export function statusOf(v: unknown): string | null {
+  const s = typeof v === 'string' ? v : typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length === 1 && typeof (v as LdNode)['@id'] === 'string' ? ((v as LdNode)['@id'] as string) : null;
+  return s == null ? null : s.trim().replace(/^(?:schema:|https?:\/\/schema\.org\/)/, '');
+}
+/** An order's own mail counts as the order: no status, processing or payment due (allowlist: a status not here never counts). */
+const PLACED = new Set(['OrderProcessing', 'OrderPaymentDue']);
+/** The statuses of an order an invoice may count for (allowlist: cancelled, returned, a problem, or any other status never). */
+const INVOICED = new Set(['OrderProcessing', 'OrderPaymentDue', 'OrderInTransit', 'OrderPickupAvailable', 'OrderDelivered']);
+
+/** An EAN as kept: 13 digits as they are, an ISBN-10 whose check digit holds as its ISBN-13 (978…); else undefined. */
+export function isbn13(s: string): string | undefined {
+  if (/^\d{13}$/.test(s)) return s;
+  if (!/^\d{9}[\dX]$/i.test(s)) return undefined;
+  const d = [...s.toUpperCase()].map((c) => (c === 'X' ? 10 : Number(c)));
+  if (d.reduce((n, x, i) => n + x * (10 - i), 0) % 11 !== 0) return undefined;
+  const twelve = `978${s.slice(0, 9)}`;
+  const sum = [...twelve].reduce((n, c, i) => n + Number(c) * (i % 2 ? 3 : 1), 0);
+  return twelve + ((10 - (sum % 10)) % 10);
+}
 
 /**
  * The text's own lines: NFKC, format characters gone, trimmed; the quoted request (from the first reply marker on,
@@ -314,4 +345,102 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
   const sum = out.reduce((n, l) => n + l.totalC, 0) + postage;
   if (stated != null && stated !== sum) return refuse('invoice', P, 'the stated total is not the sum of the rows');
   return { kind: 'invoice', parser: P, invoiceNumber: field(number, address), lines: out, totalC: stated ?? sum };
+}
+
+/** An order or invoice number from markup: 4 to 40 letters, digits and dashes, or nothing (never another shape). */
+const MARKUP_NUMBER = /^[A-Za-z0-9][A-Za-z0-9-]{2,38}[A-Za-z0-9]$/;
+
+/**
+ * schema.org Order and Invoice markup (JSON-LD) in a verified mail of a connector that says it sends it (`mail.markup`):
+ * null when there is none (or the connector's markup does not count), so the mail stays `other`. One Order or one
+ * Invoice a mail; each book from its offers (`acceptedOffer`, or `orderedItem`): the product's name, first author,
+ * ISBN (or GTIN-13), the quantity and the price, in the connector's currency only. Like every parser it fails closed:
+ * an amount in another currency or none, a price it cannot read, a book without a title or a price, an ISBN that is
+ * not 13 digits, an invoice without a number or whose stated total is not the sum of its lines, is `unknown_layout`.
+ * A product that is no Book (and has no ISBN) is a line that is no book. Every string passes `safeField`.
+ */
+export function parseMarkup(markup: Markup, address: string[], r: MailRules): Parsed | null {
+  if (!r.markup || (!markup.blocks.length && !markup.overflow)) return null;
+  const currency = r.markup.currency;
+  const { nodes, overflow } = schemaNodes(markup);
+  // More markup than is read: an unknown layout, never the part that was read (an order's other books may be beyond it).
+  if (overflow) return refuse('online_order', PARSERS.markupOrder, 'more markup than Philobiblos reads');
+  // A node another one names by its @id (`{"@id": "#order"}`, the same mail's markup only: nothing is looked up).
+  const byId = new Map(nodes.flatMap((n) => (typeof n['@id'] === 'string' ? [[n['@id'], n] as const] : [])));
+  const resolve = (v: unknown): LdNode | null => { const n = node(v); return n && typeof n['@id'] === 'string' && !('@type' in n) ? byId.get(n['@id']) ?? null : n; };
+  const invoices = nodes.filter((n) => isType(n, 'Invoice'));
+  // An Order an Invoice references is that invoice's, not a second document.
+  const referenced = new Set(invoices.map((i) => resolve(i.referencesOrder)).filter(Boolean));
+  // An order's own mail: none, processing or payment due. A cancellation, a return or a shipping update is no order.
+  const placed = (o: LdNode) => o.orderStatus === undefined || PLACED.has(statusOf(o.orderStatus) ?? '');
+  const allOrders = nodes.filter((n) => isType(n, 'Order') && !referenced.has(n));
+  const orders = allOrders.filter(placed);
+  if (!orders.length && !invoices.length) return null;
+  const isInvoice = invoices.length > 0;
+  const P = isInvoice ? PARSERS.markupInvoice : PARSERS.markupOrder;
+  const expected = isInvoice ? 'invoice' : 'online_order';
+  const no = (reason: string) => refuse(expected, P, reason);
+  if (allOrders.length + invoices.length > 1) return no('more than one order or invoice in one mail');
+  const inCurrency = (c: unknown) => (typeof c !== 'string' ? 'none' : c === currency ? 'ok' : 'other');
+  /** An amount node's value: `price`/`priceCurrency` (an Offer, a PriceSpecification) or `value`/`currency` (a MonetaryAmount). */
+  const amountOf = (n: LdNode | null): { c: number } | { problem: string } => {
+    if (!n) return { problem: 'a book without a price' };
+    const spec = node(n.priceSpecification);
+    const [v, cur] = n.price !== undefined ? [n.price, n.priceCurrency] : n.value !== undefined ? [n.value, n.currency] : spec ? [spec.price, spec.priceCurrency] : [undefined, undefined];
+    if (v === undefined) return { problem: 'a book without a price' };
+    const ok = inCurrency(cur);
+    if (ok === 'none') return { problem: 'an amount without its currency' };
+    if (ok === 'other') return { problem: 'an amount in another currency' };
+    const c = hundredths(v);
+    return c == null ? { problem: 'a price Philobiblos cannot read' } : { c };
+  };
+  const top = isInvoice ? invoices[0]! : orders[0]!;
+  // An invoice for one order, which is no cancellation, return or problem: an invoice naming two orders, or for an order
+  // that was not delivered as placed, makes no copies.
+  if (isInvoice && Array.isArray(top.referencesOrder) && top.referencesOrder.length > 1) return no('an invoice for more than one order');
+  const ord = isInvoice ? resolve(top.referencesOrder) ?? top : top;
+  if (isInvoice && ord !== top && ord.orderStatus !== undefined && !INVOICED.has(statusOf(ord.orderStatus) ?? '')) return no('an invoice for an order whose status does not count (cancelled, returned, a problem, or one Philobiblos does not know)');
+  // Each article: its Offers (their itemOffered), or else its OrderItems (their orderedItem, their own price): an order
+  // that lists its books both ways names each book once, not twice.
+  const offers = list(ord.acceptedOffer, LIMITS.books + 1);
+  const items = offers.length ? offers : list(ord.orderedItem, LIMITS.books + 1);
+  if (items.length > LIMITS.books) return no('too many books');
+  if (!items.length) return no('no articles');
+  type Line = { title: string | null; author: string | null; ean: string | null; qty: number; priceC: number; notBook?: true };
+  const lines: Line[] = [];
+  for (const it of items) {
+    const o = node(it);
+    if (!o) return no('an article Philobiblos cannot read');
+    const product = node(o.itemOffered) ?? node(o.orderedItem) ?? o;
+    const title = text(product.name);
+    if (!title || !title.trim()) return no('a book without a title');
+    const rawIsbn = text(product.isbn) ?? text(product.gtin13);
+    const ean = rawIsbn == null ? null : isbn13(rawIsbn.replace(/[\s-]/g, ''));
+    if (ean === undefined) return no('an ISBN Philobiblos cannot read');
+    const price = amountOf(o.price !== undefined || o.priceSpecification !== undefined ? o : node(o.offers) ?? node(product.offers));
+    if ('problem' in price) return no(price.problem);
+    const q = o.eligibleQuantity !== undefined ? node(o.eligibleQuantity)?.value ?? o.eligibleQuantity : o.orderQuantity !== undefined ? node(o.orderQuantity)?.value ?? o.orderQuantity : 1;
+    if (!Number.isInteger(q) || (q as number) < 1 || (q as number) > 99) return no('a quantity Philobiblos cannot read');
+    // A book: a Book, or anything whose EAN is an ISBN; never one whose EAN is another product's (a toy, a game).
+    const isbn = ean != null && /^97[89]/.test(ean);
+    const book = ean != null ? isbn : isType(product, 'Book');
+    lines.push({ title: field(title, address), author: field(text(product.author), address, 120), ean: field(ean, address), qty: q as number, priceC: price.c, ...(book ? {} : { notBook: true as const }) });
+  }
+  // The number as it is kept (through safeField: one with a run of 12 digits is dropped there), so that an invoice whose
+  // number cannot be kept is refused rather than counted again when it comes twice.
+  const numberOf = (v: unknown) => { const s = text(v); return s != null && MARKUP_NUMBER.test(s.trim()) ? field(s.trim(), address) : null; };
+  if (!isInvoice) return { kind: 'online_order', parser: P, orderNumber: numberOf(top.orderNumber), lines };
+  const number = numberOf(top.confirmationNumber) ?? numberOf(top.identifier);
+  if (!number) return no('an invoice without a number Philobiblos can read');
+  // The author stays on the line (it is no PDF row's field): a line without an ISBN matches a book by title and author.
+  const out: InvoiceLine[] = lines.map((l) => ({ title: l.title, author: l.author, ean: l.ean, qty: l.qty, priceC: l.priceC, discountPct: null, totalC: l.priceC * l.qty, vatPct: null, ...(l.notBook ? { notBook: true as const } : {}) }));
+  const sum = out.reduce((n, l) => n + l.totalC, 0);
+  let stated: number | null = null;
+  if (top.totalPaymentDue !== undefined) {
+    const t = amountOf(node(top.totalPaymentDue));
+    if ('problem' in t) return no(t.problem === 'a book without a price' ? 'a total Philobiblos cannot read' : t.problem);
+    stated = t.c;
+  }
+  if (stated != null && stated !== sum) return no('the stated total is not the sum of the lines');
+  return { kind: 'invoice', parser: P, invoiceNumber: number, lines: out, totalC: stated ?? sum };
 }
