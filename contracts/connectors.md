@@ -123,6 +123,36 @@ number**: the text holds no card line at all, and the person adds the number in 
 needs it. The delivery address is sealed
 at rest with a key outside the database (`sealed_secret`, ADR 0009).
 
+## Typed in or imported: an order's quote or an invoice (philobiblos#27 slice 4)
+
+The path that works with any shop, or none: a person records what a shop answered or what was bought
+(`POST /orders/entries`, This month → *Record a quote or an invoice*), typed a book a row or imported as a CSV. It has the
+effects of the mail of its kind in the table above, on the same records, and nothing else:
+
+| Kind | What a row gives | Effect |
+|---|---|---|
+| `quote` | a book of the month's composed order (drafted or quoted) by ISBN or title (and author); its price, or `available: false` | as `bookshop_quote`: its lines quoted or unavailable, the order's total the quoted lines', status quoted; a row that names no book of that order, or one book twice, refuses the whole entry |
+| `invoice` | a book by ISBN or title (and author), copies (1–20) and the price paid for each; `for` (`me` or a kid's handle) | as `invoice`: a copy per unit (owned, source `manual`), priced, the price learnt, the composed order's line delivered and that order invoiced; a book nobody has is added (a kids' book for a kid), and with `for` it goes on that person's pile |
+
+- **A CSV** (at most 64 KB, 100 rows, 20 columns, 1,000 characters a cell; RFC 4180 quoting; a comma, semicolon or tab,
+  the header line's own): a header row naming `isbn` (or `isbn13`, `ean`), `title`, `author`, `qty` (or `quantity`),
+  `price`, `available` and `for`, in any order and case. A column it does not read is named back and its cells never
+  read; one named twice, or none naming the books (no `title`, no `isbn`), refuses the file. A price is an amount as a
+  person writes it in the household's currency (`18.90`, `18,90`; no symbol, sign or thousands separator); `available`
+  is yes or no. Read in one pass, linear, and refused rather than guessed at (an unclosed quote, text after a closing one).
+- **An ISBN** is an ISBN-13 starting 978 or 979, or an ISBN-10, spaces and hyphens left out, whose check digit holds
+  (`books/isbn.ts`); another product's EAN, or a typo, is refused with its row.
+- **Text** (title, author, the number) is NFKC with format characters stripped, and refused with a control character
+  or line break, past its length, or holding a run of 12 or more digits (`safeField`'s rule: a card or account number).
+- **An invoice number** (letters, digits, spaces and `. / _ -`, at most 40) counts once: one typed or imported before,
+  or one a verified mail brought (any connector's), is refused (409); a mail bringing a number typed before is read and
+  counts nothing (`duplicateOf: entry:<id>`). Without a number, an invoice is recorded each time.
+- **Kept** (`order_entry`): the kind, how it came (`typed`, `csv`), the number, the quote's order, who recorded it, the
+  total and each row's book id, copies, price and availability; never the text typed or the file.
+- Amounts are the household's currency's (Settings): with none chosen yet, nothing is recorded (409). Everything is
+  checked before anything changes, in one transaction; `dryRun: true` applies it and rolls it back, so it answers
+  exactly what the entry would do.
+
 ## Price lookup (ADR 0008)
 
 `PriceSource` interface, one per enabled connector with `prices`. `kind: jsonld`: GET its `url` as below and read only

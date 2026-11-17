@@ -108,6 +108,7 @@ const BODIES: Record<string, unknown> = {
   setConnector: { enabled: false },
   addPushSubscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/contract-new', keys: { p256dh: RFC8291_UA_KEY, auth: 'BTBZMqHH6r4Tts7J_aSIgg' } },
   setMonthBudget: { min: 10000, max: 15000 }, changePicks: { recompute: true }, createOrderDraft: { month: THIS_MONTH },
+  recordOrderEntry: { kind: 'invoice', lines: [{ title: 'Paper Boats', qty: 1, price: 900 }] },
 };
 
 export function request(o: SpecOp) {
