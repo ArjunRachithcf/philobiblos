@@ -204,3 +204,9 @@ dialog.lib-sheet::backdrop { background: var(--scrim); -webkit-backdrop-filter: 
   .mo-pick { flex-wrap: wrap; }
   .mo-trail { flex-basis: 100%; flex-direction: row; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
 }
+
+/* This month, "Record a quote or an invoice" (RecordEntry.tsx): a book's fields as a group with no box of its own. */
+.re-book { border: 0; margin: 0; padding: 0; min-width: 0; }
+.re-book legend { padding: 0; }
+.re-book + .re-book { padding-top: var(--space-4); border-top: 1px solid var(--separator); }
+.re-check { display: inline-flex; align-items: center; gap: var(--space-2); }

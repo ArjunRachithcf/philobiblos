@@ -838,6 +838,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/orders/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once, typed, imported or read from mail. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
+        post: operations["recordOrderEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orders/{id}": {
         parameters: {
             query?: never;
@@ -1307,6 +1324,68 @@ export interface components {
                 delivery?: string;
                 /** @enum {unknown} */
                 state?: "planned" | "quoted" | "unavailable" | "delivered" | "rolled_over";
+            }[];
+        };
+        /** @description lines or csv, one of them. A quote names its month; an invoice may have a number and a date. */
+        OrderEntry: {
+            /** @enum {unknown} */
+            kind: "quote" | "invoice";
+            /** @description a quote: the month of the composed order it answers */
+            month?: string;
+            /** @description an invoice's number (letters, digits, spaces, . / _ -; no run of 12 digits): counted once */
+            number?: string;
+            /**
+             * Format: date
+             * @description an invoice: the day it was bought (today by default)
+             */
+            date?: string;
+            lines?: components["schemas"]["OrderEntryLine"][];
+            /** @description A CSV (comma, semicolon or tab; RFC 4180 quoting; at most 100 rows, 20 columns, 1,000 characters a cell): a header row naming isbn (isbn13, ean), title, author, qty (quantity), price, available and for, in any order and case, then a row a book. Other columns are ignored and named back. price is an amount such as 18.90; available yes or no. */
+            csv?: string;
+            dryRun?: boolean;
+        };
+        /** @description A book by its isbn (ISBN-13 or ISBN-10, the check digit holding) or its title (and author). A quote line has no qty and no for; an invoice line no available. */
+        OrderEntryLine: {
+            isbn?: string;
+            title?: string;
+            author?: string;
+            /** @description an invoice: copies (1 by default) */
+            qty?: number;
+            /** @description an invoice: paid for each copy; a quote: the shop's price, none when unavailable */
+            price?: components["schemas"]["Money"];
+            /** @description a quote: false when the shop cannot deliver it */
+            available?: boolean;
+            /** @description an invoice: whose pile it goes on, me or a kid's handle (never another adult's) */
+            for?: string;
+        };
+        OrderEntryResult: {
+            /** @description the entry kept (none in a dry run) */
+            id?: string;
+            /** @enum {unknown} */
+            kind: "quote" | "invoice";
+            /** @enum {unknown} */
+            source: "typed" | "csv";
+            dryRun: boolean;
+            month?: string;
+            /** @description a quote's order */
+            orderId?: string;
+            number: string | null;
+            total: components["schemas"]["Money"];
+            /** @description CSV columns it does not read (their cells never read) */
+            ignoredColumns: string[];
+            lines: {
+                row: number;
+                /** @description null in a dry run for a book it would add */
+                bookId: string | null;
+                /** @description a book nobody had: added */
+                new: boolean;
+                title: string;
+                authors: string[];
+                isbn13: string | null;
+                qty: number | null;
+                price: number | null;
+                available: boolean;
+                for: string | null;
             }[];
         };
         Settings: {
@@ -3717,6 +3796,68 @@ export interface operations {
                 };
             };
             /** @description No bookshop address yet, nothing picked, or the bookshop has the order already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    recordOrderEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderEntry"];
+            };
+        };
+        responses: {
+            /** @description A dry run: what the entry would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderEntryResult"];
+                };
+            };
+            /** @description Recorded */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderEntryResult"];
+                };
+            };
+            /** @description Bad request (a row it cannot read names its row number) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No order that month (a quote); no one with that handle */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that invoice number counts already */
             409: {
                 headers: {
                     [name: string]: unknown;
