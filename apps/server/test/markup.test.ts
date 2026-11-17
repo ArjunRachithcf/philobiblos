@@ -154,7 +154,11 @@ describe('Order markup', () => {
     expect(parse(ld(order([offer()], { orderStatus: status })))).toBeNull();
   });
 
-  it.each(['OrderProcessing', 'http://schema.org/OrderPaymentDue'])('an order mail with status %s is the order', (status) => {
+  it.each([{ '@id': 'https://schema.org/OrderCancelled' }, 'OrderLost', { '@id': 'https://example.com/OrderProcessing' }, 7])('an order mail with status %j is no new order either', (status) => {
+    expect(parse(ld(order([offer()], { orderStatus: status })))).toBeNull();
+  });
+
+  it.each(['OrderProcessing', 'http://schema.org/OrderPaymentDue', { '@id': 'https://schema.org/OrderProcessing' }, 'schema:OrderProcessing'])('an order mail with status %j is the order', (status) => {
     expect(parse(ld(order([offer()], { orderStatus: status })))).toMatchObject({ kind: 'online_order' });
   });
 
@@ -238,9 +242,19 @@ describe('Invoice markup', () => {
     expect(parse(ld(invoice([offer({ isbn: '' })])))).toMatchObject({ kind: 'invoice', lines: [{ author: 'Mira Okafor', ean: null }] });
   });
 
-  it.each(['OrderCancelled', 'https://schema.org/OrderReturned', 'OrderProblem'])('an invoice for an order that is %s makes no copies: an unknown layout', (status) => {
+  it.each([
+    'OrderCancelled', 'https://schema.org/OrderReturned', 'OrderProblem',
+    { '@id': 'https://schema.org/OrderCancelled' }, { '@id': 'http://schema.org/OrderReturned' }, { '@id': 'schema:OrderProblem' }, { '@id': 'OrderCancelled' },
+    // A status Philobiblos does not know, or cannot read, never counts either.
+    'OrderLost', { '@id': 'https://example.com/OrderDelivered' }, 'https://example.com/OrderDelivered', 3, ['OrderDelivered'], { name: 'OrderDelivered' },
+  ])('an invoice for an order whose status is %j makes no copies: an unknown layout', (status) => {
     const p = parse(ld({ ...invoice([offer()]), referencesOrder: { ...order([offer()]), orderStatus: status } }));
-    expect(p).toMatchObject({ kind: 'unknown_layout', parser: PARSERS.markupInvoice, reason: expect.stringMatching(/cancelled|returned|problem/) });
+    expect(p).toMatchObject({ kind: 'unknown_layout', parser: PARSERS.markupInvoice, reason: expect.stringMatching(/status/) });
+  });
+
+  it.each([undefined, 'OrderDelivered', { '@id': 'https://schema.org/OrderInTransit' }, 'http://schema.org/OrderPickupAvailable', 'OrderProcessing', 'OrderPaymentDue'])('an invoice for an order whose status is %j counts', (status) => {
+    const p = parse(ld({ ...invoice([offer()]), referencesOrder: { ...order([offer()]), ...(status === undefined ? {} : { orderStatus: status }) } }));
+    expect(p).toMatchObject({ kind: 'invoice' });
   });
 
   it('its identifier stands for a confirmation number', () => {

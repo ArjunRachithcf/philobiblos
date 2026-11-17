@@ -133,7 +133,7 @@ With `markup: true`, a verified mail of that connector that none of its own layo
 not from a quote sender) is read for one schema.org `Order` (its lines are kept, as a web order's; an order whose
 `orderStatus` is not processing or payment due, such as a cancellation or a shipping update, is no new order) or one
 `Invoice` (a copy per unit, owned, as a PDF invoice makes; the one Order it references, also by a local `@id`, is its own,
-and an invoice for a cancelled, returned or problem order makes no copies). Settings shows that it counts. Each book is an offer's product: its name,
+and an invoice for an order whose status is not processing, payment due, in transit, pickup available or delivered, as a string or an `@id`, makes no copies). Settings shows that it counts. Each book is an offer's product: its name,
 first author, ISBN or GTIN-13, quantity and price. Philobiblos **fails closed**: an amount in another currency than
 the connector's, or with none, a price that is not plain digits with a `.` for decimals, a book without a title or a
 price, an ISBN that is neither 13 digits nor an ISBN-10 whose check digit holds (that one is read as its ISBN-13), a

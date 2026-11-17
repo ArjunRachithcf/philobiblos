@@ -133,6 +133,19 @@ export function classify(r: MailRules, from: string, subject: string | null): Ki
 
 const refuse = (expected: string, parser: string, reason: string): Parsed => ({ kind: 'unknown_layout', parser, expected, reason });
 
+/**
+ * A schema.org OrderStatus as its name: a string or a `{"@id": …}` reference, `schema:` or the schema.org URL (http or
+ * https) stripped; anything else (another vocabulary's, a list, a number, a node) is null, a status that never counts.
+ */
+export function statusOf(v: unknown): string | null {
+  const s = typeof v === 'string' ? v : typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length === 1 && typeof (v as LdNode)['@id'] === 'string' ? ((v as LdNode)['@id'] as string) : null;
+  return s == null ? null : s.trim().replace(/^(?:schema:|https?:\/\/schema\.org\/)/, '');
+}
+/** An order's own mail counts as the order: no status, processing or payment due (allowlist: a status not here never counts). */
+const PLACED = new Set(['OrderProcessing', 'OrderPaymentDue']);
+/** The statuses of an order an invoice may count for (allowlist: cancelled, returned, a problem, or any other status never). */
+const INVOICED = new Set(['OrderProcessing', 'OrderPaymentDue', 'OrderInTransit', 'OrderPickupAvailable', 'OrderDelivered']);
+
 /** An EAN as kept: 13 digits as they are, an ISBN-10 whose check digit holds as its ISBN-13 (978…); else undefined. */
 export function isbn13(s: string): string | undefined {
   if (/^\d{13}$/.test(s)) return s;
@@ -359,7 +372,7 @@ export function parseMarkup(markup: Markup, address: string[], r: MailRules): Pa
   // An Order an Invoice references is that invoice's, not a second document.
   const referenced = new Set(invoices.map((i) => resolve(i.referencesOrder)).filter(Boolean));
   // An order's own mail: none, processing or payment due. A cancellation, a return or a shipping update is no order.
-  const placed = (o: LdNode) => o.orderStatus === undefined || ['OrderProcessing', 'OrderPaymentDue'].includes(String(o.orderStatus).replace(/^(?:schema:|https?:\/\/schema\.org\/)/, ''));
+  const placed = (o: LdNode) => o.orderStatus === undefined || PLACED.has(statusOf(o.orderStatus) ?? '');
   const allOrders = nodes.filter((n) => isType(n, 'Order') && !referenced.has(n));
   const orders = allOrders.filter(placed);
   if (!orders.length && !invoices.length) return null;
@@ -386,7 +399,7 @@ export function parseMarkup(markup: Markup, address: string[], r: MailRules): Pa
   // that was not delivered as placed, makes no copies.
   if (isInvoice && Array.isArray(top.referencesOrder) && top.referencesOrder.length > 1) return no('an invoice for more than one order');
   const ord = isInvoice ? resolve(top.referencesOrder) ?? top : top;
-  if (isInvoice && ord !== top && ['OrderCancelled', 'OrderReturned', 'OrderProblem'].includes(String(ord.orderStatus).replace(/^(?:schema:|https?:\/\/schema\.org\/)/, ''))) return no('an invoice for a cancelled, returned or problem order');
+  if (isInvoice && ord !== top && ord.orderStatus !== undefined && !INVOICED.has(statusOf(ord.orderStatus) ?? '')) return no('an invoice for an order whose status does not count (cancelled, returned, a problem, or one Philobiblos does not know)');
   // Each article: its Offers (their itemOffered), or else its OrderItems (their orderedItem, their own price): an order
   // that lists its books both ways names each book once, not twice.
   const offers = list(ord.acceptedOffer, LIMITS.books + 1);
