@@ -57,7 +57,7 @@ export function allows(c: Connector) {
 /** Why the household's currency stands in the way of this connector (null when it does not). */
 function currencyBlock(db: Db, c: Connector): string | null {
   const { currency } = getMoney(db);
-  if (currency === null) return `the household has no currency yet: choose it in Settings (this connector's amounts are in ${c.locale.currency})`;
+  if (currency === null) return `the household has no currency yet (this connector's amounts are in ${c.locale.currency}); choose it under Currency`;
   return c.locale.currency === currency ? null : `its amounts are in ${c.locale.currency}, the household's currency is ${currency}`;
 }
 

@@ -234,14 +234,23 @@ test('the currency: none is assumed; an admin chooses it, and every amount is in
   await expect(page.getByText('The household has no currency yet.')).toBeVisible();
   await expect(page.getByLabel('At least (amount)')).toHaveValue('100');
   // The example bookshop waits for it: its Enable button is off, with the reason.
-  await expect(page.getByRole('button', { name: 'Enable Quillmere Books' })).toBeDisabled();
-  await expect(page.getByText(/It cannot be enabled now: the household has no currency yet/)).toBeVisible();
+  // aria-disabled, not disabled: it stays in the tab order, so its reason (aria-describedby) is announced; a tap does nothing.
+  const enable = page.getByRole('button', { name: 'Enable Quillmere Books' });
+  await expect(enable).toHaveAttribute('aria-disabled', 'true');
+  await expect(enable).toHaveAccessibleDescription(/the household has no currency yet/);
+  // Reached by Tab like any button, and Enter on it does nothing (Playwright's click waits for an enabled button).
+  await enable.focus();
+  await expect(enable).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('Quillmere Books is enabled.')).toHaveCount(0);
+  await expect(page.getByText(/counts only in the household/)).toHaveCount(0); // no request was sent (it would be a 409)
+  await expect(page.getByText(/It cannot be enabled now; the household has no currency yet/)).toBeVisible();
   await page.getByLabel('The household’s currency').selectOption('CHF');
   await page.getByLabel(/^An unknown price counts as/).fill('30');
   await page.getByRole('button', { name: 'Save the currency' }).click();
   await expect(page.getByText(/^Amounts are in/)).toContainText('CHF');
   await expect(page.getByText(/^Amounts are in/)).toContainText(/CHF\s30/);
-  await expect(page.getByRole('button', { name: 'Enable Quillmere Books' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Enable Quillmere Books' })).not.toHaveAttribute('aria-disabled', 'true');
   await expect(page.getByText(/It cannot be enabled now/)).toHaveCount(0);
   await page.getByLabel(/^An unknown price counts as/).fill('25');
   await page.getByRole('button', { name: 'Save the currency' }).click();

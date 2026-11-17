@@ -60,9 +60,16 @@ describe('the household\'s currency', () => {
     expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: null, unknownPrice: DEFAULT_UNKNOWN_PRICE_C });
     expect((await a.get('p_adult', '/api/me')).json().money.currency).toBeNull();
     await a.built.app.close();
+    // An enabling made while there was no currency (by hand: the server refuses it) does not survive the filling in.
+    db.insert(t.connectorEnabled).values({ id: 'quillmere', version: VERSION, enabledAt: new Date().toISOString() }).run();
     const b = await client(db, { PHILOBIBLOS_CURRENCY: 'SEK' });
     expect((await b.get('p_admin', '/api/settings')).json().money.currency).toBe('SEK');
+    expect(db.select().from(t.connectorEnabled).all()).toEqual([]);
     await b.built.app.close();
+    // A start that fills nothing in leaves the enablings alone.
+    db.insert(t.connectorEnabled).values({ id: 'quillmere', version: VERSION, enabledAt: new Date().toISOString() }).run();
+    await (await client(db, { PHILOBIBLOS_CURRENCY: 'NOK' })).built.app.close();
+    expect(db.select().from(t.connectorEnabled).all()).toHaveLength(1);
   });
 
   it.each(['ZZZ', 'EU', 'EURO', '€', 'E1R', 'XXX'])('PHILOBIBLOS_CURRENCY must be an ISO 4217 code this server knows, not %s', (code) => {
@@ -125,6 +132,36 @@ describe('the unknown price is the household\'s own', () => {
     db.update(t.householdSettings).set({ unknownPriceC: 7000 }).run();
     expect(tide().score).toBeUndefined();
     expect(tide().scoreParts).toEqual([expect.objectContaining({ kind: 'excluded' })]);
+  });
+});
+
+describe('the kids\' unknown price is the household\'s too', () => {
+  /** household() with a kid's book whose price nobody knows, the unknown price at 10 and a budget of at most 20. */
+  function withKidsBook(): Db {
+    const db = household();
+    db.insert(t.book).values({ id: 'b_fox', title: 'The Quiet Fox', authorsJson: '["Ines Varga"]', audience: 'kids', normKey: 'fox', createdAt: new Date().toISOString() }).run();
+    db.insert(t.candidate).values({ personId: 'p_kid1', bookId: 'b_fox', origin: 'wishlist', addedAt: new Date().toISOString(), touchedAt: new Date().toISOString() }).run();
+    db.update(t.householdSettings).set({ unknownPriceC: 1000, budgetMinC: 0, budgetMaxC: 2000 }).run();
+    return db;
+  }
+
+  it('a kid\'s score prices an unknown price at the household\'s amount', () => {
+    const db = withKidsBook();
+    const fox = allCandidates(db, new Date(), 'p_alex').find((r) => r.book.id === 'b_fox')!;
+    // packages/scoring kids: -pricePerUnit (0.3) for each unit of the price: 10, not the scoring's own 25.
+    expect(fox.scoreParts!.find((p) => p.kind === 'price')!.value).toBeCloseTo(-3);
+  });
+
+  it('the kids\' basket fits the budget at the household\'s unknown price: at 10 the book fits, at 25 it would not', async () => {
+    const db = withKidsBook();
+    const a = await client(db);
+    const month = (await a.get('p_alex', '/api/month')).json();
+    type Pick = { candidate: { book: { id: string } } };
+    const adults = month.adults.flatMap((g: { picks: Pick[] }) => g.picks);
+    expect(adults).toHaveLength(1); // 10 of the 20 taken by the adult's book
+    expect(month.kids.flatMap((g: { picks: Pick[] }) => g.picks).map((p: Pick) => p.candidate.book.id)).toEqual(['b_fox']);
+    expect(month.total).toBe(2000);
+    await a.built.app.close();
   });
 });
 

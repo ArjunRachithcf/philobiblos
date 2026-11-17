@@ -28,7 +28,11 @@ export function getMoney(db: Db): Money {
 export function initCurrency(db: Db, currency: string | null): void {
   if (currency === null) return;
   if (!validCurrency(currency)) throw new MoneyError(400, 'PHILOBIBLOS_CURRENCY: an ISO 4217 code');
-  db.update(t.householdSettings).set({ currency }).where(and(eq(t.householdSettings.id, 1), isNull(t.householdSettings.currency))).run();
+  // Filling it in is a change of currency too: every enabling made before counts for nothing, and stays that way.
+  db.transaction((tx) => {
+    const filled = tx.update(t.householdSettings).set({ currency }).where(and(eq(t.householdSettings.id, 1), isNull(t.householdSettings.currency))).run();
+    if (filled.changes) tx.delete(t.connectorEnabled).run();
+  });
 }
 
 /**

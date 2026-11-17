@@ -2,7 +2,7 @@
 // (connectors/<id>/connector.yaml); it counts for nothing until an admin reads what it allows here and enables it, with a
 // sign-in of the last few minutes. Enabling names the version this page showed, so a file that changed since is refused.
 // When the server says an admin cannot enable one now (enableBlocked: the household's currency, or HomersLab's missing
-// recent sign-in), the button stays and is turned off, with the reason next to it.
+// recent sign-in), the button stays, focusable and aria-disabled (a tap does nothing), with the reason it is described by.
 import { useEffect, useId, useState } from 'react';
 import { api, message, type Connector } from '../api';
 import { Notice } from '../ui';
@@ -54,9 +54,9 @@ export function Bookshops({ admin }: { admin: boolean }) {
                 <div className="btn-row">
                   {c.enabled
                     ? <button type="button" className="btn" onClick={() => void set(c, false)}>Turn {c.name} off</button>
-                    : c.usable && <button type="button" className="btn btn-primary" disabled={Boolean(c.enableBlocked)} aria-describedby={c.enableBlocked ? `${id}-${c.id}-why` : undefined} onClick={() => void set(c, true)}>Enable {c.name}</button>}
+                    : c.usable && <button type="button" className="btn btn-primary" aria-disabled={c.enableBlocked ? true : undefined} aria-describedby={c.enableBlocked ? `${id}-${c.id}-why` : undefined} onClick={() => { if (!c.enableBlocked) void set(c, true); }}>Enable {c.name}</button>}
                 </div>
-                {!c.enabled && c.usable && c.enableBlocked && <p className="footnote" id={`${id}-${c.id}-why`}>It cannot be enabled now: {c.enableBlocked}.</p>}
+                {!c.enabled && c.usable && c.enableBlocked && <p className="footnote" id={`${id}-${c.id}-why`}>It cannot be enabled now; {c.enableBlocked}.</p>}
               </div>
             ))}
             {error && <Notice kind="error">{error === 'sign in again to do this' ? 'Sign in again to enable a bookshop: it needs a sign-in of the last few minutes.' : error}</Notice>}

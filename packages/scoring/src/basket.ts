@@ -1,4 +1,4 @@
-// The monthly basket (docs/spec.md §5, steps 2–4). Pure: candidates in, picks out. Money in centimes.
+// The monthly basket (docs/spec.md §5, steps 2–4). Pure: candidates in, picks out. Money in hundredths of the household's currency.
 import type { Move } from './types';
 
 /** Step 2: `picks` by default, 1 when the unread pile exceeds the limit, 0 when it exceeds twice the limit. */

@@ -8,7 +8,7 @@ info:
     `/shares` also takes a per-person share token (`Authorization: Bearer`), which is good for nothing else.
     Secrets (tokens, the mail password, the delivery address) never appear in a response, except a new
     share token once, in the response that creates it. See ADR 0009 and docs/security.md.
-    Money is in centimes (integer). Dates are ISO-8601.
+    Money is in hundredths of the household's currency (integer; Me.money, Settings.money). Dates are ISO-8601.
 servers: [{ url: /api }]
 security: [ { homerslabPerson: [] }, { session: [] } ]
 tags: [{name: auth}, {name: household}, {name: month}, {name: backlog}, {name: brain}, {name: library}, {name: inbox}, {name: orders}, {name: settings}, {name: system}]
@@ -349,7 +349,7 @@ components:
             quoteSenders: { type: array, items: { type: string } }
             priceHost: { type: [string, 'null'], description: 'the one host its price lookup asks (added to the egress allowlist)' }
             orderTo: { type: [string, 'null'], description: 'where Compose writes unless Settings names another address' }
-    Money: { type: integer, description: centimes }
+    Money: { type: integer, description: 'hundredths of the household''s currency (HouseholdMoney)' }
     Me: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, household: { type: array, items: { $ref: '#/components/schemas/Person' } }, mode: { enum: [homerslab, standalone] }, money: { $ref: '#/components/schemas/HouseholdMoney' } } }
     HouseholdMoney:
       type: object
@@ -484,7 +484,7 @@ components:
       type: object
       properties:
         money: { allOf: [ { $ref: '#/components/schemas/HouseholdMoney' } ], description: 'admins change it; either part alone (a currency cannot be set back to null)' }
-        budget: { allOf: [ { $ref: '#/components/schemas/Budget' } ], description: 'one shared monthly budget (centimes, 0 to 1,000,000, min ≤ max); admins set it; no rollover' }
+        budget: { allOf: [ { $ref: '#/components/schemas/Budget' } ], description: 'one shared monthly budget (hundredths of the household''s currency, 0 to 1,000,000, min ≤ max); admins set it; no rollover' }
         adultPicks: {type: integer}
         newAuthorsOnly: {type: boolean}
         ai:

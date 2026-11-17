@@ -929,7 +929,7 @@ export interface components {
                 orderTo: string | null;
             };
         };
-        /** @description centimes */
+        /** @description hundredths of the household's currency (HouseholdMoney) */
         Money: number;
         Me: {
             person?: components["schemas"]["Person"];
@@ -1310,7 +1310,7 @@ export interface components {
         Settings: {
             /** @description admins change it; either part alone (a currency cannot be set back to null) */
             money?: components["schemas"]["HouseholdMoney"];
-            /** @description one shared monthly budget (centimes, 0 to 1,000,000, min ≤ max); admins set it; no rollover */
+            /** @description one shared monthly budget (hundredths of the household's currency, 0 to 1,000,000, min ≤ max); admins set it; no rollover */
             budget?: components["schemas"]["Budget"];
             adultPicks?: number;
             newAuthorsOnly?: boolean;

@@ -149,7 +149,7 @@ function HouseholdMoney({ admin, reload }: { admin: boolean; reload: () => Promi
               ) : (
                 <input className="input" id={`${id}-c`} autoComplete="off" spellCheck={false} maxLength={3} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} aria-describedby={`${id}-ch`} />
               )}
-              <span className="hint" id={`${id}-ch`}>Changing it converts nothing (the budget and prices keep their numbers) and turns every bookshop off: enable yours again in its currency.</span>
+              <span className="hint" id={`${id}-ch`}>While a bookshop is enabled, the currency cannot change: turn it off first, then enable it again in the new currency. Changing it converts nothing: the budget and prices keep their numbers.</span>
             </div>
             <div className="field">
               <label className="field-label" htmlFor={`${id}-u`}>An unknown price counts as ({unit(code || currency)})</label>

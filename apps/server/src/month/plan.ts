@@ -256,11 +256,11 @@ export function changePicks(db: Db, month: string, me: string, body: unknown): S
 export function setMonthBudget(db: Db, month: string, me: string, body: unknown): S['MonthPlan'] {
   checkMonth(month);
   if (body !== null) {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new MonthError(400, 'budget: { min, max } in centimes, or null');
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new MonthError(400, 'budget: { min, max } in hundredths of the household currency, or null');
     const b = body as Record<string, unknown>;
     for (const k of Object.keys(b)) if (k !== 'min' && k !== 'max') throw new MonthError(400, `budget: unknown field ${k}`);
     for (const k of ['min', 'max'] as const) {
-      if (!Number.isInteger(b[k]) || (b[k] as number) < 0 || (b[k] as number) > BUDGET_CEILING_C) throw new MonthError(400, `budget.${k}: whole centimes from 0 to ${BUDGET_CEILING_C}`);
+      if (!Number.isInteger(b[k]) || (b[k] as number) < 0 || (b[k] as number) > BUDGET_CEILING_C) throw new MonthError(400, `budget.${k}: whole hundredths from 0 to ${BUDGET_CEILING_C}`);
     }
     if ((b.min as number) > (b.max as number)) throw new MonthError(400, 'budget: the minimum is above the maximum');
   }
