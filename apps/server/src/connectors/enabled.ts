@@ -94,7 +94,7 @@ export class ConnectorError extends Error {
  * PUT /connectors/{id}: `{ enabled: true, acceptVersion }` enables the file whose version Settings showed (refused when it
  * is not the file as it is now); `{ enabled: false }` turns it off. The caller checked the admin and the fresh sign-in.
  */
-export function setConnector(db: Db, reg: Registry, id: string, body: unknown, by: string, now = new Date()) {
+export function setConnector(db: Db, reg: Registry, id: string, body: unknown, by: string, now = new Date(), mode: Mode = 'standalone') {
   const c = reg.get(id);
   if (!c) throw new ConnectorError(404, 'no such connector');
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ConnectorError(400, 'a JSON object is needed');
@@ -103,7 +103,7 @@ export function setConnector(db: Db, reg: Registry, id: string, body: unknown, b
   if (typeof b.enabled !== 'boolean') throw new ConnectorError(400, 'enabled: true or false');
   if (!b.enabled) {
     db.delete(t.connectorEnabled).where(eq(t.connectorEnabled.id, id)).run();
-    return connectorView(db, c);
+    return connectorView(db, c, mode);
   }
   if (!c.connector || c.problem) throw new ConnectorError(409, `this connector cannot be used: ${c.problem ?? 'it could not be read'}`);
   if (typeof b.acceptVersion !== 'string' || b.acceptVersion !== c.version) throw new ConnectorError(409, 'the connector changed since Settings showed it: read what it allows again');
@@ -114,5 +114,5 @@ export function setConnector(db: Db, reg: Registry, id: string, body: unknown, b
   if (clash) throw new ConnectorError(409, `${clash.connector.name} is enabled with the same mail domain: turn it off first`);
   const v = { version: c.version, enabledBy: by, enabledAt: now.toISOString() };
   db.insert(t.connectorEnabled).values({ id, ...v }).onConflictDoUpdate({ target: t.connectorEnabled.id, set: v }).run();
-  return connectorView(db, c);
+  return connectorView(db, c, mode);
 }

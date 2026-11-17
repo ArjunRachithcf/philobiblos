@@ -97,7 +97,7 @@ export function adultMove(f: AdultCandidateFacts, layerFill: number): Move {
 
 export function scoreAdult(f: AdultCandidateFacts, w: AdultWeights = DEFAULT_ADULT_WEIGHTS): AdultScore {
   const price = f.priceC == null ? w.priceUnknown : f.priceC / 100;
-  if (price > w.priceMax) return { excluded: true, score: null, move: null, parts: [{ label: `Over ${w.priceMax}`, value: 0, kind: 'excluded' }] };
+  if (price > w.priceMax) return { excluded: true, score: null, move: null, parts: [{ label: `Over the price limit (${w.priceMax})`, value: 0, kind: 'excluded' }] };
 
   const layerFill = layerFillPoints(f, w);
   const bridge = Math.max(0, f.bridge);

@@ -288,14 +288,14 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
     // From the end: VAT %, the currency, total, [discount %], price, the unit, qty; the title is what is left.
     let i = tok.length - 1;
     const vat = pct(tok[i--] ?? '');
-    const chf = tok[i--]?.toUpperCase() === inv.currency;
+    const inCurrency = tok[i--]?.toUpperCase() === inv.currency;
     const total = money(tok[i--] ?? '');
     const discount = pct(tok[i] ?? '');
     if (discount != null) i--;
     const price = money(tok[i--] ?? '');
     const st = tok[i--]?.toUpperCase() === inv.unit;
     const qty = /^\d{1,2}$/.test(tok[i] ?? '') ? Number(tok[i--]) : null;
-    const whole = vat != null && chf && total != null && price != null && st && qty;
+    const whole = vat != null && inCurrency && total != null && price != null && st && qty;
     if (!/^\d{13}$/.test(tok[0]!)) {
       // A book row but for its EAN (spaced, cut short): read, counted in the total, and sent to the Inbox, never matched.
       if (!whole) continue;

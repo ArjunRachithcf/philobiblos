@@ -2,7 +2,8 @@
 // names a currency (apps/server/test/architecture.test.ts): every amount is in hundredths of the household's currency,
 // and a connector counts only in it (connectors/enabled.ts). PHILOBIBLOS_CURRENCY gives a household that has none its
 // currency at a start; after that, admins set it in Settings. It never changes under an enabled connector in another
-// currency, and nothing is converted when it changes (docs/connectors.md).
+// currency, a change turns every connector off (each is enabled again, in the new one), and nothing is converted
+// (docs/connectors.md).
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -54,6 +55,9 @@ export function checkMoney(body: unknown, others: { name: string; currency: stri
   }
   return (tx) => {
     if (!Object.keys(set).length) return;
+    // A new currency starts with no bookshop enabled: a connector enabled before, which counted for nothing since (in
+    // another currency; an upgrade's), never comes back into force by itself when the currency comes round to its own.
+    if (set.currency !== undefined && set.currency !== getMoney(tx).currency) tx.delete(t.connectorEnabled).run();
     tx.insert(t.householdSettings).values({ id: 1, ...set }).onConflictDoUpdate({ target: t.householdSettings.id, set }).run();
   };
 }

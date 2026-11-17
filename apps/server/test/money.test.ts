@@ -184,6 +184,23 @@ describe('a connector counts only in the household\'s currency', () => {
     await a.built.app.close();
   });
 
+  it('a new currency turns every connector off: one that counted for nothing never comes back by itself', async () => {
+    // An upgrade's case: the row says enabled, the household's currency (written by the migration) is another.
+    const db = household();
+    db.update(t.householdSettings).set({ currency: 'EUR' }).run();
+    expect(enabledConnectors(db, CONNECTORS)).toEqual([]);
+    const a = await client(db);
+    // The same currency again keeps what is enabled.
+    expect((await a.patch('p_alex', { money: { currency: 'EUR' } })).statusCode).toBe(200);
+    expect(db.select().from(t.connectorEnabled).all()).toHaveLength(1);
+    // Back to the shop's own currency: it stays off until an admin enables it again, having read what it allows.
+    expect((await a.patch('p_alex', { money: { currency: 'CHF' } })).statusCode).toBe(200);
+    expect(db.select().from(t.connectorEnabled).all()).toEqual([]);
+    expect(enabledConnectors(db, CONNECTORS)).toEqual([]);
+    expect((await a.get('p_alex', '/api/connectors')).json().connectors[0]).toMatchObject({ enabled: false, changed: false });
+    await a.built.app.close();
+  });
+
   it('a connector whose currency this server does not know can never be used', () => {
     const text = readFileSync(new URL('../../../connectors/quillmere/connector.yaml', import.meta.url), 'utf8');
     expect(text).toContain('currency: CHF');

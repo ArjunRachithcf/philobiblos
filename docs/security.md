@@ -68,7 +68,8 @@ applies; a feature that cannot meet them waits.
   replacing one it has), or an admin chooses it. A database from before M4 says the currency its amounts were in.
   A connector counts only in the household's currency: enabling one in another (or before there is one) is refused, one
   enabled before the currency changed underneath it counts for nothing (its senders, words and price host with it), and
-  the currency does not change while a connector in another is enabled. A code is checked where it is written (the
+  the currency does not change while a connector in another is enabled; a change removes every enabling, so a connector
+  that counted for nothing never comes back into force by itself. A code is checked where it is written (the
   environment, Settings, a connector's file, the database's own CHECK) against the ISO 4217 codes the server knows.
 - A clock that is wrong for a moment: the scheduler claims only the month it is now, and a row of this month counts
   whatever clock wrote it (a run minutes early or late is that month's run). A row for a later month does not stop the

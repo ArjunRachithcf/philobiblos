@@ -57,10 +57,12 @@ describe('no core module names a bookshop or a mail provider', () => {
     // ISO 4217 codes as words (case as written), and the signs a currency is written with.
     const code = new RegExp(`\\b(?:${Intl.supportedValuesOf('currency').join('|')})\\b`);
     const signs = /[€£¥₹₩₽₺₪]|\bFr\.|\bUS\$/;
-    // Words that are a code by chance: a JPEG's start of scan (media/client.ts).
-    const notMoney = new Set(['SOS']);
+    // Codes that are also ordinary words (a JPEG's start of scan, SQL's ALL, TRY): never taken for money.
+    const notMoney = new Set(['ALL', 'BOB', 'CUP', 'GEL', 'MAD', 'MOP', 'PEN', 'SOS', 'TOP', 'TRY']);
+    // And a currency inside a name (`pricePerChf`), whatever its case, for the codes that are never a word.
+    const inName = /chf|usd|gbp|jpy/i;
     const hits = core().flatMap((f) => readFileSync(f, 'utf8').split('\n').flatMap((line, i) => {
-      const m = [...line.matchAll(new RegExp(code, 'g'))].find((x) => !notMoney.has(x[0])) ?? signs.exec(line);
+      const m = [...line.matchAll(new RegExp(code, 'g'))].find((x) => !notMoney.has(x[0])) ?? signs.exec(line) ?? inName.exec(line);
       return m ? [`${relative(ROOT, f)}:${i + 1}: ${m[0]}`] : [];
     }));
     expect(hits).toEqual([]);

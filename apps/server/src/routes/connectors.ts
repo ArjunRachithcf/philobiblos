@@ -22,9 +22,6 @@ export async function connectorRoutes(app: FastifyInstance, cfg: Config, db: Db,
     if (!requireAdmin(req, reply)) return reply;
     const enabling = Boolean(req.body && typeof req.body === 'object' && (req.body as { enabled?: unknown }).enabled === true);
     if (enabling && !requireFreshSignIn(req, reply)) return reply;
-    try {
-      setConnector(db, reg, req.params.connectorId, req.body, req.caller!.personId);
-      return connectorView(db, reg.get(req.params.connectorId)!, cfg.mode);
-    } catch (e) { return fail(reply, e); }
+    try { return setConnector(db, reg, req.params.connectorId, req.body, req.caller!.personId, new Date(), cfg.mode); } catch (e) { return fail(reply, e); }
   });
 }

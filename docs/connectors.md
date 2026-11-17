@@ -28,7 +28,8 @@ mode only, and Settings says so next to the Enable button, which stays off.
 A connector counts only in the **household's currency** (Settings → Currency): its amounts are read as the household's,
 so one whose `locale.currency` is another cannot be enabled, and nothing is converted. Choose the currency first (or set
 `PHILOBIBLOS_CURRENCY` before the first start); while a connector is enabled, the household's currency cannot change to
-another. Here too Settings says why, next to the Enable button.
+another, and a change turns every connector off (enable yours again, in the new currency). Here too Settings says why,
+next to the Enable button.
 
 The files are **read once, at start**. A file edited while Philobiblos runs shows as changed only after a restart, and
 then counts for nothing until an admin enables it again; a new folder appears after a restart too.
@@ -58,7 +59,8 @@ Mail already read stays as it was; the next mail run reads new mail with the con
 
 The household's currency is the one its amounts were in before M4: the upgrade writes it into its settings, and
 Settings → Currency shows it with the unknown price (25 of it, as before). Your connector's `locale.currency` must be
-that one.
+that one; if it is another, choose that currency in Settings first, then enable the connector (a currency change turns
+every connector off, so one enabled in slice 1 of M4 is enabled again).
 
 ## Adding a bookshop
 

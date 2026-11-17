@@ -87,10 +87,16 @@ export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }
   );
 }
 
-/** Every code this browser can write amounts in, with its name in the reader's language (for the choice). */
-function currencies(): { code: string; name: string }[] {
-  const names = new Intl.DisplayNames(undefined, { type: 'currency' });
-  return Intl.supportedValuesOf('currency').map((code) => ({ code, name: names.of(code) ?? code }));
+/**
+ * Every code this browser can write amounts in, with its name in the reader's language (for the choice), and always the
+ * household's own. A browser without the list gets a field for the code instead (the server checks it either way).
+ */
+function currencies(own: string | null | undefined): { code: string; name: string }[] {
+  try {
+    const names = new Intl.DisplayNames(undefined, { type: 'currency' });
+    const codes = Intl.supportedValuesOf('currency');
+    return [...(own && !codes.includes(own) ? [own] : []), ...codes].map((code) => ({ code, name: names.of(code) ?? code }));
+  } catch { return []; }
 }
 
 /**
@@ -104,7 +110,7 @@ function HouseholdMoney({ admin, reload }: { admin: boolean; reload: () => Promi
   const [unknown, setUnknown] = useState(unknownPrice == null ? '' : String(unknownPrice / 100));
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState('');
-  const [list] = useState(currencies);
+  const [list] = useState(() => (admin ? currencies(currency) : []));
   useEffect(() => { setCode(currency ?? ''); }, [currency]);
   useEffect(() => { if (unknownPrice != null) setUnknown(String(unknownPrice / 100)); }, [unknownPrice]);
 
@@ -135,11 +141,15 @@ function HouseholdMoney({ admin, reload }: { admin: boolean; reload: () => Promi
           <div className="fields fields-2">
             <div className="field">
               <label className="field-label" htmlFor={`${id}-c`}>The household’s currency</label>
-              <select className="input" id={`${id}-c`} value={code} onChange={(e) => setCode(e.target.value)} aria-describedby={`${id}-ch`}>
-                {!currency && <option value="">Choose…</option>}
-                {list.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}</option>)}
-              </select>
-              <span className="hint" id={`${id}-ch`}>Changing it converts nothing: the budget and prices keep their numbers.</span>
+              {list.length ? (
+                <select className="input" id={`${id}-c`} value={code} onChange={(e) => setCode(e.target.value)} aria-describedby={`${id}-ch`}>
+                  {!currency && <option value="">Choose…</option>}
+                  {list.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}</option>)}
+                </select>
+              ) : (
+                <input className="input" id={`${id}-c`} autoComplete="off" spellCheck={false} maxLength={3} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} aria-describedby={`${id}-ch`} />
+              )}
+              <span className="hint" id={`${id}-ch`}>Changing it converts nothing (the budget and prices keep their numbers) and turns every bookshop off: enable yours again in its currency.</span>
             </div>
             <div className="field">
               <label className="field-label" htmlFor={`${id}-u`}>An unknown price counts as ({unit(code || currency)})</label>

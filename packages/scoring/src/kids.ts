@@ -11,13 +11,13 @@ export interface KidWeights {
   share: number;
   waitingCapDays: number;
   waitingDivisor: number;
-  pricePerChf: number;
+  pricePerUnit: number;
   priceUnknown: number;
 }
 
 export const DEFAULT_KID_WEIGHTS: KidWeights = {
   base: 20, themeNew: 15, themeThinPerBook: 5, authorOnShelf: 15, lovedAuthor: 10,
-  toBuy: 12, share: 10, waitingCapDays: 150, waitingDivisor: 15, pricePerChf: 0.3, priceUnknown: 25,
+  toBuy: 12, share: 10, waitingCapDays: 150, waitingDivisor: 15, pricePerUnit: 0.3, priceUnknown: 25,
 };
 
 export interface KidCandidateFacts {
@@ -53,7 +53,7 @@ export function scoreKid(f: KidCandidateFacts, s: KidSettings = DEFAULT_KID_SETT
     { label: 'On the To buy list', value: f.toBuy ? w.toBuy : 0, kind: 'source' },
     { label: 'From a share', value: f.fromShare ? w.share : 0, kind: 'source' },
     { label: 'Waiting', value: Math.min(Math.max(0, f.waitingDays), w.waitingCapDays) / w.waitingDivisor, kind: 'waiting' },
-    { label: 'Price', value: -w.pricePerChf * price, kind: 'price' },
+    { label: 'Price', value: -w.pricePerUnit * price, kind: 'price' },
   ];
   return { score: parts.reduce((t, p) => t + p.value, 0), parts: parts.filter((p) => p.value !== 0) };
 }
