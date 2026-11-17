@@ -48,10 +48,12 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, con
       return reply.code(201).send(composeOrder(db, month, req.caller!.personId, places));
     } catch (e) { return fail(reply, e); }
   });
+  // The shops an invoice may name by their connector (the enabled ones in force): any adult, ids and names only.
+  app.get('/orders/shops', async () => ({ shops: enabledConnectors(db, connectors).map((c) => ({ id: c.id, name: c.connector.name })) }));
   // A quote or an invoice typed in or imported from a CSV: recorded (201), or what it would do (dryRun, 200).
   app.post('/orders/entries', async (req, reply) => {
     try {
-      const r = recordEntry(db, req.caller!.personId, req.body);
+      const r = recordEntry(db, req.caller!.personId, req.body, new Date(), enabledConnectors(db, connectors).map((c) => c.id));
       return reply.code(r.dryRun ? 200 : 201).send(r);
     } catch (e) { return fail(reply, e); }
   });

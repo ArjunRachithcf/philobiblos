@@ -68,7 +68,7 @@ describe('ISBNs: the check digit holds, or it is no ISBN', () => {
 
 describe('CSV: RFC 4180, bounded and linear', () => {
   it('a header and rows; quoted fields with commas, quotes and the delimiter; CRLF; a BOM; a last line without its newline', () => {
-    expect(parseCsv('﻿title,author\r\n"Tide, The","Okafor ""M."""\r\nB,C')).toEqual([['title', 'author'], ['Tide, The', 'Okafor "M."'], ['B', 'C']]);
+    expect(parseCsv('\ufefftitle,author\r\n"Tide, The","Okafor ""M."""\r\nB,C')).toEqual([['title', 'author'], ['Tide, The', 'Okafor "M."'], ['B', 'C']]);
   });
   it('the delimiter is the header\'s: semicolons and tabs too; blank lines, and lines of empty cells, are skipped', () => {
     expect(parseCsv('title;price\n\nA;18,90\n;\n;;\n')).toEqual([['title', 'price'], ['A', '18,90']]);
@@ -78,6 +78,8 @@ describe('CSV: RFC 4180, bounded and linear', () => {
     const bad = (s: string, m: RegExp) => expect(() => parseCsv(s)).toThrow(m);
     bad('title\n"open', /quote/);
     bad('title\n"a"b', /quote/);
+    bad('title,author\na"b,c', /quote/);
+    bad('title,author\na"b",c', /a quote inside a cell/);
     bad(`title\n${'a\n'.repeat(CSV_LIMITS.rows)}`, /rows/);
     bad(`${Array.from({ length: CSV_LIMITS.columns + 1 }, (_, i) => `c${i}`).join(',')}\n`, /columns/);
     bad(`title\n${'a'.repeat(CSV_LIMITS.cell + 1)}`, /cell/);
@@ -151,24 +153,52 @@ describe('an invoice typed in: copies, as a verified invoice would make them', (
     expect(db.select().from(t.copy).where(eq(t.copy.bookId, b[0]!.id)).all()).toHaveLength(2);
   });
 
-  it('an invoice number counts once: typed twice, or typed after the bookshop\'s mail brought it, is 409; without a number it is recorded', async () => {
+  it('an invoice number counts once per shop: the same shop again (any case) is 409; another shop\'s, or one with no shop, counts', () => {
     const db = world();
-    record(db, { kind: 'invoice', number: 'R-1001', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
-    refused(db, { kind: 'invoice', number: 'r-1001', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }, 409, /recorded already/);
-    refused(db, { kind: 'invoice', number: ' R-1001 ', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }, 409, /recorded already/);
-    await mailInvoice(db, '99001122');
-    refused(db, { kind: 'invoice', number: '99001122', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }, 409, /bookshop's mail/);
+    const inv = (number: string, shop?: string) => ({ kind: 'invoice', number, ...(shop ? { shop } : {}), lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
+    expect(record(db, inv('R-1001', 'Corner Books')).shop).toBe('Corner Books');
+    refused(db, inv('r-1001', 'corner books'), 409, /recorded already/);
+    refused(db, inv(' R-1001 ', 'Corner Books'), 409, /recorded already/);
+    record(db, inv('R-1001', 'Riverside Books'));
+    record(db, inv('R-1001'));
+    refused(db, inv('r-1001'), 409, /recorded already/);
     record(db, { kind: 'invoice', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
+    expect(copies(db)).toHaveLength(4);
   });
 
-  it('the bookshop\'s mail of an invoice typed in already counts it once: read, no copies again', async () => {
+  it('an enabled connector\'s id names its shop (any case); a label never takes the id of a connector that is not enabled', () => {
     const db = world();
-    record(db, { kind: 'invoice', number: '99001122', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
+    expect(record(db, { kind: 'invoice', number: '1', shop: 'Quillmere', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }).shop).toBe('quillmere');
+    db.delete(t.connectorEnabled).run();
+    expect(record(db, { kind: 'invoice', number: '2', shop: 'Quillmere', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }).shop).toBe('Quillmere');
+  });
+
+  it('typed for another shop, or for none: the connector\'s mail of that number still counts', async () => {
+    for (const shop of ['Corner Books', undefined]) {
+      const db = world();
+      record(db, { kind: 'invoice', number: '99001122', ...(shop ? { shop } : {}), lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
+      await mailInvoice(db, '99001122');
+      expect(copies(db).filter((c) => c[1] === 'invoice')).toHaveLength(1);
+      const row = db.select().from(t.mailSeen).where(eq(t.mailSeen.kind, 'invoice')).get()!;
+      expect(JSON.parse(row.parsedJson!).duplicateOf).toBeUndefined();
+    }
+  });
+
+  it('typed for the connector\'s shop, then its mail: read, counted once', async () => {
+    const db = world();
+    record(db, { kind: 'invoice', number: '99001122', shop: 'quillmere', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
     const before = copies(db);
     await mailInvoice(db, '99001122');
     expect(copies(db)).toEqual(before);
     const row = db.select().from(t.mailSeen).where(eq(t.mailSeen.kind, 'invoice')).get()!;
     expect(JSON.parse(row.parsedJson!)).toMatchObject({ duplicateOf: expect.stringMatching(/^entry:/) });
+  });
+
+  it('its mail, then typed for the connector\'s shop: 409; for another shop it counts', async () => {
+    const db = world();
+    await mailInvoice(db, '99001122');
+    refused(db, { kind: 'invoice', number: '99001122', shop: 'quillmere', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }, 409, /bookshop's mail/);
+    record(db, { kind: 'invoice', number: '99001122', shop: 'Corner Books', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
   });
 });
 
@@ -293,7 +323,7 @@ describe('what is refused before anything changes', () => {
   const inv = (line: Record<string, unknown>, more: Record<string, unknown> = {}) => ({ kind: 'invoice', lines: [{ title: 'A Book', qty: 1, price: 1000, ...line }], ...more });
   it.each([
     ['not an object', [], /object/],
-    ['an unknown field', { ...inv({}), shop: 'x' }, /shop/],
+    ['an unknown field', { ...inv({}), store: 'x' }, /store/],
     ['an unknown kind', { kind: 'order', lines: [{ title: 'A', qty: 1, price: 1 }] }, /kind/],
     ['both lines and a CSV', { ...inv({}), csv: 'title\nA' }, /lines or csv/],
     ['neither', { kind: 'invoice' }, /lines or csv/],
@@ -313,6 +343,12 @@ describe('what is refused before anything changes', () => {
     ['a title with a run of 12 digits (a card or account number)', inv({ title: 'Paid with 4111 1111 1111 1111' }), /title/],
     ['a title with a control character', inv({ title: 'A\u0007Book' }), /title/],
     ['an author with a line break', inv({ author: 'A\nB' }), /author/],
+    ['a title with U+FFFD (a file that was not UTF-8)', inv({ title: 'Die Br\ufffdcke' }), /UTF-8/],
+    ['a shop with U+FFFD', inv({}, { shop: 'B\ufffdcher' }), /UTF-8/],
+    ['a CSV header with U+FFFD', { kind: 'invoice', csv: 'title;qty;price;B\ufffdcher\nA;1;1\n' }, /UTF-8/],
+    ['a CSV cell with U+FFFD', { kind: 'invoice', csv: 'title;author;qty;price\nDie Br\ufffdcke;J\ufffdrg M\ufffdller;1;19,90\n' }, /row 1.*UTF-8/],
+    ['a shop too long', inv({}, { shop: 's'.repeat(81) }), /shop/],
+    ['a quote with a shop', { kind: 'quote', month: '2026-11', shop: 'x', lines: [{ isbn: '9780000000002', price: 1990 }] }, /shop/],
     ['a line with neither title nor ISBN', inv({ title: undefined }), /title or isbn/i],
     ['an ISBN alone that names no book', inv({ title: undefined, isbn: '9780000000026' }), /title/],
     ['a quote line with a quantity', { kind: 'quote', month: '2026-11', lines: [{ isbn: '9780000000002', price: 1990, qty: 1 }] }, /qty/],
@@ -366,6 +402,12 @@ describe('POST /orders/entries', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json()).toMatchObject({ kind: 'invoice', total: 900, lines: [{ new: true }] });
     expect(db.select().from(t.orderEntry).all()).toHaveLength(1);
+  });
+
+  it('GET /orders/shops: the enabled connectors any adult may name an invoice\'s shop by', async () => {
+    const res = await built.app.inject({ url: '/api/orders/shops', headers: { cookie: sessionCookie(db, 'p_sam') } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ shops: [{ id: 'quillmere', name: expect.any(String) }] });
   });
 
   it('a kid has no access; another origin is refused', async () => {

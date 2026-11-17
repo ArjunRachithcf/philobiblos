@@ -295,12 +295,14 @@ export const orderLine = sqliteTable('order_line', {
 ]);
 
 // An order's quote or an invoice a person typed in or imported (philobiblos#27 slice 4; orders/entries.ts): structured
-// fields only (book ids, quantities, amounts), never the text typed. An invoice's number counts once.
+// fields only (book ids, quantities, amounts), never the text typed. An invoice's number counts once per shop.
 export const orderEntry = sqliteTable('order_entry', {
   id: text('id').primaryKey(),
   kind: text('kind', { enum: ['quote', 'invoice'] }).notNull(),
   source: text('source', { enum: ['typed', 'csv'] }).notNull(),
   number: text('number'),
+  // An invoice's shop: an enabled connector's id, or the household's own label for a shop without one; '' for none.
+  shop: text('shop').notNull().default(''),
   orderId: text('order_id').references(() => order.id),
   personId: text('person_id').references(() => person.id, { onDelete: 'set null' }),
   totalC: integer('total_c').notNull(),
@@ -310,7 +312,9 @@ export const orderEntry = sqliteTable('order_entry', {
   check('order_entry_kind', sql`${t.kind} IN ('quote','invoice')`),
   check('order_entry_source', sql`${t.source} IN ('typed','csv')`),
   check('order_entry_number_invoice', sql`${t.kind} = 'invoice' OR ${t.number} IS NULL`),
-  uniqueIndex('order_entry_number').on(t.number),
+  check('order_entry_shop_invoice', sql`${t.kind} = 'invoice' OR ${t.shop} = ''`),
+  // An invoice number counts once per shop, whatever its case (a shop's and no shop's are apart).
+  uniqueIndex('order_entry_number').on(sql`upper(${t.shop})`, sql`upper(${t.number})`),
 ]);
 
 // Sources ----------------------------------------------------------------

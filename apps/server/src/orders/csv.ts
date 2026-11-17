@@ -29,7 +29,7 @@ function delimiterOf(text: string): string {
 /** The records of `text`, the header first; refused (CsvError) past a limit or for anything not read whole. */
 export function parseCsv(input: string): string[][] {
   if (input.length > CSV_LIMITS.chars) throw new CsvError(`at most ${CSV_LIMITS.chars} characters`);
-  const text = input.startsWith('﻿') ? input.slice(1) : input;
+  const text = input.startsWith('\ufeff') ? input.slice(1) : input;
   const delim = delimiterOf(text);
   const out: string[][] = [];
   let row: string[] = [];

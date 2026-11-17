@@ -4,21 +4,19 @@
 // Record does it, with a verified mail's effects (copies owned, the order's lines delivered or quoted). The file is read
 // in the browser as text and sent as it is; the server reads its columns and keeps none of its text. Typing only holds
 // values (WCAG 3.2.2): a check shows only while it is the check of what is entered now.
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { components } from '@philobiblos/contracts/openapi';
 import { api, message } from '../api';
 import { Choice, Notice } from '../ui';
 import { unit, useMoney } from '../money';
+import { CSV_MAX, TOO_LONG, decodeCsv } from '../csvfile';
 
 type Result = components['schemas']['OrderEntryResult'];
 type Kind = 'invoice' | 'quote';
 interface Row { title: string; author: string; isbn: string; qty: string; price: string; available: boolean }
 const EMPTY: Row = { title: '', author: '', isbn: '', qty: '1', price: '', available: true };
-/** The server's limit, so a file that is too long is refused before it is sent. */
-const CSV_MAX = 64 * 1024;
 const ROWS_MAX = 100;
-/** Refused whole, never cut: a CSV cut short would still read, wrongly. */
-const TOO_LONG = 'That CSV is longer than 64 KB, which Philobiblos reads at most: split it, or leave out the columns it does not need.';
+const OTHER = '\u0000other';
 
 /** An amount as typed (18.90 or 18,90) in hundredths; null for anything else. */
 const hundredths = (s: string): number | null => {
@@ -36,6 +34,12 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
   const [csv, setCsv] = useState('');
   const [number, setNumber] = useState('');
   const [date, setDate] = useState('');
+  // The invoice's shop: an enabled connector (its mail of the same number then counts once with this), another shop by
+  // the household's own name for it, or none. Its number counts once for that shop.
+  const [shops, setShops] = useState<{ id: string; name: string }[]>([]);
+  const [shopPick, setShopPick] = useState('');
+  const [shopName, setShopName] = useState('');
+  useEffect(() => { api<{ shops: { id: string; name: string }[] }>('/orders/shops').then((r) => setShops(r.shops), () => setShops([])); }, []);
   const [check, setCheck] = useState<{ key: string; result: Result } | null>(null);
   const [done, setDone] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,9 +47,10 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
   const [busy, setBusy] = useState(false);
   const k: Kind = quotable ? kind : 'invoice';
 
+  const shop = shopPick === OTHER ? shopName.trim() : shopPick;
   /** What would be sent, or what is missing. */
   const entry = (): object | string => {
-    const head = { kind: k, ...(k === 'quote' ? { month } : {}), ...(k === 'invoice' && number.trim() ? { number: number.trim() } : {}), ...(k === 'invoice' && date ? { date } : {}) };
+    const head = { kind: k, ...(k === 'quote' ? { month } : {}), ...(k === 'invoice' && number.trim() ? { number: number.trim() } : {}), ...(k === 'invoice' && shop ? { shop } : {}), ...(k === 'invoice' && date ? { date } : {}) };
     if (how === 'csv') return !csv.trim() ? 'Choose a CSV file or paste one.' : csv.length > CSV_MAX ? TOO_LONG : { ...head, csv };
     const lines = [];
     for (const [i, r] of rows.entries()) {
@@ -73,17 +78,16 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
       const r = await api<Result>('/orders/entries', { method: 'POST', body: { ...now, dryRun } });
       if (dryRun) return setCheck({ key, result: r });
       setCheck(null); setDone(r);
-      setRows([{ ...EMPTY }]); setCsv(''); setNumber(''); setDate('');
+      setRows([{ ...EMPTY }]); setCsv(''); setNumber(''); setDate(''); setShopPick(''); setShopName('');
       onRecorded();
     } catch (e) { setCheck(null); setError(message(e)); } finally { setBusy(false); }
   };
   const readFile = async (f: File | undefined) => {
     setError(null);
     if (!f) return;
-    // Measured as the server measures it, in characters (an accented letter is two bytes but one character).
-    const text = f.size > CSV_MAX * 4 ? null : await f.text();
-    if (text === null || text.length > CSV_MAX) return setError(TOO_LONG);
-    setCsv(text);
+    const r = decodeCsv(new Uint8Array(await f.arrayBuffer()));
+    if ('error' in r) return setError(r.error);
+    setCsv(r.text);
   };
   const copies = (r: Result) => r.lines.reduce((n, l) => n + (l.qty ?? 0), 0);
 
@@ -100,9 +104,27 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
       {k === 'invoice' && (
         <div className="fields fields-2">
           <div className="field">
+            <label className="field-label" htmlFor={`${id}-s`}>Shop</label>
+            <select className="input" id={`${id}-s`} value={shopPick} onChange={(e) => setShopPick(e.target.value)} aria-describedby={`${id}-sh`}>
+              <option value="">Not named</option>
+              {shops.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              <option value={OTHER}>Another shop…</option>
+            </select>
+            <span className="hint" id={`${id}-sh`}>An invoice number counts once for its shop.{shops.length ? ' A bookshop Philobiblos reads the mail of: its mailed invoice with this number then counts once.' : ''}</span>
+          </div>
+          {shopPick === OTHER && (
+            <div className="field">
+              <label className="field-label" htmlFor={`${id}-so`}>The shop’s name</label>
+              <input className="input" id={`${id}-so`} autoComplete="off" maxLength={80} value={shopName} onChange={(e) => setShopName(e.target.value)} />
+            </div>
+          )}
+        </div>
+      )}
+      {k === 'invoice' && (
+        <div className="fields fields-2">
+          <div className="field">
             <label className="field-label" htmlFor={`${id}-n`}>Invoice number (optional)</label>
-            <input className="input" id={`${id}-n`} autoComplete="off" maxLength={40} value={number} onChange={(e) => setNumber(e.target.value)} aria-describedby={`${id}-nh`} />
-            <span className="hint" id={`${id}-nh`}>An invoice with a number counts once.</span>
+            <input className="input" id={`${id}-n`} autoComplete="off" maxLength={40} value={number} onChange={(e) => setNumber(e.target.value)} />
           </div>
           <div className="field">
             <label className="field-label" htmlFor={`${id}-d`}>Bought on (optional)</label>

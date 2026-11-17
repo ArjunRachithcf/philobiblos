@@ -11,7 +11,7 @@
 //
 // Who: any adult (kids have no access), for themselves or a kid, never another adult (`for`, the Backlog's rule); the
 // order and the copies are the household's. What is kept: the entry's book ids, quantities and amounts, its invoice
-// number and who recorded it, never the text typed. An invoice number counts once, whether typed, imported or read from a
+// number and who recorded it, never the text typed. An invoice number counts once per shop, whether typed, imported or read from a
 // bookshop's mail (mail/effects.ts looks here too). Amounts are in the household's currency (none yet: nothing is
 // recorded). Everything is checked before anything changes and applied in one transaction; a dry run applies it and
 // rolls back, so it answers exactly what the entry would do and changes nothing.
@@ -29,7 +29,7 @@ import { norm } from '../seed/import';
 import { CsvError, parseCsv } from './csv';
 
 /** At most 100 lines (a parser's books a mail), 20 copies a line (the Inbox's), a price at most the budget's ceiling. */
-export const ENTRY_LIMITS = { lines: 100, qty: 20, price: BUDGET_CEILING_C, number: 40, title: 300, author: 200 } as const;
+export const ENTRY_LIMITS = { lines: 100, qty: 20, price: BUDGET_CEILING_C, number: 40, shop: 80, title: 300, author: 200 } as const;
 
 export class EntryError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string) { super(message); }
@@ -58,6 +58,8 @@ export interface EntryResult {
   month?: string;
   orderId?: string;
   number: string | null;
+  /** An invoice's shop: an enabled connector's id, or the label given. */
+  shop: string | null;
   total: number;
   lines: EntryLine[];
   ignoredColumns: string[];
@@ -77,6 +79,9 @@ function textField(v: unknown, name: string, max: number): string | null {
   if (!s) return null;
   if (s.length > max) return bad(`${name}: up to ${max} characters`);
   if (/\p{Cc}/u.test(s)) return bad(`${name}: no line breaks or control characters`);
+  // U+FFFD is what a decoder writes for bytes it could not read: a file saved in another encoding than UTF-8, whose words
+  // would never match a book (and would add a broken one).
+  if (s.includes('\ufffd')) return bad(`${name}: holds a character that could not be read: save the file as CSV UTF-8`);
   // A card or account number has no place in a book's title (ADR 0009); safeField's rule for every string a parser keeps.
   if (safeField(s, []) === null) return bad(`${name}: holds a run of 12 or more digits, which Philobiblos never keeps`);
   return s;
@@ -149,6 +154,7 @@ function csvLines(kind: EntryKind, text: unknown): { lines: unknown[]; ignored: 
   const ignored: string[] = [];
   const fields = header.map((h) => {
     const name = h.normalize('NFKC').replace(/\p{Cf}/gu, '').trim().toLowerCase();
+    if (name.includes('\ufffd')) return bad('csv: its header holds a character that could not be read: save the file as CSV UTF-8');
     const f = COLUMNS[name];
     if (f && LINE_FIELDS[kind].includes(f)) return f;
     // A column it does not read: named back (bounded, printable), its cells never read.
@@ -183,10 +189,13 @@ function titleNames(books: BookKey[], g: Given): number {
   return g.author ? same.filter((b) => matchBook([b], { ean: null, title: g.title, author: g.author }) === b.id).length : same.length;
 }
 
-/** POST /orders/entries: a quote or an invoice, typed (`lines`) or imported (`csv`); `dryRun` answers what it would do. */
-export function recordEntry(db: Db, me: string, body: unknown, now = new Date()): EntryResult {
+/**
+ * POST /orders/entries: a quote or an invoice, typed (`lines`) or imported (`csv`); `dryRun` answers what it would do.
+ * `connectors` are the ids of the enabled connectors in force, which an invoice's `shop` may name.
+ */
+export function recordEntry(db: Db, me: string, body: unknown, now = new Date(), connectors?: string[]): EntryResult {
   if (!isObject(body)) return bad('a JSON object is needed');
-  for (const k of Object.keys(body)) if (!['kind', 'month', 'number', 'date', 'lines', 'csv', 'dryRun'].includes(k)) return bad(`unknown field ${k.slice(0, 40)}`);
+  for (const k of Object.keys(body)) if (!['kind', 'month', 'number', 'shop', 'date', 'lines', 'csv', 'dryRun'].includes(k)) return bad(`unknown field ${k.slice(0, 40)}`);
   const kind = body.kind;
   if (kind !== 'quote' && kind !== 'invoice') return bad('kind: quote or invoice');
   if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') return bad('dryRun: true or false');
@@ -199,6 +208,7 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date())
     month = body.month;
     if (body.date !== undefined) return bad('date: only an invoice has one');
     if (body.number !== undefined) return bad('number: only an invoice has one');
+    if (body.shop !== undefined) return bad('shop: only an invoice names one (a quote is its order\'s)');
   } else if (body.month !== undefined) return bad('month: only a quote names its order\'s month');
   const acquiredAt = kind === 'invoice' && body.date !== undefined ? checkDate(body.date, now) : now.toISOString();
 
@@ -206,6 +216,17 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date())
   if (kind === 'invoice' && body.number !== undefined && body.number !== null && body.number !== '') {
     number = textField(body.number, 'number', ENTRY_LIMITS.number);
     if (number !== null && !/^[\p{L}\p{N}][\p{L}\p{N} ./_-]*$/u.test(number)) return bad('number: letters, digits, spaces and . / _ -');
+  }
+  // The shop an invoice is from: its number counts once for that shop (two shops may number alike). An enabled
+  // connector's id (any case) is that connector, whose mail of the same number then counts once with it; anything else
+  // is the household's own label for a shop without a connector, which never stands for a connector's mail.
+  let shop: string | null = null;
+  if (kind === 'invoice' && body.shop !== undefined && body.shop !== null && body.shop !== '') {
+    shop = textField(body.shop, 'shop', ENTRY_LIMITS.shop);
+    // `connectors`: the enabled ones in force (the route's, connectors/enabled.ts); else every enabling recorded.
+    const ids = connectors ?? db.select({ id: t.connectorEnabled.id }).from(t.connectorEnabled).all().map((c) => c.id);
+    const id = shop && ids.find((c) => c.toLowerCase() === shop!.toLowerCase());
+    if (id) shop = id;
   }
 
   const source = body.csv !== undefined ? 'csv' as const : 'typed' as const;
@@ -242,9 +263,14 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date())
 
       if (kind === 'invoice') {
         if (number !== null) {
-          if (tx.select({ id: t.orderEntry.id }).from(t.orderEntry).where(sql`upper(${t.orderEntry.number}) = upper(${number})`).get()) throw new EntryError(409, `invoice ${number} is recorded already`);
+          // The unique index order_entry_number holds the same rule.
+          if (tx.select({ id: t.orderEntry.id }).from(t.orderEntry).where(and(sql`upper(${t.orderEntry.number}) = upper(${number})`, sql`upper(${t.orderEntry.shop}) = upper(${shop ?? ''})`)).get()) {
+            throw new EntryError(409, `invoice ${number}${shop ? ` from ${shop}` : ''} is recorded already`);
+          }
+          // A connector's own mail of this number (only when the shop is that connector: a label or none matches no mail).
           const mailed = tx.select({ id: t.mailSeen.messageId }).from(t.mailSeen)
-            .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`upper(json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber')) = upper(${number})`, sql`json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') IS NULL`)).get();
+            .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`upper(json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber')) = upper(${number})`,
+              sql`json_extract(${t.mailSeen.authJson}, '$.connector') = ${shop}`, sql`json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') IS NULL`)).get();
           if (mailed) throw new EntryError(409, `invoice ${number} came in the bookshop's mail already, and counts from there`);
         }
         const books = keys(tx);
@@ -292,11 +318,11 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date())
 
       // An invoice's total is its own rows'; a quote's is the order's, as quoted now (a correction of one book included).
       const total = kind === 'quote' ? quotedTotal : given.reduce((n, g) => n + g.price! * g.qty, 0);
-      const result: EntryResult = { kind, source, dryRun, ...(month ? { month } : {}), ...(orderId ? { orderId } : {}), number, total, lines: out, ignoredColumns: ignored };
+      const result: EntryResult = { kind, source, dryRun, ...(month ? { month } : {}), ...(orderId ? { orderId } : {}), number, shop, total, lines: out, ignoredColumns: ignored };
       if (dryRun) throw new DryRun(result);
       const id = ulid();
       tx.insert(t.orderEntry).values({
-        id, kind, source, number, orderId: orderId ?? null, personId: me, totalC: total, createdAt: iso,
+        id, kind, source, number, shop: shop ?? '', orderId: orderId ?? null, personId: me, totalC: total, createdAt: iso,
         linesJson: JSON.stringify(out.map((l) => ({ bookId: l.bookId, qty: l.qty, priceC: l.price, available: l.available }))),
       }).run();
       return { id, ...result };
