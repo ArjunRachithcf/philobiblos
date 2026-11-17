@@ -867,7 +867,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** `person` (your own settings) is stored, and the household's `budget`, `order`, `ai` and `cycle` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it). */
+        /** `person` (your own settings) is stored, and the household's `budget`, `order`, `ai`, `cycle` and `money` (admins, 403 for others); the other household parts answer 400 until their screens store them. `order` and a Claude key need the sealing key (409 without it); a currency other than an enabled connector's is 409. All or nothing. */
         patch: operations["patchSettings"];
         trace?: never;
     };
@@ -912,7 +912,10 @@ export interface components {
             enabled: boolean;
             /** @description enabled for an earlier version of its file: it allows nothing until enabled again */
             changed: boolean;
+            /** @description what its amounts are in (ISO 4217); it counts only while that is the household's currency (Settings.money) */
             currency?: string;
+            /** @description why an admin cannot enable it now although it is usable: the household's currency is another or not chosen yet, or (under HomersLab) enabling waits for the edge's recent sign-in */
+            enableBlocked?: string;
             language?: string;
             allows?: {
                 /** @description the From domains whose mail counts (exact) */
@@ -926,13 +929,21 @@ export interface components {
                 orderTo: string | null;
             };
         };
-        /** @description centimes */
+        /** @description hundredths of the household's currency (HouseholdMoney) */
         Money: number;
         Me: {
             person?: components["schemas"]["Person"];
             household?: components["schemas"]["Person"][];
             /** @enum {unknown} */
             mode?: "homerslab" | "standalone";
+            money?: components["schemas"]["HouseholdMoney"];
+        };
+        /** @description The household's money (philobiblos#27): every amount (Money) is in hundredths of its currency. No currency is assumed. */
+        HouseholdMoney: {
+            /** @description ISO 4217, one this server knows; null until chosen (PHILOBIBLOS_CURRENCY at a start fills in a household that has none, or an admin here). A connector counts only in it, and it does not change while a connector in another is enabled (409); amounts are never converted. */
+            currency: string | null;
+            /** @description what a price nobody knows counts as in the month and the scores (ADR 0008): 0 to 1,000,000, default 2500 */
+            unknownPrice: components["schemas"]["Money"];
         };
         Person: {
             id: string;
@@ -1297,7 +1308,9 @@ export interface components {
             }[];
         };
         Settings: {
-            /** @description one shared monthly budget (centimes, 0 to 1,000,000, min ≤ max); admins set it; no rollover */
+            /** @description admins change it; either part alone (a currency cannot be set back to null) */
+            money?: components["schemas"]["HouseholdMoney"];
+            /** @description one shared monthly budget (hundredths of the household's currency, 0 to 1,000,000, min ≤ max); admins set it; no rollover */
             budget?: components["schemas"]["Budget"];
             adultPicks?: number;
             newAuthorsOnly?: boolean;
@@ -3554,7 +3567,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description The connector cannot be used, changed since Settings showed it, or shares a mail domain with an enabled one */
+            /** @description The connector cannot be used, changed since Settings showed it, shares a mail domain with an enabled one, or its currency is not the household's */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3798,7 +3811,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description No sealing key (for the addresses or a Claude key) */
+            /** @description No sealing key (for the addresses or a Claude key), or a currency an enabled connector does not use */
             409: {
                 headers: {
                     [name: string]: unknown;

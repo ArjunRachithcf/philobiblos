@@ -136,4 +136,29 @@ describe('upgrades', () => {
     expect(client.prepare('SELECT id, revoked_at IS NOT NULL AS revoked FROM share_token').all()).toEqual([{ id: 'st1', revoked: 1 }]);
     expect(client.pragma('foreign_key_check')).toEqual([]);
   });
+
+  it('a household from before M4 keeps its amounts\' meaning: its settings say the currency they were in (philobiblos#27)', () => {
+    // The migrations folder as it was before 0016: a household with its settings row, a budget and its time zone.
+    const dir = join(mkdtempSync(join(tmpdir(), 'philobiblos-mig-')), 'drizzle');
+    cpSync(drizzleDir, dir, { recursive: true });
+    const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
+    const before = journal.entries.findIndex((e) => e.tag === '0016_household_money');
+    expect(before).toBeGreaterThan(0);
+    writeFileSync(join(dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.slice(0, before) }));
+    const client = new Database(':memory:');
+    client.pragma('foreign_keys = ON');
+    const db = drizzle(client);
+    migrate(db, { migrationsFolder: dir });
+    client.prepare(`INSERT INTO household_settings (id, budget_min_c, budget_max_c, timezone, ai_provider) VALUES (1, 12000, 18000, 'America/New_York', 'none')`).run();
+    migrate(db, { migrationsFolder: drizzleDir });
+    expect(client.prepare('SELECT budget_min_c, budget_max_c, timezone, ai_provider, currency, unknown_price_c FROM household_settings').all()).toEqual([
+      { budget_min_c: 12000, budget_max_c: 18000, timezone: 'America/New_York', ai_provider: 'none', currency: 'CHF', unknown_price_c: 2500 },
+    ]);
+    // The database's own rules hold the currency to a code's shape and the unknown price to the budget's range.
+    for (const bad of [`currency = 'chf'`, `currency = 'EURO'`, `currency = ''`, 'unknown_price_c = -1', 'unknown_price_c = 1000001']) {
+      expect(() => client.prepare(`UPDATE household_settings SET ${bad}`).run(), bad).toThrow(/CHECK/);
+    }
+    // A database made new has no settings row until the first start, which gives it its currency (or none).
+    expect(openDb(':memory:').$client.prepare('SELECT count(*) AS n FROM household_settings').get()).toEqual({ n: 0 });
+  });
 });

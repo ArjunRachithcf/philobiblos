@@ -10,6 +10,7 @@ import { buildApp } from '../src/app';
 import { lookup, parseWork, pickSearchDoc } from '../src/books/openlibrary';
 import * as prices from '../src/books/prices';
 import { QUILLMERE } from './mailkit';
+import { DEFAULT_UNKNOWN_PRICE_C } from '../src/household/money';
 import { loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { PRICE_PAUSE_MS, booksNeedingPrices, refreshCovers, refreshMetadata, refreshPrices } from '../src/jobs/books';
@@ -48,7 +49,7 @@ function fakeEgress(answer: (url: string, want: Want) => unknown): Egress & { as
 const noSleep = async () => {};
 
 // The search page of the invented example bookshop (connectors/quillmere/connector.yaml `prices`).
-const { UNKNOWN_PRICE_C, textOf } = prices;
+const { textOf } = prices;
 type PriceSource = prices.PriceSource;
 const SHOP = { money: QUILLMERE.money, prices: QUILLMERE.prices! };
 const TILES = prices.tileRules(SHOP);
@@ -160,8 +161,8 @@ describe('the prices job', () => {
     }
   });
 
-  it('an unknown price counts as CHF 25 in the month, and the screen says it is unknown', async () => {
-    expect(UNKNOWN_PRICE_C).toBe(2500);
+  it('an unknown price counts as the household\'s (25 by default) in the month, and the screen says it is unknown', async () => {
+    expect(DEFAULT_UNKNOWN_PRICE_C).toBe(2500);
     const db = household();
     const { app } = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY }), db);
     const cookie = sessionCookie(db, 'p_alex');
@@ -169,9 +170,9 @@ describe('the prices job', () => {
     type Pick = { candidate: { price?: number } };
     const picks: Pick[] = [...month.adults, ...month.kids].flatMap((g: { picks: Pick[] }) => g.picks);
     expect(picks.length).toBeGreaterThan(0);
-    // No offers in this household: every pick's price is unknown, shown as such, and counted as CHF 25.
+    // No offers in this household: every pick's price is unknown, shown as such, and counted as the household's 25.
     expect(picks.every((p) => p.candidate.price === undefined)).toBe(true);
-    expect(month.total).toBe(picks.length * UNKNOWN_PRICE_C);
+    expect(month.total).toBe(picks.length * DEFAULT_UNKNOWN_PRICE_C);
     const web = readFileSync(new URL('../../web/src/pages/ThisMonth.tsx', import.meta.url), 'utf8');
     expect(web).toContain("'Price unknown'");
     expect(readFileSync(new URL('../../web/src/pages/Backlog.tsx', import.meta.url), 'utf8')).toContain("'Price unknown'");

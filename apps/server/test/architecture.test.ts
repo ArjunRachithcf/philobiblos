@@ -53,6 +53,21 @@ describe('no core module names a bookshop or a mail provider', () => {
     expect(hits).toEqual([]);
   });
 
+  it('no core module names a currency: amounts are in the household\'s (Settings), a connector\'s are its own', () => {
+    // ISO 4217 codes as words (case as written), and the signs a currency is written with.
+    const code = new RegExp(`\\b(?:${Intl.supportedValuesOf('currency').join('|')})\\b`);
+    const signs = /[€£¥₹₩₽₺₪]|\bFr\.|\bUS\$/;
+    // Codes that are also ordinary words (a JPEG's start of scan, SQL's ALL, TRY): never taken for money.
+    const notMoney = new Set(['ALL', 'BOB', 'CUP', 'GEL', 'MAD', 'MOP', 'PEN', 'SOS', 'TOP', 'TRY']);
+    // And a currency inside a name (`pricePerChf`), whatever its case, for the codes that are never a word.
+    const inName = /chf|usd|gbp|jpy/i;
+    const hits = core().flatMap((f) => readFileSync(f, 'utf8').split('\n').flatMap((line, i) => {
+      const m = [...line.matchAll(new RegExp(code, 'g'))].find((x) => !notMoney.has(x[0])) ?? signs.exec(line) ?? inName.exec(line);
+      return m ? [`${relative(ROOT, f)}:${i + 1}: ${m[0]}`] : [];
+    }));
+    expect(hits).toEqual([]);
+  });
+
   it('only the connector modules read connectors/, and nothing in the core names a connector folder', () => {
     const hits = core().filter((f) => /connectors\/[a-z0-9-]+\/connector\.yaml/.test(readFileSync(f, 'utf8'))).map((f) => relative(ROOT, f));
     expect(hits).toEqual([]);

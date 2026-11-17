@@ -6,19 +6,20 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { components } from '@philobiblos/contracts/openapi';
 import { ApiError, api, message, type Me } from '../api';
 import { Notice, PageHead } from '../ui';
+import { useMoney } from '../money';
 
 type Plan = components['schemas']['MonthPlan'];
 type Pick = components['schemas']['Pick'];
 type Order = components['schemas']['Order'];
 type Budget = { min: number; max: number };
 
-const chf = (c: number) => `CHF ${(c / 100).toFixed(c % 100 ? 2 : 0)}`;
 const MOVES: Record<string, string> = { deepen: 'Deepen', connect: 'Connect', broaden: 'Broaden', counterpoint: 'Counterpoint', wildcard: 'Wildcard', intro: 'Intro', fiction: 'Fiction' };
 const STEPS = ['Picked', 'Composed', 'Quote', 'Invoice', 'In the library'];
 const STEP_OF: Record<string, number> = { picked: 0, drafted: 1, quoted: 2, invoiced: 3, closed: 4 };
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
+  const fmt = useMoney().format;
   const [plan, setPlan] = useState<Plan | null>(null);
   // "This month" is the server's (its time zone), the same month the Backlog's "add to this month" uses.
   const month = plan?.month ?? '';
@@ -58,7 +59,7 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
             <div className="mo-top">
               <BudgetBar budget={plan.budget as Budget} total={plan.total ?? 0} override={Boolean(plan.budgetIsOverride)} admin={admin}
                 count={`${adultCount} for adults, ${kidCount} for the kids`}
-                onApply={(b) => act(() => api<Plan>(`/month/${month}/budget`, { method: 'PUT', body: b }), b ? `This month’s budget is ${chf(b.min)} to ${chf(b.max)}; the kids’ picks are made again.` : 'Back to the usual budget.')} />
+                onApply={(b) => act(() => api<Plan>(`/month/${month}/budget`, { method: 'PUT', body: b }), b ? `This month’s budget is ${fmt(b.min)} to ${fmt(b.max)}; the kids’ picks are made again.` : 'Back to the usual budget.')} />
               <Progress order={plan.order ?? null} />
             </div>
             <Focus focus={plan.focus ?? []} go={go} />
@@ -82,11 +83,12 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
 
 // ---------------------------------------------------------------------------------------------------------- the budget
 
-const STEP = 500; // CHF 5
+const STEP = 500; // 5 of the household's currency
 const scaleOf = (b: Budget, total: number) => Math.max(40000, Math.ceil((Math.max(b.max, total) * 1.5) / 10000) * 10000);
 
 function BudgetBar({ budget, total, override, admin, count, onApply }: { budget: Budget; total: number; override: boolean; admin: boolean; count: string; onApply: (b: Budget | null) => Promise<void> }) {
   const id = useId();
+  const { format: fmt, unknownPrice } = useMoney();
   const [draft, setDraft] = useState(budget);
   useEffect(() => setDraft(budget), [budget.min, budget.max]);
   const [scale] = useState(() => scaleOf(budget, total));
@@ -123,7 +125,7 @@ function BudgetBar({ budget, total, override, admin, count, onApply }: { budget:
   const thumb = (which: 'min' | 'max', label: string) => (
     <div className={`mo-thumb mo-thumb-${which}`} role="slider" tabIndex={0} aria-label={label} aria-orientation="horizontal"
       aria-valuemin={which === 'min' ? 0 : draft.min / 100} aria-valuemax={which === 'min' ? draft.max / 100 : scale / 100}
-      aria-valuenow={draft[which] / 100} aria-valuetext={chf(draft[which])} aria-describedby={`${id}-help`}
+      aria-valuenow={draft[which] / 100} aria-valuetext={fmt(draft[which])} aria-describedby={`${id}-help`}
       style={{ left: pct(draft[which]) }} onKeyDown={key(which)} onPointerDown={drag(which)} />
   );
 
@@ -132,13 +134,13 @@ function BudgetBar({ budget, total, override, admin, count, onApply }: { budget:
       <div className="mo-budget-head">
         <div>
           <h2 className="card-title" id={`${id}-h`}>Order total</h2>
-          <p className={`mo-total${over ? ' is-over' : ''}`}>{chf(total)}</p>
+          <p className={`mo-total${over ? ' is-over' : ''}`}>{fmt(total)}</p>
           <p className="card-meta">{count}</p>
-          <p className="card-meta">An estimate: a price we don't know counts as CHF 25. The bookshop's quote is the real one.</p>
+          <p className="card-meta">An estimate: a price we don't know counts as {unknownPrice == null ? 'the household’s unknown price' : fmt(unknownPrice)}. The bookshop's quote is the real one.</p>
         </div>
         <div className="mo-budget-range">
           <span className="card-meta">{override ? 'This month only' : 'Monthly budget'}</span>
-          <b>{chf(draft.min)} – {chf(draft.max)}</b>
+          <b>{fmt(draft.min)} – {fmt(draft.max)}</b>
         </div>
       </div>
       <div className="mo-track" ref={track}>
@@ -147,10 +149,10 @@ function BudgetBar({ budget, total, override, admin, count, onApply }: { budget:
         {admin && thumb('min', 'Budget, lowest total')}
         {admin && thumb('max', 'Budget, highest total')}
       </div>
-      <div className="mo-scale" aria-hidden="true"><span>CHF 0</span><span>{chf(scale)}</span></div>
+      <div className="mo-scale" aria-hidden="true"><span>{fmt(0)}</span><span>{fmt(scale)}</span></div>
       <p className="footnote" id={`${id}-help`}>
-        {over ? `The order is ${chf(total - budget.max)} over the budget. ` : ''}
-        {admin ? 'Move either end of the bar (arrow keys move CHF 5, Page Up and Page Down CHF 50), then use it for this month. The kids’ picks are made again within it.' : 'An admin changes the budget.'}
+        {over ? `The order is ${fmt(total - budget.max)} over the budget. ` : ''}
+        {admin ? `Move either end of the bar (arrow keys move ${fmt(STEP)}, Page Up and Page Down ${fmt(10 * STEP)}), then use it for this month. The kids’ picks are made again within it.` : 'An admin changes the budget.'}
       </p>
       {admin && (
         <div className="btn-row">
@@ -221,6 +223,7 @@ function MovePill({ move }: { move?: string }) {
 
 function PickList({ title, note, picks, canChange, kid, onRemove }: { title: string; note: string; picks: Pick[]; canChange: boolean; kid?: boolean; onRemove: (p: Pick) => void }) {
   const id = useId();
+  const fmt = useMoney().format;
   return (
     <section className="group-block" aria-labelledby={`${id}-h`}>
       <div className="group-head"><h2 id={`${id}-h`}>{title}</h2><span>{note}</span></div>
@@ -238,7 +241,7 @@ function PickList({ title, note, picks, canChange, kid, onRemove }: { title: str
                 </span>
                 <span className="row-trail mo-trail">
                   {kid ? (p.idea && <span className="pill">{p.idea}</span>) : <MovePill move={p.move} />}
-                  <span className="bl-price">{p.candidate!.price != null ? chf(p.candidate!.price) : 'Price unknown'}</span>
+                  <span className="bl-price">{p.candidate!.price != null ? fmt(p.candidate!.price) : 'Price unknown'}</span>
                   {canChange && <button type="button" className="btn btn-sm" aria-label={`Remove ${b.title} from this month`} onClick={() => onRemove(p)}>Remove</button>}
                 </span>
               </li>
@@ -254,6 +257,7 @@ function PickList({ title, note, picks, canChange, kid, onRemove }: { title: str
 
 function ComposeCard({ total, order, empty, onCompose, go }: { total: number; order: Order | null; empty: boolean; onCompose: () => void; go: (to: string) => void }) {
   const id = useId();
+  const fmt = useMoney().format;
   const [copied, setCopied] = useState('');
   const copy = async () => {
     try { await navigator.clipboard.writeText(order!.composeText ?? ''); setCopied('Copied.'); } catch { setCopied('Select the text and copy it.'); }
@@ -262,7 +266,7 @@ function ComposeCard({ total, order, empty, onCompose, go }: { total: number; or
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <div>
         <h2 className="card-title" id={`${id}-h`}>Order from the bookshop</h2>
-        <p className="footnote">Compose writes the order to the bookshop, about {chf(total)}, and asks for prices and delivery times first. Your mail app sends it, not Philobiblos, and it never holds a card number. <a href="/settings" onClick={(e) => { e.preventDefault(); go('/settings'); }}>Where orders go</a></p>
+        <p className="footnote">Compose writes the order to the bookshop, about {fmt(total)}, and asks for prices and delivery times first. Your mail app sends it, not Philobiblos, and it never holds a card number. <a href="/settings" onClick={(e) => { e.preventDefault(); go('/settings'); }}>Where orders go</a></p>
       </div>
       {!order ? (
         <div className="btn-row"><button type="button" className="btn btn-primary" disabled={empty} onClick={onCompose}>Compose the order</button></div>

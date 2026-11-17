@@ -4,9 +4,10 @@
 import { eq, inArray } from 'drizzle-orm';
 import { parseQuery, type ParsedQuery, type Term } from '@philobiblos/contracts';
 import type { components } from '@philobiblos/contracts/openapi';
-import { scoreAdult, scoreKid, type Layer, type ScorePart } from '@philobiblos/scoring';
+import { DEFAULT_ADULT_WEIGHTS, DEFAULT_KID_SETTINGS, DEFAULT_KID_WEIGHTS, scoreAdult, scoreKid, type Layer, type ScorePart } from '@philobiblos/scoring';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
+import { getMoney } from '../household/money';
 import { household, view } from '../household/people';
 import { visibleReason } from '../knowledge/knowledge';
 import { COUNTED, countedTags, fromAi } from '../knowledge/tags';
@@ -45,6 +46,10 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
   const bookIds = [...new Set(cands.map((c) => c.bookId))];
   if (!bookIds.length) return [];
   const books = new Map(db.select().from(t.book).where(inArray(t.book.id, bookIds)).all().map((b) => [b.id, b]));
+  // A price nobody knows is scored at the household's unknown price (Settings, household/money.ts), as the plan counts it.
+  const unknown = getMoney(db).unknownPrice / 100;
+  const adultWeights = { ...DEFAULT_ADULT_WEIGHTS, priceUnknown: unknown };
+  const kidWeights = { ...DEFAULT_KID_WEIGHTS, priceUnknown: unknown };
   const offers = new Map<string, number>();
   for (const o of db.select().from(t.bookOffer).where(inArray(t.bookOffer.bookId, bookIds)).all()) {
     if (o.priceC != null && (!offers.has(o.bookId) || o.priceC < offers.get(o.bookId)!)) offers.set(o.bookId, o.priceC);
@@ -109,7 +114,7 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
         authorOnShelf: Boolean(author) && ownedAuthors.has(author),
         lovedAuthor: Boolean(author) && [...read].some(([id, r]) => id !== b.id && r.feedback === 'loved' && firstAuthor(id) === author),
         toBuy: c.origin === 'to_buy', fromShare: c.origin === 'share', waitingDays, priceC,
-      });
+      }, DEFAULT_KID_SETTINGS, kidWeights);
       score = Math.round(k.score * 10) / 10;
       parts = k.parts;
     } else {
@@ -129,7 +134,7 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
         untouchedMonths: months(c.touchedAt), priceC,
         ideasDense: [...touched].every((id) => readIn(id).length >= 2),
         isFiction: b.isFiction === 1,
-      });
+      }, adultWeights);
       if (!a.excluded) { score = Math.round(a.score! * 10) / 10; move = a.move ?? undefined; }
       parts = a.parts;
     }

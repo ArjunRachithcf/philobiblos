@@ -30,7 +30,7 @@ export function norm(s: string): string {
     .normalize('NFKD').replace(/[^a-z0-9]/g, '');
 }
 
-/** "Fr.25.90" → 2590 centimes. */
+/** "<symbol>25.90" → 2590 hundredths (the seed's amounts are in the household's currency). */
 export function parsePriceC(p: string | undefined): number | null {
   const m = /(\d+)(?:[.,](\d{1,2}))?/.exec(p ?? '');
   if (!m) return null;

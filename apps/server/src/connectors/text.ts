@@ -54,10 +54,10 @@ export function subjectMatcher(template: string): (subject: string) => string | 
   };
 }
 
-/** Money as the connector writes it: a symbol before the amount (`CHF 19.90`, `Fr. 16.90`) or after it (`19.90 CHF`). */
+/** Money as the connector writes it: a symbol before the amount (`<symbol> 19.90`) or after it (`19.90 <symbol>`). */
 export interface Money { before: string[]; after: string[] }
 
-/** Centimes (up to 9999.99) of the first amount in a line, or null. */
+/** Hundredths (up to 9999.99) of the first amount in a line, or null. */
 export function amountFinder(m: Money): (s: string) => number | null {
   const re = new RegExp(`${alternation(m.before)}\\s?(\\d{1,4})[.,](\\d{2})(?!\\d)|(?<![\\d.,])(\\d{1,4})[.,](\\d{2})\\s?${alternation(m.after)}${NOT_WORD_AFTER}`, 'iu');
   return (s) => {

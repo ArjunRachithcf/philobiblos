@@ -583,7 +583,9 @@ describe('through the app', () => {
   });
 
   it('PHILOBIBLOS_TZ is only the zone the household starts with: once its settings exist, it is never read again', async () => {
+    // household() made the settings row (the example shop's currency); a first start makes it, so it starts without.
     const db = household();
+    db.delete(t.householdSettings).run();
     const start = (tz: string) => buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off', PHILOBIBLOS_TZ: tz }), db, { jobs: { schedule: { start: false } } });
     await start('Asia/Tokyo');
     expect(cycleView(db, 'monthly').timezone).toBe('Asia/Tokyo');
@@ -592,6 +594,7 @@ describe('through the app', () => {
     expect(() => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_TZ: 'Mars/Olympus' })).toThrow(/PHILOBIBLOS_TZ/);
     // The row itself is never made with a zone this server does not know, whoever makes it.
     const fresh = household();
+    fresh.delete(t.householdSettings).run();
     expect(() => initHousehold(fresh, 'Mars/Olympus')).toThrow(/PHILOBIBLOS_TZ/);
     expect(fresh.select().from(t.householdSettings).all()).toEqual([]);
   });

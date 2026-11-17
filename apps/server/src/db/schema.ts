@@ -65,9 +65,16 @@ export const householdSettings = sqliteTable('household_settings', {
   aiLeavesAccepted: text('ai_leaves_accepted'),
   // The household's AI allowance with Claude: tokens (input and output) in any 24 hours, across every run (ai/run.ts).
   aiDailyTokens: integer('ai_daily_tokens').notNull().default(200000),
+  // The household's currency (ISO 4217; household/money.ts): every amount is in hundredths of it. Null until it is chosen
+  // (PHILOBIBLOS_CURRENCY at the first start, or an admin in Settings); a connector counts only in it.
+  currency: text('currency'),
+  // What a price nobody knows counts as in the month and the scores, in hundredths of the currency (ADR 0008).
+  unknownPriceC: integer('unknown_price_c').notNull().default(2500),
 }, (t) => [
   check('household_settings_one', sql`${t.id} = 1`),
   check('household_settings_ai_provider', sql`${t.aiProvider} IN ('claude','ollama','none')`),
+  check('household_settings_currency', sql`${t.currency} IS NULL OR (length(${t.currency}) = 3 AND ${t.currency} GLOB '[A-Z][A-Z][A-Z]')`),
+  check('household_settings_unknown_price', sql`${t.unknownPriceC} BETWEEN 0 AND 1000000`),
 ]);
 
 export const monthOverride = sqliteTable('month_override', {

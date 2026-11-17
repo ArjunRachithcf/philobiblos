@@ -16,13 +16,20 @@ and the household's own (`PHILOBIBLOS_CONNECTORS_DIR`, a read-only folder). For 
 - the one host its price lookup asks, with a book's title and first author;
 - the address Compose writes to, unless *Where orders go* names another.
 
-A connector counts for nothing until an **admin enables** it there, with a sign-in of the last few minutes. Under
-HomersLab, where Philobiblos has no sign-in of its own, enabling is refused until HomersLab tells Philobiblos that the
-person signed in recently (ArjunRachithcf/homeward#253; ADR 0011): until then, connectors are enabled in standalone mode
-only. Only then
+A connector counts for nothing until an **admin enables** it there, with a sign-in of the last few minutes. Only then
 does its mail count, its price host join the egress allowlist, and Compose know its address. The enabling holds for
 that version of the file (its SHA-256): when the file changes, the connector allows nothing until an admin enables it
 again. Two enabled connectors never share a mail domain. Turning one off takes effect at once.
+
+Under HomersLab, where Philobiblos has no sign-in of its own, enabling is refused until HomersLab tells Philobiblos that
+the person signed in recently (ArjunRachithcf/homeward#253; ADR 0011): until then, connectors are enabled in standalone
+mode only, and Settings says so next to the Enable button, which stays off.
+
+A connector counts only in the **household's currency** (Settings → Currency): its amounts are read as the household's,
+so one whose `locale.currency` is another cannot be enabled, and nothing is converted. Choose the currency first (or set
+`PHILOBIBLOS_CURRENCY` before the first start); while a connector is enabled, the household's currency cannot change to
+another, and a change turns every connector off (enable yours again, in the new currency). Here too Settings says why,
+next to the Enable button.
 
 The files are **read once, at start**. A file edited while Philobiblos runs shows as changed only after a restart, and
 then counts for nothing until an admin enables it again; a new folder appears after a restart too.
@@ -50,6 +57,11 @@ mail whose DKIM signature broke shows as "not verified", until you:
 
 Mail already read stays as it was; the next mail run reads new mail with the connector's words.
 
+The household's currency is the one its amounts were in before M4: the upgrade writes it into its settings, and
+Settings → Currency shows it with the unknown price (25 of it, as before). Your connector's `locale.currency` must be
+that one; if it is another, choose that currency in Settings first, then enable the connector (a currency change turns
+every connector off, so one enabled in slice 1 of M4 is enabled again).
+
 ## Adding a bookshop
 
 A new shop is a folder `connectors/<id>/` with:
@@ -73,7 +85,7 @@ may not be one that ships.
 schema: 1
 id: quillmere                 # its folder's name
 name: Quillmere Books
-locale: { currency: CHF, language: de }
+locale: { currency: CHF, language: de }     # ISO 4217: it counts only while this is the household's currency
 money: { before: [CHF, Fr.], after: [CHF] }    # how amounts are written: "CHF 19.90", "19.90 CHF"
 mail:
   domains: [quillmere.example]                 # From (and Sender) domains, exact
@@ -115,6 +127,8 @@ A connector is **data only**, and it cannot loosen a rule of the core:
 - **Plain YAML.** No aliases, anchors, tags, merge keys or duplicate keys; at most 64 KB; a plain file in a plain
   folder (a symbolic link is refused); UTF-8. No control or format characters in its words (a right-to-left override
   would show a name reversed in Settings; a zero-width space would make a phrase that never matches).
+- **A known currency.** `locale.currency` is an ISO 4217 code the server knows, and the connector counts only while it is
+  the household's currency.
 - **Aligned signers.** A signing domain in `dkim_domains` shares its organizational domain with one of `domains`.
 - **Bounded.** At most 32 words in a list, 60 characters a word, 8 domains, 16 subjects.
 

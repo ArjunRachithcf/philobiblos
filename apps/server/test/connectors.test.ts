@@ -20,6 +20,8 @@ import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
 import { CFG, CONNECTORS, HOUSEHOLD, SEALERS, evil, fakeBox, message, resolver, sealed, signed } from './mailkit';
 import { verifyBookshopMail } from '../src/mail/verify';
 
+/** The household's currency in these tests: the example shop's (a connector counts only in it). */
+const QUILLMERE_CURRENCY = CONNECTORS.get('quillmere')!.connector!.locale.currency;
 const EXAMPLE = readFileSync(new URL('../../../connectors/quillmere/connector.yaml', import.meta.url), 'utf8');
 const read = (text: string, folder = 'quillmere') => readConnector(Buffer.from(text), folder);
 const problemOf = (text: string, folder?: string) => { const r = read(text, folder); return 'problem' in r ? r.problem : null; };
@@ -165,6 +167,7 @@ describe('a connector counts only once an admin enabled it, for the file they re
   it('nothing is enabled at first; enabling needs the version Settings showed; turning off is always possible', () => {
     const db = openDb(':memory:');
     db.insert(t.person).values({ id: 'p_admin', name: 'Admin', role: 'admin', handle: 'admin' }).run();
+    db.insert(t.householdSettings).values({ id: 1, currency: QUILLMERE_CURRENCY }).run();
     expect(enabledConnectors(db, CONNECTORS)).toEqual([]);
     expect(() => setConnector(db, CONNECTORS, 'quillmere', { enabled: true }, 'p_admin')).toThrow(/changed since/);
     expect(() => setConnector(db, CONNECTORS, 'quillmere', { enabled: true, acceptVersion: '0'.repeat(64) }, 'p_admin')).toThrow(ConnectorError);
@@ -203,6 +206,7 @@ describe('a connector counts only once an admin enabled it, for the file they re
   it('the egress allowlist holds a shop\'s host only while it is enabled, checked at each request', async () => {
     const db = openDb(':memory:');
     db.insert(t.person).values({ id: 'p_admin', name: 'Admin', role: 'admin', handle: 'admin' }).run();
+    db.insert(t.householdSettings).values({ id: 1, currency: QUILLMERE_CURRENCY }).run();
     const asked: string[] = [];
     const e = createEgress({ rules: () => egressRules({ shopHosts: shopHosts(enabledConnectors(db, CONNECTORS)) }), resolve: async (h) => { asked.push(h); throw new Error('stop here'); } });
     await expect(e.get('https://www.quillmere.example/suche?sq=x', 'html')).rejects.toMatchObject({ reason: 'not-allowed' });
@@ -267,7 +271,7 @@ describe('Settings: GET /connectors and PUT /connectors/{id}', () => {
       { id: 'p_admin', name: 'Admin', role: 'admin', handle: 'admin' },
       { id: 'p_adult', name: 'Adult', role: 'adult', handle: 'adult' },
     ]).run();
-    built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY }), db, { connectors: CONNECTORS });
+    built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_CURRENCY: QUILLMERE_CURRENCY }), db, { connectors: CONNECTORS });
   });
   afterAll(() => built.app.close());
   const ask = (method: 'GET' | 'PUT', url: string, cookie: string, body?: unknown) => built.app.inject({ method, url, headers: { cookie, origin: ORIGIN, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { payload: JSON.stringify(body) } : {}) });
@@ -364,6 +368,7 @@ describe('Compose writes to the enabled bookshop unless an admin named another a
   it('the address set in Settings first; else the one enabled connector\'s; never a disabled one\'s, nor a guess between two', () => {
     const db = openDb(':memory:');
     db.insert(t.person).values({ id: 'p_admin', name: 'Admin', role: 'admin', handle: 'admin' }).run();
+    db.insert(t.householdSettings).values({ id: 1, currency: QUILLMERE_CURRENCY }).run();
     expect(orderAddress(null, enabledConnectors(db, CONNECTORS))).toBeNull();
     expect(orderAddress('orders@bookshop.example', enabledConnectors(db, CONNECTORS))).toBe('orders@bookshop.example');
     setConnector(db, CONNECTORS, 'quillmere', { enabled: true, acceptVersion: CONNECTORS.get('quillmere')!.version }, 'p_admin');

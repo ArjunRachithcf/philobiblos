@@ -1,5 +1,5 @@
 -- Philobiblos database schema v8 (SQLite). Source of truth: the migrations must build exactly this (apps/server/test).
--- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in centimes (integer CHF*100).
+-- Conventions: ids are text (ULID), timestamps ISO-8601 UTC text, money in hundredths of the household's currency (household_settings.currency), as integers.
 
 PRAGMA foreign_keys = ON;
 
@@ -63,7 +63,9 @@ CREATE TABLE household_settings (
   timezone          TEXT NOT NULL DEFAULT 'Europe/Zurich',  -- the household's one zone; the row is made at the first start with PHILOBIBLOS_TZ, never read after
   ai_models_json    TEXT NOT NULL DEFAULT '{}',  -- the AI's models (Ollama's text and vision model, Claude's); the Claude key is sealed, never here
   ai_leaves_accepted TEXT,                      -- JSON: the lines of what leaves with Claude an admin accepted; Claude runs only while they cover it
-  ai_daily_tokens   INTEGER NOT NULL DEFAULT 200000 -- the household's Claude allowance: tokens in any 24 hours, every run together
+  ai_daily_tokens   INTEGER NOT NULL DEFAULT 200000, -- the household's Claude allowance: tokens in any 24 hours, every run together
+  currency          TEXT CHECK (currency IS NULL OR (length(currency) = 3 AND currency GLOB '[A-Z][A-Z][A-Z]')), -- ISO 4217, the household's one currency; null until chosen (PHILOBIBLOS_CURRENCY at the first start, or Settings)
+  unknown_price_c   INTEGER NOT NULL DEFAULT 2500 CHECK (unknown_price_c BETWEEN 0 AND 1000000) -- what a price nobody knows counts as (ADR 0008), in hundredths of the currency
 );
 
 CREATE TABLE month_override (             -- "just this month" budget changes

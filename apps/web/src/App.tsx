@@ -15,6 +15,7 @@ import { Inbox } from './pages/Inbox';
 import { Share } from './pages/Share';
 import { SignIn } from './pages/SignIn';
 import { Notice } from './ui';
+import { MoneyContext } from './money';
 
 const NAV = [['/month', 'This month'], ['/inbox', 'Inbox'], ['/brain', 'Brain'], ['/proposals', 'Proposals'], ['/backlog', 'Backlog'], ['/library', 'Library'], ['/settings', 'Settings']] as const;
 const NAV_KID = NAV.filter(([to]) => to !== '/brain' && to !== '/proposals' && to !== '/month' && to !== '/inbox');
@@ -73,16 +74,19 @@ export function App() {
         </div>
       </header>
       <main className="page" id="main">
+        {/* The household's currency for every amount on the screens (money.ts); Settings changes it, then /me is read again. */}
+        <MoneyContext.Provider value={{ currency: me?.money?.currency ?? null, unknownPrice: me?.money?.unknownPrice ?? null }}>
         {!me ? <p className="sr-only" role="status">Loading</p>
           : route === '/month' ? <ThisMonth me={me} go={go} />
           : route === '/brain' ? <Brain me={me} go={go} />
           : route === '/proposals' ? <Proposals />
           : route === '/library' ? <Library me={me} />
           : route === '/backlog' ? <Backlog me={me} />
-          : route === '/settings' ? <Settings me={me} />
+          : route === '/settings' ? <Settings me={me} reload={loadMe} />
           : route === '/inbox' ? <Inbox me={me} />
           : route === '/share' ? <Share go={go} />
           : <Household me={me} reload={loadMe} />}
+        </MoneyContext.Provider>
       </main>
     </>
   );

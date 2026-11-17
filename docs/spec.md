@@ -76,7 +76,8 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
   owned, unless "I own these" is ticked; unmatched rows go to the Inbox; their ideas are proposals with "accept all"),
   and optionally free sentences. Adults run it for kids, and write sentences only for kids under 13 (by birth year);
   for a kid of 13 or more they pick themes and add read books only.
-- **Settings**: budget and split; bookshops (the connectors, what each allows, enabled by an admin with a fresh
+- **Settings**: budget and split; the household's currency and unknown price (no currency is assumed; a bookshop
+  counts only in it); bookshops (the connectors, what each allows, enabled by an admin with a fresh
   sign-in); how your brain grows (mix, unread limit, counterpoints, takeaways); AI plugin
   (provider, jobs on/off, wildcards); score weights; kids' themes; sources; family (people, waiting people, join
   links and their rules, the home network); where Philobiblos runs; what leaves (Open Library,

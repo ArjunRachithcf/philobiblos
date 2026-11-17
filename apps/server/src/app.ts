@@ -26,6 +26,7 @@ import { AiJobs, type AiJobOptions } from './ai/jobs';
 import { pushRoutes } from './routes/push';
 import { pushClient } from './push/push';
 import { initHousehold } from './jobs/schedule';
+import { initCurrency } from './household/money';
 import { loadConnectors, type Registry } from './connectors/load';
 import { enabledConnectors } from './connectors/enabled';
 import { connectorRoutes } from './routes/connectors';
@@ -48,6 +49,8 @@ export interface AppOptions { connectors?: Registry; ai?: AiJobOptions; push?: E
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   // The household's settings row, with PHILOBIBLOS_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
   initHousehold(db, cfg.timezone);
+  // PHILOBIBLOS_CURRENCY for a household that has no currency yet (household/money.ts); never one it has.
+  initCurrency(db, cfg.currency);
   // The bookshop connectors, read once (connectors/load.ts); each counts only once an admin enables it.
   const connectors = opts.connectors ?? loadConnectors(cfg.connectorDirs);
   const app = Fastify({
@@ -92,10 +95,10 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     api.addHook('onRequest', authHook(cfg, db));
     await authRoutes(api, cfg, db, webauthn, challenges);
     await peopleRoutes(api, cfg, db);
-    await libraryRoutes(api, cfg, db);
+    await libraryRoutes(api, cfg, db, connectors);
     await backlogRoutes(api, cfg, db);
     await monthRoutes(api, cfg, db, connectors);
-    await connectorRoutes(api, db, connectors);
+    await connectorRoutes(api, cfg, db, connectors);
     await knowledgeRoutes(api, db);
     await stubRoutes(api, cfg);
     await inboxRoutes(api, cfg, db, shares);

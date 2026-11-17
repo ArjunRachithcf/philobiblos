@@ -6,6 +6,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { parseQuery, withQualifier, type QualifierKey } from '@philobiblos/contracts/backlog-query';
 import { api, message, type Candidate, type Me } from '../api';
 import { MenuButton, Notice, PageHead } from '../ui';
+import { useMoney } from '../money';
 
 interface Page { items: Candidate[]; counts: { open?: number; closed?: number }; facets: Record<string, { value?: string; count?: number }[]>; nextCursor: string | null; queryErrors: string[] }
 interface Saved { id?: string; name?: string; q?: string }
@@ -21,7 +22,6 @@ const FACETS: [string, string][] = [['for', 'For'], ['move', 'Move'], ['idea', '
 const SORTS: [string, string][] = [['score', 'Score'], ['links', 'Links'], ['price', 'Price'], ['added', 'Added'], ['title', 'Title']];
 type Group = 'none' | 'for' | 'move' | 'idea';
 const GROUPS: [Group, string][] = [['none', 'No groups'], ['for', 'Group: person'], ['move', 'Group: move'], ['idea', 'Group: idea or theme']];
-const chf = (c?: number) => (c == null ? null : `CHF ${(c / 100).toFixed(2)}`);
 
 export function Backlog({ me }: { me: Me }) {
   const [q, setQ] = useState(() => new URLSearchParams(location.search).get('q') ?? DEFAULT_Q);
@@ -154,6 +154,7 @@ export function Backlog({ me }: { me: Me }) {
 }
 
 function Row({ c, me, checked, onCheck, onAdd }: { c: Candidate; me: Me; checked: boolean; onCheck: (on: boolean) => void; onAdd: (k: QualifierKey, v: string) => void }) {
+  const money = useMoney().format;
   const [open, setOpen] = useState(false);
   const partsId = useId();
   const title = c.book?.title ?? '';
@@ -183,7 +184,7 @@ function Row({ c, me, checked, onCheck, onAdd }: { c: Candidate; me: Me; checked
         )}
       </span>
       <span className="row-trail bl-trail">
-        <span className="bl-price">{c.price != null ? chf(c.price) : 'Price unknown'}</span>
+        <span className="bl-price">{c.price != null ? money(c.price, 'always') : 'Price unknown'}</span>
         <button type="button" className="btn btn-sm bl-score" aria-expanded={open} aria-controls={partsId} onClick={() => setOpen(!open)}>
           {c.score != null ? <>Score {Math.round(c.score)}</> : 'Over the price limit'}<span className="sr-only">: show its parts for {title}</span>
         </button>

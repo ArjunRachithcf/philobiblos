@@ -38,8 +38,10 @@ export const CONNECTORS = loadConnectors({ builtin: fileURLToPath(new URL('../..
 export const QUILLMERE = CONNECTORS.get('quillmere')!.connector as Connector;
 export const RULES = mailRules(QUILLMERE);
 export const SHOPS = [{ id: 'quillmere', domains: QUILLMERE.mail!.domains, dkimDomains: QUILLMERE.mail!.domains }];
-/** The example bookshop enabled, as an admin enables it in Settings. */
+/** The example bookshop enabled, as an admin enables it in Settings (the household's currency is the shop's). */
 export function enableShop(db: Db, id = 'quillmere'): Db {
+  const currency = CONNECTORS.get(id)!.connector!.locale.currency;
+  db.insert(t.householdSettings).values({ id: 1, currency }).onConflictDoUpdate({ target: t.householdSettings.id, set: { currency } }).run();
   db.insert(t.connectorEnabled).values({ id, version: CONNECTORS.get(id)!.version, enabledAt: new Date().toISOString() }).onConflictDoNothing().run();
   return db;
 }
