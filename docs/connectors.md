@@ -110,7 +110,9 @@ prices:
 ```
 
 Every section but `schema`, `id`, `name`, `locale` and `money` is optional: a shop without a price lookup leaves out
-`prices`, one whose mail Philobiblos does not read leaves out `mail`. In `mail`, only `domains` is needed.
+`prices`, one whose mail Philobiblos does not read leaves out `mail`. In `mail`, only `domains` is needed; a connector
+with `quote`, `shop` or `invoice` layouts also needs `reply`, `summary` and `unavailable` (so the household's quoted
+request is never read).
 
 ### A shop read through its markup
 
@@ -128,18 +130,19 @@ prices:
 ```
 
 With `markup: true`, a verified mail of that connector that none of its own layouts recognises (no subject template,
-not from a quote sender) is read for one schema.org `Order` (its lines are kept, as a web order's) or one `Invoice` (a
-copy per unit, owned, as a PDF invoice makes). Settings shows that it counts. Each book is an offer's product: its name,
+not from a quote sender) is read for one schema.org `Order` (its lines are kept, as a web order's; an order whose
+`orderStatus` is not processing or payment due, such as a cancellation or a shipping update, is no new order) or one
+`Invoice` (a copy per unit, owned, as a PDF invoice makes; the Order it references, also by a local `@id`, is its own). Settings shows that it counts. Each book is an offer's product: its name,
 first author, ISBN or GTIN-13, quantity and price. Philobiblos **fails closed**: an amount in another currency than
 the connector's, or with none, a price that is not plain digits with a `.` for decimals, a book without a title or a
-price, an ISBN that is not 13 digits, more than one order in a mail, or an invoice without a number (an invoice
-number counts once), or whose stated total is not the sum of its lines, makes the mail an unknown layout that changes
+price, an ISBN that is not 13 digits, more than one order in a mail, or an invoice without a number Philobiblos can
+keep (each shop's invoice number counts once), or whose stated total is not the sum of its lines, makes the mail an unknown layout that changes
 nothing. A product that is no book (no ISBN, not a `Book`) is a line that is no book. Only blocks under the schema.org
 context count; nothing in them is followed, run or stored.
 
 `prices.kind: jsonld` asks the search URL as `search_tiles` does and reads only its Product markup: the Book or
-Product whose name is the title and whose author's surname is the first author's, its offers in the connector's
-currency, the cheapest. Its availability is one of schema.org's values, shown in a few fixed words.
+Product whose name is the title and whose author holds the first author's surname, never an e-book or an audiobook,
+its offers in the connector's currency, the cheapest. Its availability is one of schema.org's values, shown in a few fixed words.
 
 ### What a connector cannot do
 

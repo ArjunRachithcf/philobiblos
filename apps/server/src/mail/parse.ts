@@ -28,7 +28,7 @@ interface NotBook { notBook?: true }
 export interface QuoteLine extends NotBook { title: string | null; author: string | null; ean: string | null; priceC: number | null; delivery: string | null; available: boolean }
 export interface ShopLine extends NotBook { title: string | null; author: string | null; ean: string | null; qty: number; priceC: number }
 /** `eanUnreadable`: an invoice row read whole but for its EAN (spaced, cut, not 13 digits): never matched, to the Inbox. */
-export interface InvoiceLine extends NotBook { title: string | null; ean: string | null; qty: number; priceC: number; discountPct: number | null; totalC: number; vatPct: number | null; eanUnreadable?: true }
+export interface InvoiceLine extends NotBook { title: string | null; author?: string | null; ean: string | null; qty: number; priceC: number; discountPct: number | null; totalC: number; vatPct: number | null; eanUnreadable?: true }
 const ISBN = /^97[89]\d{10}$/;
 const notBook = (ean: string | null | undefined): NotBook => (ean && !ISBN.test(ean) ? { notBook: true } : {});
 
@@ -339,14 +339,22 @@ export function parseMarkup(blocks: string[], address: string[], r: MailRules): 
   if (!r.markup || !blocks.length) return null;
   const currency = r.markup.currency;
   const nodes = schemaNodes(blocks);
-  const orders = nodes.filter((n) => isType(n, 'Order'));
+  // A node another one names by its @id (`{"@id": "#order"}`, the same mail's markup only: nothing is looked up).
+  const byId = new Map(nodes.flatMap((n) => (typeof n['@id'] === 'string' ? [[n['@id'], n] as const] : [])));
+  const resolve = (v: unknown): LdNode | null => { const n = node(v); return n && typeof n['@id'] === 'string' && !('@type' in n) ? byId.get(n['@id']) ?? null : n; };
   const invoices = nodes.filter((n) => isType(n, 'Invoice'));
+  // An Order an Invoice references is that invoice's, not a second document.
+  const referenced = new Set(invoices.map((i) => resolve(i.referencesOrder)).filter(Boolean));
+  // An order's own mail: none, processing or payment due. A cancellation, a return or a shipping update is no order.
+  const placed = (o: LdNode) => o.orderStatus === undefined || ['OrderProcessing', 'OrderPaymentDue'].includes(String(o.orderStatus).replace(/^(?:schema:|https?:\/\/schema\.org\/)/, ''));
+  const allOrders = nodes.filter((n) => isType(n, 'Order') && !referenced.has(n));
+  const orders = allOrders.filter(placed);
   if (!orders.length && !invoices.length) return null;
   const isInvoice = invoices.length > 0;
   const P = isInvoice ? PARSERS.markupInvoice : PARSERS.markupOrder;
   const expected = isInvoice ? 'invoice' : 'online_order';
   const no = (reason: string) => refuse(expected, P, reason);
-  if (orders.length + invoices.length > 1) return no('more than one order or invoice in one mail');
+  if (allOrders.length + invoices.length > 1) return no('more than one order or invoice in one mail');
   const inCurrency = (c: unknown) => (typeof c !== 'string' ? 'none' : c === currency ? 'ok' : 'other');
   /** An amount node's value: `price`/`priceCurrency` (an Offer, a PriceSpecification) or `value`/`currency` (a MonetaryAmount). */
   const amountOf = (n: LdNode | null): { c: number } | { problem: string } => {
@@ -361,9 +369,11 @@ export function parseMarkup(blocks: string[], address: string[], r: MailRules): 
     return c == null ? { problem: 'a price Philobiblos cannot read' } : { c };
   };
   const top = isInvoice ? invoices[0]! : orders[0]!;
-  const ord = isInvoice ? node(top.referencesOrder) ?? top : top;
-  // Each article: an Offer (its itemOffered), or an OrderItem (its orderedItem, its own price), or a product with offers.
-  const items = [...list(ord.acceptedOffer, LIMITS.books + 1), ...list(ord.orderedItem, LIMITS.books + 1)];
+  const ord = isInvoice ? resolve(top.referencesOrder) ?? top : top;
+  // Each article: its Offers (their itemOffered), or else its OrderItems (their orderedItem, their own price): an order
+  // that lists its books both ways names each book once, not twice.
+  const offers = list(ord.acceptedOffer, LIMITS.books + 1);
+  const items = offers.length ? offers : list(ord.orderedItem, LIMITS.books + 1);
   if (items.length > LIMITS.books) return no('too many books');
   if (!items.length) return no('no articles');
   type Line = { title: string | null; author: string | null; ean: string | null; qty: number; priceC: number; notBook?: true };
@@ -386,11 +396,14 @@ export function parseMarkup(blocks: string[], address: string[], r: MailRules): 
     const book = ean != null ? isbn : isType(product, 'Book');
     lines.push({ title: field(title, address), author: field(text(product.author), address, 120), ean: field(ean, address), qty: q as number, priceC: price.c, ...(book ? {} : { notBook: true as const }) });
   }
-  const numberOf = (v: unknown) => { const s = text(v); return s != null && MARKUP_NUMBER.test(s.trim()) ? s.trim() : null; };
-  if (!isInvoice) return { kind: 'online_order', parser: P, orderNumber: field(numberOf(top.orderNumber), address), lines };
+  // The number as it is kept (through safeField: one with a run of 12 digits is dropped there), so that an invoice whose
+  // number cannot be kept is refused rather than counted again when it comes twice.
+  const numberOf = (v: unknown) => { const s = text(v); return s != null && MARKUP_NUMBER.test(s.trim()) ? field(s.trim(), address) : null; };
+  if (!isInvoice) return { kind: 'online_order', parser: P, orderNumber: numberOf(top.orderNumber), lines };
   const number = numberOf(top.confirmationNumber) ?? numberOf(top.identifier);
   if (!number) return no('an invoice without a number Philobiblos can read');
-  const out: InvoiceLine[] = lines.map((l) => ({ title: l.title, ean: l.ean, qty: l.qty, priceC: l.priceC, discountPct: null, totalC: l.priceC * l.qty, vatPct: null, ...(l.notBook ? { notBook: true as const } : {}) }));
+  // The author stays on the line (it is no PDF row's field): a line without an ISBN matches a book by title and author.
+  const out: InvoiceLine[] = lines.map((l) => ({ title: l.title, author: l.author, ean: l.ean, qty: l.qty, priceC: l.priceC, discountPct: null, totalC: l.priceC * l.qty, vatPct: null, ...(l.notBook ? { notBook: true as const } : {}) }));
   const sum = out.reduce((n, l) => n + l.totalC, 0);
   let stated: number | null = null;
   if (top.totalPaymentDue !== undefined) {
@@ -399,5 +412,5 @@ export function parseMarkup(blocks: string[], address: string[], r: MailRules): 
     stated = t.c;
   }
   if (stated != null && stated !== sum) return no('the stated total is not the sum of the lines');
-  return { kind: 'invoice', parser: P, invoiceNumber: field(number, address), lines: out, totalC: stated ?? sum };
+  return { kind: 'invoice', parser: P, invoiceNumber: number, lines: out, totalC: stated ?? sum };
 }

@@ -147,8 +147,8 @@ const idOf = (p: LdNode): string | null => {
 
 /**
  * The offer for this book among a page's schema.org markup: Books and Products (on their own, in an ItemList's
- * ListItems, or in @graph) whose normalised name is the title and, when an author is known, whose author's surname is
- * the first author's; their offers (an Offer, a list of them, or an AggregateOffer's lowPrice) in this currency only;
+ * ListItems, or in @graph) whose normalised name is the title and, when an author is known, whose author holds the
+ * first author's surname, never an e-book or an audiobook (`bookFormat`); their offers (an Offer, a list of them, or an AggregateOffer's lowPrice) in this currency only;
  * the cheapest of those. A price it cannot read is no price. Nothing of the page but these fields is kept.
  */
 export function pickProduct(nodes: LdNode[], title: string, authors: string[], currency: string): Offer | null {
@@ -159,7 +159,10 @@ export function pickProduct(nodes: LdNode[], title: string, authors: string[], c
   let best: (Offer & { at: number }) | null = null;
   for (const p of products.slice(0, 100)) {
     if (norm(text(p.name) ?? '') !== want) continue;
-    if (surname && !list(p.author, 8).some((a) => norm(text(a) ?? '').endsWith(surname))) continue;
+    // The author as the tiles' lookup takes it: the surname anywhere in the name ("Okafor, Mira" too).
+    if (surname && !list(p.author, 8).some((a) => norm(text(a) ?? '').includes(surname))) continue;
+    // A printed book only, as the household orders: never an e-book's or an audiobook's price.
+    if (list(p.bookFormat, 4).some((f) => /(?:^|[/:])(?:EBook|AudiobookFormat)$/.test(String(f)))) continue;
     for (const o of list(p.offers, 20).map(node)) {
       if (!o || o.priceCurrency !== currency) continue;
       const priceC = hundredths(o[isType(o, 'AggregateOffer') ? 'lowPrice' : 'price']);

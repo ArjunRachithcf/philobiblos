@@ -17,7 +17,9 @@ export const MARKUP_LIMITS = {
 
 /** The text of each `<script type="application/ld+json">` block (in any case and quoting), in order, within the limits. */
 export function ldBlocks(html: string): string[] {
-  const lower = html.toLowerCase();
+  // ASCII letters only: a full lowercasing can change the length (U+0130 becomes two code units), and the offsets found
+  // here slice the original.
+  const lower = html.replace(/[A-Z]+/g, (s) => s.toLowerCase());
   const out: string[] = [];
   let i = 0;
   while (out.length < MARKUP_LIMITS.blocks) {

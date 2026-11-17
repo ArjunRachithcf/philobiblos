@@ -30,10 +30,15 @@
       }
     },
     "mail": {
-      "description": "Its mail: which senders count, and how their mail reads. Only `domains` is needed: a shop read through its markup alone needs no words of its own.",
+      "description": "Its mail: which senders count, and how their mail reads. Only `domains` is needed: a shop read through its markup alone needs no words of its own; one with quotes, web orders or invoices of its own layouts needs its reply markers, summary and unavailable words too (the household's quoted request is never read).",
       "type": "object",
       "additionalProperties": false,
       "required": ["domains"],
+      "dependentRequired": {
+        "quote": ["reply", "summary", "unavailable"],
+        "shop": ["reply", "summary", "unavailable"],
+        "invoice": ["reply", "summary", "unavailable"]
+      },
       "properties": {
         "domains": { "description": "The From (and Sender) domains, exact: no subdomain counts unless it is listed.", "$ref": "#/$defs/hosts" },
         "dkim_domains": { "description": "The signing domains whose DKIM counts, exact (default: domains).", "$ref": "#/$defs/hosts" },

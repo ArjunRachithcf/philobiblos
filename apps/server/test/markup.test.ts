@@ -34,6 +34,10 @@ const invoice = (offers: unknown[], more: Record<string, unknown> = {}) => ({ '@
 const parse = (html: string, address: string[] = []) => parseMarkup(ldBlocks(html), address, RULES);
 
 describe('the markup in a page: bounded and linear', () => {
+  it('a letter whose lowercase is longer (U+0130) before a block does not shift what is read', () => {
+    expect(ldBlocks(`<p>${'İ'.repeat(5)}stanbul</p>${ld({ a: 1 })}`)).toEqual(['{"a":1}']);
+  });
+
   it('only JSON-LD script blocks are read, whatever the case and quoting of their type', () => {
     const html = `<p>Hi</p><script>var a = 1</script><SCRIPT TYPE='application/ld+json'>{"a":1}</SCRIPT><script type=application/ld+json >{"b":2}</script><script type="text/json">{"c":3}</script>`;
     expect(ldBlocks(html)).toEqual(['{"a":1}', '{"b":2}']);
@@ -116,6 +120,20 @@ describe('Order markup', () => {
     expect((p as { reason: string }).reason).toMatch(reason);
   });
 
+  it('an order that lists its books both as offers and as items names each book once', () => {
+    const p = parse(ld(order([offer()], { orderedItem: [{ '@type': 'OrderItem', orderQuantity: 1, orderedItem: offer().itemOffered }] })));
+    expect(p).toMatchObject({ kind: 'online_order', lines: [{ title: 'The Long Tide of Markets' }] });
+    expect((p as { lines: unknown[] }).lines).toHaveLength(1);
+  });
+
+  it.each(['OrderCancelled', 'https://schema.org/OrderReturned', 'OrderInTransit', 'OrderDelivered'])('an order mail with status %s is no new order (it stays "other")', (status) => {
+    expect(parse(ld(order([offer()], { orderStatus: status })))).toBeNull();
+  });
+
+  it.each(['OrderProcessing', 'http://schema.org/OrderPaymentDue'])('an order mail with status %s is the order', (status) => {
+    expect(parse(ld(order([offer()], { orderStatus: status })))).toMatchObject({ kind: 'online_order' });
+  });
+
   it('two orders in one mail, or too many books: an unknown layout', () => {
     expect(parse(ld(order([offer()])) + ld(order([offer()])))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/more than one/) });
     expect(parse(ld(order(Array.from({ length: 101 }, () => offer()))))).toMatchObject({ kind: 'unknown_layout', reason: 'too many books' });
@@ -138,8 +156,8 @@ describe('Invoice markup', () => {
     expect(p).toEqual({
       kind: 'invoice', parser: PARSERS.markupInvoice, invoiceNumber: 'INV-88120', totalC: 2990,
       lines: [
-        { title: 'The Long Tide of Markets', ean: '9780000000002', qty: 1, priceC: 1990, discountPct: null, totalC: 1990, vatPct: null },
-        { title: 'A Map of Small Rivers', ean: '9780000000026', qty: 2, priceC: 500, discountPct: null, totalC: 1000, vatPct: null },
+        { title: 'The Long Tide of Markets', author: 'Mira Okafor', ean: '9780000000002', qty: 1, priceC: 1990, discountPct: null, totalC: 1990, vatPct: null },
+        { title: 'A Map of Small Rivers', author: 'Mira Okafor', ean: '9780000000026', qty: 2, priceC: 500, discountPct: null, totalC: 1000, vatPct: null },
       ],
     });
   });
@@ -153,6 +171,22 @@ describe('Invoice markup', () => {
     const p = parse(ld(invoice([offer()], more)));
     expect(p).toMatchObject({ kind: 'unknown_layout', parser: PARSERS.markupInvoice, expected: 'invoice' });
     expect((p as { reason: string }).reason).toMatch(reason);
+  });
+
+  it('a number the field filter would drop (a run of 12 digits) is no number: refused, never counted twice unseen', () => {
+    expect(parse(ld(invoice([offer()], { confirmationNumber: 'INV-123456789012' })))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/number/) });
+  });
+
+  it('an Invoice and the Order it references by @id, side by side in @graph, are one document', () => {
+    const o = { ...order([offer()]), '@context': undefined, '@id': '#order' };
+    const p = parse(ld({ '@context': CTX, '@graph': [{ ...invoice([]), '@context': undefined, referencesOrder: { '@id': '#order' } }, o] }));
+    expect(p).toMatchObject({ kind: 'invoice', invoiceNumber: 'INV-88120', lines: [{ title: 'The Long Tide of Markets' }] });
+    // An @id that names nothing in the mail is nothing (no lookup): no articles.
+    expect(parse(ld({ ...invoice([]), referencesOrder: { '@id': 'https://evil.example/order' } }))).toMatchObject({ kind: 'unknown_layout', reason: 'no articles' });
+  });
+
+  it('the author stays on an invoice\'s line: without an ISBN, a book is matched by title and author', () => {
+    expect(parse(ld(invoice([offer({ isbn: '' })])))).toMatchObject({ kind: 'invoice', lines: [{ author: 'Mira Okafor', ean: null }] });
   });
 
   it('its identifier stands for a confirmation number', () => {
@@ -173,6 +207,17 @@ describe('the connector says whether its markup counts', () => {
     const base = { schema: 1, id: 'x-shop', name: 'X', locale: { currency: 'EUR', language: 'en' }, money: { before: ['EUR'], after: ['EUR'] } };
     expect(checkConnectorShape({ ...base, mail: { domains: ['x.example'], markup: true } }).ok).toBe(true);
     expect(checkConnectorShape({ ...base, mail: { domains: ['x.example'], markup: 'yes' } }).ok).toBe(false);
+    // A connector with layouts of its own still says where the household's quoted request begins (never read).
+    const q = CONNECTORS.get('quillmere')!.connector!.mail!;
+    const words = { reply: q.reply, summary: q.summary, unavailable: q.unavailable };
+    for (const layout of ['quote', 'shop', 'invoice'] as const) {
+      const mail = { domains: ['quillmere.example'], [layout]: q[layout] };
+      expect(checkConnectorShape({ ...base, mail: { ...mail, ...words } }).ok, layout).toBe(true);
+      for (const k of ['reply', 'summary', 'unavailable'] as const) {
+        const { [k]: _gone, ...rest } = words;
+        expect(checkConnectorShape({ ...base, mail: { ...mail, ...rest } }).ok, `${layout} without ${k}`).toBe(false);
+      }
+    }
     expect(checkConnectorShape({ ...base, prices: { kind: 'jsonld', url: 'https://x.example/s?q={query}' } }).ok).toBe(true);
     expect(checkConnectorShape({ ...base, prices: { kind: 'jsonld', url: 'https://x.example/s?q={query}', follow_links: true } }).ok).toBe(false);
     expect(checkConnectorShape({ ...base, prices: { kind: 'jsonld', url: 'http://x.example/s?q={query}' } }).ok).toBe(false);
@@ -216,6 +261,15 @@ describe('through the mail job: only a verified mail of an enabled connector', (
     expect(kept(db, 'i1')).toMatchObject({ kind: 'invoice' });
     expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(2);
     expect(JSON.parse(kept(db, 'i2').parsedJson!)).toMatchObject({ duplicateOf: '<i1@quillmere.example>' });
+  });
+
+  it('another shop\'s invoice with the same number is no resend: each shop\'s numbers are its own', async () => {
+    const db = world();
+    // An invoice of the example shop, read earlier, numbered alike.
+    db.insert(t.mailSeen).values({ messageId: '<q-inv@quillmere.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: new Date().toISOString(), accepted: 1,
+      authJson: JSON.stringify({ accepted: true, connector: 'quillmere' }), parsedJson: JSON.stringify({ invoiceNumber: 'INV-88120', lines: [] }) }).run();
+    await run(db, [await mail('i3', ld(invoice([offer()])))]);
+    expect(db.select().from(t.copy).where(eq(t.copy.source, 'invoice')).all()).toHaveLength(1);
   });
 
   it('a mail not verified (signed by another key, or another sender) changes nothing, whatever its markup', async () => {
@@ -286,6 +340,12 @@ describe('the jsonld price lookup', () => {
     expect(pick('<p>no markup</p>')).toBeNull();
   });
 
+  it('an author written "Surname, Given" matches; an e-book or an audiobook is never the price of a printed book', () => {
+    expect(pick(page({ ...product(), author: 'Okafor, Mira' }))).toMatchObject({ priceC: 1850 });
+    expect(pick(page({ ...product({ sku: 'LK-E', price: '9.99' }), bookFormat: 'https://schema.org/EBook' }, { ...product({ sku: 'LK-A', price: '5.00' }), bookFormat: 'AudiobookFormat' }, { ...product({ sku: 'LK-H', price: '24.00' }), bookFormat: 'https://schema.org/Hardcover' })))
+      .toMatchObject({ externalId: 'LK-H', priceC: 2400 });
+  });
+
   it('a price it cannot read is no price; its id is kept only as a short plain token', () => {
     expect(pick(page(product({ price: '18,50' })))).toMatchObject({ priceC: null });
     expect(pick(page(product({ sku: 'https://evil.example/x?<script>' })))).toMatchObject({ externalId: null });
@@ -300,5 +360,18 @@ describe('the jsonld price lookup', () => {
     const src = markupPrices('larkspur', { locale: LARKSPUR.locale, prices: LARKSPUR.prices! }, egress);
     expect(await src.find({ title: 'The Long Tide of Markets', authors: ['Mira Okafor'] })).toMatchObject({ priceC: 1850 });
     expect(asked).toEqual(['https://shop.larkspur.example/search?q=The+Long+Tide+of+Markets+Mira+Okafor']);
+  });
+});
+
+describe('an invoice line from markup is matched with its author', () => {
+  it('a title shared with a book by someone else is not that book', async () => {
+    const db = openDb(':memory:');
+    db.insert(t.person).values({ id: 'p_alex', name: 'Alex', role: 'admin', handle: 'alex' }).run();
+    db.insert(t.book).values({ id: 'b_emma', title: 'Emma', authorsJson: '["Ines Varga"]', audience: 'adult', normKey: 'emma', createdAt: new Date().toISOString() }).run();
+    enableShop(db, 'larkspur');
+    const body = ld(invoice([offer({ name: 'Emma', author: 'Tomas Reed', isbn: '' })]));
+    const raw = await signed(message({ id: 'e1', from: 'Larkspur Books <orders@larkspur.example>', subject: 'Invoice', html: true, body }), 'larkspur.example');
+    await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 1, raw }]), resolver });
+    expect(db.select().from(t.copy).all()).toEqual([]);
   });
 });
