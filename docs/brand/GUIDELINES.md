@@ -12,7 +12,7 @@ The masters are in this folder (`docs/brand/`); the web icons are in `apps/web/p
 | Horizontal lockup | `horizontal.svg` (+ `-black`, `-white`, `-mono-1b6e66`) |
 | Stacked lockup | `stacked.svg` (+ `-black`, `-white`, `-mono-1b6e66`) |
 | Wordmark only | `wordmark.svg` |
-| Web | `apps/web/public/`: `favicon.svg` (teal, white in a dark browser), `favicon.ico`, `favicon-16/32/48.png`, `apple-touch-icon.png`, `icon-192/512.png`, `maskable-512.png`; the icons are listed in `manifest.webmanifest` and linked from `apps/web/index.html` |
+| Web | `apps/web/public/`: `favicon.svg` (teal, white in a dark browser), `favicon.ico` (16/32/48, white on a teal tile), `apple-touch-icon.png`, `icon-192/512.png`, `maskable-512.png`; the icons are listed in `manifest.webmanifest` and linked from `apps/web/index.html` |
 
 All masters are outlined paths: no live text, strokes, gradients or images.
 
@@ -23,10 +23,10 @@ All masters are outlined paths: no live text, strokes, gradients or images.
 | | HEX | RGB |
 |---|---|---|
 | Philobiblos teal (primary) | `#1B6E66` | 27 110 102 |
-| Ink (text, one-colour) | `#1A1A1A` | 26 26 26 |
+| Ink (text, one-colour) | `#000000` | 0 0 0 |
 | On dark backgrounds | `#FFFFFF` | 255 255 255 |
 
-Teal on white has a contrast of about 5.9:1 (AA for text). On dark or teal backgrounds, use the white version.
+Teal on white has a contrast of 6.05:1 (AA for text). On dark or teal backgrounds, use the white version.
 
 ## Type
 Wordmark: lowercase "philobiblos" in Adwaita Sans SemiBold (600), SIL Open Font License, outlined. The ascenders (h l b b l) echo spines on a shelf. Don't retype it; use the files. Adwaita Sans also works as the interface font.
