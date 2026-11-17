@@ -30,12 +30,14 @@
       }
     },
     "mail": {
+      "description": "Its mail: which senders count, and how their mail reads. Only `domains` is needed: a shop read through its markup alone needs no words of its own.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["domains", "reply", "summary", "unavailable"],
+      "required": ["domains"],
       "properties": {
         "domains": { "description": "The From (and Sender) domains, exact: no subdomain counts unless it is listed.", "$ref": "#/$defs/hosts" },
         "dkim_domains": { "description": "The signing domains whose DKIM counts, exact (default: domains).", "$ref": "#/$defs/hosts" },
+        "markup": { "description": "Whether schema.org Order and Invoice markup (JSON-LD) in its signed mail counts (default false): read for a mail none of its own layouts recognises.", "type": "boolean" },
         "reply": {
           "description": "Where the household's quoted request begins in a reply: nothing from there on is read.",
           "type": "object",
@@ -106,19 +108,30 @@
       "required": ["to"],
       "properties": { "to": { "description": "Where Compose addresses the order unless an admin set another address.", "$ref": "#/$defs/email" } }
     },
-    "prices": {
-      "description": "A read-only price lookup on the shop's search page, read as text.",
+    "prices": { "oneOf": [{ "$ref": "#/$defs/search_tiles" }, { "$ref": "#/$defs/jsonld_prices" }] }
+  },
+  "$defs": {
+    "price_url": {
+      "description": "https on the default port, an exact host, and {query} once, in the query string.",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?/[A-Za-z0-9/._~-]*\\?(?:[A-Za-z0-9._~-]+=[A-Za-z0-9._~-]*&)*[A-Za-z0-9._~-]+=\\{query\\}(?:&[A-Za-z0-9._~-]+=[A-Za-z0-9._~-]*)*$"
+    },
+    "jsonld_prices": {
+      "description": "A read-only price lookup on the shop's search page, read for schema.org Product markup (JSON-LD) only: the product whose title and author match, its offer in the connector's currency.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "url"],
+      "properties": { "kind": { "const": "jsonld" }, "url": { "$ref": "#/$defs/price_url" } }
+    },
+    "search_tiles": {
+      "description": "A read-only price lookup on the shop's search page, read as text: its result tiles.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "url", "article", "print_formats", "want_languages", "other_languages", "availability"],
       "properties": {
         "kind": { "const": "search_tiles" },
-        "url": {
-          "description": "https on the default port, an exact host, and {query} once, in the query string.",
-          "type": "string",
-          "maxLength": 200,
-          "pattern": "^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?/[A-Za-z0-9/._~-]*\\?(?:[A-Za-z0-9._~-]+=[A-Za-z0-9._~-]*&)*[A-Za-z0-9._~-]+=\\{query\\}(?:&[A-Za-z0-9._~-]+=[A-Za-z0-9._~-]*)*$"
-        },
+        "url": { "$ref": "#/$defs/price_url" },
         "article": {
           "type": "object",
           "additionalProperties": false,
@@ -143,9 +156,7 @@
           }
         }
       }
-    }
-  },
-  "$defs": {
+    },
     "text": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}<>]+$" },
     "phrase": { "type": "string", "minLength": 1, "maxLength": 60, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}*{}]+$" },
     "phrases": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/phrase" } },

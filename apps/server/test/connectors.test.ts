@@ -106,9 +106,9 @@ describe('a connector is data, read strictly', () => {
     writeFileSync(join(local, 'README.txt'), 'not a connector');
     const reg = loadConnectors({ builtin: new URL('../../../connectors', import.meta.url).pathname, local });
     const by = (id: string) => reg.get(id)!;
-    expect(reg.all.map((c) => [c.id, c.origin])).toEqual([['quillmere', 'builtin'], ['lindenhof', 'local'], ['linked', 'local'], ['quillmere', 'local']]);
+    expect(reg.all.map((c) => [c.id, c.origin])).toEqual([['larkspur', 'builtin'], ['quillmere', 'builtin'], ['lindenhof', 'local'], ['linked', 'local'], ['quillmere', 'local']]);
     expect(by('lindenhof').problem).toBeNull();
-    expect(reg.all[3]).toMatchObject({ problem: expect.stringMatching(/ships with Philobiblos/), connector: null });
+    expect(reg.all[4]).toMatchObject({ problem: expect.stringMatching(/ships with Philobiblos/), connector: null });
     expect(by('linked')).toMatchObject({ problem: expect.stringMatching(/link/), connector: null });
   });
 
@@ -281,9 +281,9 @@ describe('Settings: GET /connectors and PUT /connectors/{id}', () => {
     expect((await ask('GET', '/api/connectors', sessionCookie(db, 'p_adult'))).statusCode).toBe(403);
     const r = await ask('GET', '/api/connectors', sessionCookie(db, 'p_admin'));
     expect(r.statusCode).toBe(200);
-    expect(r.json().connectors).toEqual([{
+    expect(r.json().connectors.filter((c: { id: string }) => c.id === 'quillmere')).toEqual([{
       id: 'quillmere', name: 'Quillmere Books', origin: 'builtin', version, usable: true, enabled: false, changed: false, currency: 'CHF', language: 'de',
-      allows: { mailFrom: ['quillmere.example'], signedBy: ['quillmere.example'], quoteSenders: ['english-orders@quillmere.example'], priceHost: 'www.quillmere.example', orderTo: 'english-orders@quillmere.example' },
+      allows: { mailFrom: ['quillmere.example'], signedBy: ['quillmere.example'], quoteSenders: ['english-orders@quillmere.example'], priceHost: 'www.quillmere.example', orderTo: 'english-orders@quillmere.example', markup: false },
     }]);
   });
 

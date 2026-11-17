@@ -182,7 +182,7 @@ describe('a connector counts only in the household\'s currency', () => {
   it('through PUT /connectors/{id}: 409, and Settings says why before anyone tries', async () => {
     const db = admins();
     const a = await client(db, { PHILOBIBLOS_CURRENCY: 'EUR' });
-    const listed = (await a.get('p_admin', '/api/connectors')).json().connectors[0];
+    const listed = (await a.get('p_admin', '/api/connectors')).json().connectors.find((c: { id: string }) => c.id === 'quillmere');
     expect(listed).toMatchObject({ id: 'quillmere', currency: 'CHF', enabled: false });
     expect(listed.enableBlocked).toMatch(/CHF/);
     const r = await a.put('p_admin', 'quillmere', { enabled: true, acceptVersion: VERSION });
@@ -234,7 +234,7 @@ describe('a connector counts only in the household\'s currency', () => {
     expect((await a.patch('p_alex', { money: { currency: 'CHF' } })).statusCode).toBe(200);
     expect(db.select().from(t.connectorEnabled).all()).toEqual([]);
     expect(enabledConnectors(db, CONNECTORS)).toEqual([]);
-    expect((await a.get('p_alex', '/api/connectors')).json().connectors[0]).toMatchObject({ enabled: false, changed: false });
+    expect((await a.get('p_alex', '/api/connectors')).json().connectors.find((c: { id: string }) => c.id === 'quillmere')).toMatchObject({ enabled: false, changed: false });
     await a.built.app.close();
   });
 
@@ -252,14 +252,14 @@ describe('Settings says when an admin cannot enable a connector now (philobiblos
     db.insert(t.person).values({ id: 'p_admin', externalId: 'hl-admin', name: 'Admin', role: 'admin', handle: 'admin' }).run();
     const built = await buildApp(loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '127.0.0.1', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_CURRENCY: 'CHF' }), db, { connectors: CONNECTORS, jobs: { schedule: { start: false } } });
     const h = { 'x-homerslab-person': 'hl-admin', 'x-homerslab-name': 'Admin', 'x-homerslab-role': 'admin' };
-    const c = (await built.app.inject({ url: '/api/connectors', headers: h })).json().connectors[0];
+    const c = (await built.app.inject({ url: '/api/connectors', headers: h })).json().connectors.find((c: { id: string }) => c.id === 'quillmere');
     expect(c.enableBlocked).toMatch(/HomersLab/);
     await built.app.close();
   });
 
   it('standalone, in the household\'s currency: nothing stands in the way', async () => {
     const a = await client(admins(), { PHILOBIBLOS_CURRENCY: 'CHF' });
-    const c = (await a.get('p_admin', '/api/connectors')).json().connectors[0];
+    const c = (await a.get('p_admin', '/api/connectors')).json().connectors.find((c: { id: string }) => c.id === 'quillmere');
     expect(c).not.toHaveProperty('enableBlocked');
     expect((await a.put('p_admin', 'quillmere', { enabled: true, acceptVersion: VERSION })).statusCode).toBe(200);
     await a.built.app.close();

@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { requireAdmin } from '../auth/hook';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { searchTiles, type PriceSource } from '../books/prices';
+import { markupPrices, searchTiles, type PriceSource } from '../books/prices';
 import { enabledConnectors } from '../connectors/enabled';
 import type { Registry } from '../connectors/load';
 import { refreshCovers, refreshMetadata, refreshPrices, type JobEnv, type Outcome } from '../jobs/books';
@@ -31,7 +31,12 @@ export async function jobRoutes(app: FastifyInstance, cfg: Config, db: Db, deps:
   closeInterrupted(db);
   // The price lookups of the enabled bookshops, as they are when the job starts (tests may give their own source).
   const priceRuns = async (env: JobEnv): Promise<Outcome> => {
-    const sources = deps.prices ? [deps.prices] : enabledConnectors(db, deps.connectors).flatMap((e) => (e.connector.prices ? [searchTiles(e.id, { money: e.connector.money, prices: e.connector.prices }, deps.egress)] : []));
+    // Each enabled connector's lookup, of its kind: its search page's tiles, or its search page's Product markup.
+    const sources = deps.prices ? [deps.prices] : enabledConnectors(db, deps.connectors).flatMap((e) => {
+      const p = e.connector.prices;
+      if (!p) return [];
+      return [p.kind === 'search_tiles' ? searchTiles(e.id, { money: e.connector.money, prices: p }, deps.egress) : markupPrices(e.id, { locale: e.connector.locale, prices: p }, deps.egress)];
+    });
     if (!sources.length) return { status: 'blocked', detail: 'no enabled bookshop has a price lookup: prices stay as they are' };
     const outs: Outcome[] = [];
     for (const s of sources) outs.push(await refreshPrices(db, s, env));

@@ -58,8 +58,10 @@ export function soundness(c: Connector, folder: string): string | null {
     }
   }
   if (c.prices) {
-    const [lo, hi] = c.prices.article.id_digits;
-    if (lo > hi) return 'its article id has fewer digits at most than at least';
+    if (c.prices.kind === 'search_tiles') {
+      const [lo, hi] = c.prices.article.id_digits;
+      if (lo > hi) return 'its article id has fewer digits at most than at least';
+    }
     let u: URL;
     try { u = new URL(c.prices.url.replace('{query}', 'q')); } catch { return 'its price URL does not read'; }
     // The schema's pattern already holds this; checked again on the parsed URL, which is what the client will see.

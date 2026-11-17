@@ -14,9 +14,11 @@ export interface Connector {
   mail?: {
     domains: string[];
     dkim_domains?: string[];
-    reply: { separators: Phrases; header_labels: Phrases; attribution_starts: Phrases; attribution_verbs: Phrases };
-    summary: string[];
-    unavailable: Phrases;
+    /** schema.org Order and Invoice markup in its signed mail counts (philobiblos#27). */
+    markup?: boolean;
+    reply?: { separators: Phrases; header_labels: Phrases; attribution_starts: Phrases; attribution_verbs: Phrases };
+    summary?: string[];
+    unavailable?: Phrases;
     quote?: {
       senders: string[];
       labels: { author: Phrases; title: Phrases; isbn: Phrases; price: Phrases; delivery: Phrases };
@@ -27,15 +29,18 @@ export interface Connector {
     invoice?: { subjects: string[]; unit: string; total_words: string[]; postage_words: string[] };
   };
   order?: { to: string };
-  prices?: {
-    kind: 'search_tiles';
-    url: string;
-    article: { path: string; id_prefix: string; id_digits: [number, number] };
-    print_formats: Phrases;
-    want_languages: Phrases;
-    other_languages: Phrases;
-    availability: { phrases: Phrases; joiners: Phrases; units: Phrases };
-  };
+  prices?: SearchTiles | { kind: 'jsonld'; url: string };
+}
+
+/** A price lookup on the shop's search page, read as text: its result tiles. */
+export interface SearchTiles {
+  kind: 'search_tiles';
+  url: string;
+  article: { path: string; id_prefix: string; id_digits: [number, number] };
+  print_formats: Phrases;
+  want_languages: Phrases;
+  other_languages: Phrases;
+  availability: { phrases: Phrases; joiners: Phrases; units: Phrases };
 }
 
 // strict: the schema itself must be one Ajv reads without guessing (an unknown keyword is an error, not ignored).

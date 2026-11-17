@@ -1,0 +1,25 @@
+# An invented invoice mail of Larkspur Books, with schema.org Invoice markup (JSON-LD): names, titles and numbers are made up.
+from: Larkspur Books <orders@larkspur.example>
+subject: Your Larkspur invoice
+html: |
+  <html><body>
+  <p>Your invoice is below.</p>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "Invoice", "confirmationNumber": "INV-88120",
+   "totalPaymentDue": {"@type": "MonetaryAmount", "value": "41.90", "currency": "EUR"},
+   "referencesOrder": {"@type": "Order", "orderNumber": "LK-20417", "acceptedOffer": [
+     {"@type": "Offer", "price": "19.90", "priceCurrency": "EUR",
+      "itemOffered": {"@type": "Book", "name": "The Long Tide of Markets", "author": "Mira Okafor", "isbn": "9780000000002"}},
+     {"@type": "Offer", "price": "11.00", "priceCurrency": "EUR", "eligibleQuantity": {"@type": "QuantitativeValue", "value": 2},
+      "itemOffered": {"@type": "Book", "name": "The Quiet Hedgehog", "isbn": "9780000000019"}}
+   ]}}
+  </script>
+  </body></html>
+expect:
+  kind: invoice
+  parser: markup-invoice-1
+  invoiceNumber: INV-88120
+  totalC: 4190
+  lines:
+    - { title: The Long Tide of Markets, ean: '9780000000002', qty: 1, priceC: 1990, totalC: 1990 }
+    - { title: The Quiet Hedgehog, ean: '9780000000019', qty: 2, priceC: 1100, totalC: 2200 }

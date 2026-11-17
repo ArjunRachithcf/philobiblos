@@ -13,6 +13,7 @@ import PostalMime from 'postal-mime';
 import { textOf } from '../books/prices';
 import type { TxtResolver } from '../net/dns';
 import { headerBlock, verifyBookshopMail, type MailAuth, type ShopMail } from './verify';
+import { ldBlocks } from '../schemaorg/jsonld';
 
 export const MAIL_LIMITS = {
   /** A whole message, bytes. */
@@ -95,6 +96,8 @@ export interface MailRead {
   threadRef: string | null;
   /** The Subject as signed, unfiltered: only to tell the kind of mail (a 12-digit order number would drop the kept one). */
   signedSubject: string | null;
+  /** The HTML's schema.org markup blocks (JSON-LD, schemaorg/jsonld.ts ldBlocks), as text, bounded: parsed only for a connector whose markup counts. */
+  markup: string[];
 }
 
 /**
@@ -146,6 +149,7 @@ export async function readMail(raw: Buffer, headerBlock: Buffer, address: string
       pdfs: pdfs.length,
     },
     text: text.length > TEXT_MAX ? '' : text, tooLong: text.length > TEXT_MAX, pdfs, threadRef: one(mail.inReplyTo, 300), signedSubject: one(mail.subject, 300),
+    markup: typeof mail.html === 'string' ? ldBlocks(mail.html.slice(0, 4 * TEXT_MAX)) : [],
   };
 }
 

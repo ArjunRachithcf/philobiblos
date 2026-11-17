@@ -87,6 +87,8 @@ postage), or a PDF the worker cut short.
 | `online_order` | a subject of `online_order_subjects` (e.g. "Ihre Quillmere Bestellung (n)") | items: title, author, price; skip `skip_kinds` (Spielwaren) | lines matched and kept; no Philobiblos order is made (the month's order is Compose's), the invoice makes the copies |
 | `click_collect` | a subject of `click_collect_subjects` | "Buch <title> von <author> EAN: <ean> \| Fr. <price>" | as `online_order` |
 | `invoice` | a subject of `invoice.subjects` (e.g. "Ihre Quillmere-Rechnung Nr. n") + PDF | PDF rows: `EAN  Title  qty <unit>  price  [discount %]  total <currency>  VAT %` | a copy per unit (owned), priced; its order's lines delivered, the order invoiced; the same invoice number again counts once |
+| `online_order` (markup) | `mail.markup: true`, a mail none of the rows above recognises, one schema.org `Order` in its JSON-LD | each offer's product (`acceptedOffer` or `orderedItem`): name, first author, ISBN/GTIN-13, quantity, price; the order number | as `online_order` (`markup-order-1`) |
+| `invoice` (markup) | as above, one schema.org `Invoice` | its `confirmationNumber` (or `identifier`), its `referencesOrder`'s offers, `totalPaymentDue` | as `invoice` (`markup-invoice-1`); no number, or a total that is not the lines' sum: unknown layout |
 
 A quote or confirmation belongs to a composed order (status drafted or quoted): the one whose `mail_thread_ref` holds
 the mail's signed In-Reply-To (the bookshop's own earlier mail in that thread), or else the one of the month its signed
@@ -123,7 +125,11 @@ at rest with a key outside the database (`sealed_secret`, ADR 0009).
 
 ## Price lookup (ADR 0008)
 
-`PriceSource` interface, one per enabled connector with `prices` (`kind: search_tiles`): GET its `url` with `{query}`
+`PriceSource` interface, one per enabled connector with `prices`. `kind: jsonld`: GET its `url` as below and read only
+the page's schema.org JSON-LD (`schemaorg/jsonld.ts`): the Book or Product (alone, in an ItemList, or in @graph) whose
+normalised name is the title and whose author's surname is the first author's, its offers in the connector's currency
+only (an Offer, a list, an AggregateOffer's lowPrice), the cheapest; the id kept is its GTIN-13, ISBN or SKU as a short
+token; its availability one of schema.org's values, in fixed words. `kind: search_tiles`: GET its `url` with `{query}`
 replaced by the title and first author (form-encoded, in the query string only), parse result tiles (an article link
 `[https://<host>]<article.path><id_prefix><digits>`, the title, a `print_formats` phrase, an amount with a `money`
 symbol, an `availability` phrase). Choose the print edition in one of `want_languages` whose normalised title matches,
