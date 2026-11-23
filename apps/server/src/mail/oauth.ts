@@ -149,10 +149,6 @@ export class MailOAuth {
   private readonly pending = new Map<string, Pending>();
   /** The refresh in flight, and the refresh token it uses: only a caller holding the same tokens waits for it. */
   private refreshing: { refresh: string; token: Promise<string> } | null = null;
-  /** Disconnects so far, and connections started (start) by the latest one: what a refresh that lost a race was lost to. */
-  private disconnects = 0;
-  private starts = 0;
-  private startsAtDisconnect = 0;
   private readonly egress: FormEgress | null;
   private readonly now: () => Date;
 
@@ -201,7 +197,6 @@ export class MailOAuth {
     for (const k of Object.keys(b)) if (k !== 'accept') throw new OAuthError(400, `${k.slice(0, 40)} is not one of its fields`);
     this.key();
     if (typeof b.accept !== 'string' || b.accept !== allowsVersion(oauthAllows(imap, this.cfg.origin))) throw new OAuthError(409, 'what connecting allows changed since Settings showed it: read it again');
-    this.starts++;
     const now = this.now().getTime();
     for (const [k, p] of this.pending) if (p.expires <= now) this.pending.delete(k);
     while (this.pending.size >= MAX_PENDING) this.pending.delete(this.pending.keys().next().value!);
@@ -267,7 +262,6 @@ export class MailOAuth {
   }
 
   private async refresh(imap: ImapSettings & { oauth: OAuthClient }, key: Buffer, s: Stored): Promise<string> {
-    const disconnects = this.disconnects;
     const r = await this.post(imap.oauth.tokenUrl, { grant_type: 'refresh_token', refresh_token: s.refresh, ...this.credentials(imap.oauth) });
     const t = tokens(r);
     // Written only over the very tokens this refresh used: a disconnect or a new connection meanwhile stays as it is.
@@ -280,12 +274,14 @@ export class MailOAuth {
       throw new OAuthError(502, `the provider refused to refresh the token (${t.error})`);
     }
     if (!same()) {
-      // Lost to a disconnect (one during this refresh, and no connection started since): the refresh token the provider
-      // rotated to is revoked as well, so none outlives Disconnect (philobiblos#49). Lost to a new connection, made or
-      // being made: not revoked, as finish does not revoke the one it replaces (at some providers that would end the new
-      // grant too); the dropped token is never sent again. The revocation is waited for (bounded by the token client's
-      // deadline), so it is done when the caller hears of the race.
-      const lostToDisconnect = this.disconnects !== disconnects && this.starts === this.startsAtDisconnect;
+      // Lost to a disconnect, with nothing connected or being connected now (no tokens sealed, no connection pending: a
+      // disconnect drops the pending ones): the refresh token the provider rotated to is revoked as well, so none outlives
+      // Disconnect (philobiblos#49). Lost to a new connection, made or being made: not revoked, as finish does not revoke
+      // the one it replaces (at some providers that would end the new grant too); the dropped token is never sent again.
+      // Decided by what is, not by counting: the revocation is waited for (bounded by the token client's deadline), so it
+      // is done when the caller hears of the race.
+      const at = this.now().getTime();
+      const lostToDisconnect = !isSealed(this.db, OAUTH_SEALED) && ![...this.pending.values()].some((p) => p.expires > at);
       if (t.refresh && t.refresh !== s.refresh && lostToDisconnect) await this.revoke(imap.oauth, t.refresh);
       throw new OAuthError(409, 'the mailbox was disconnected or connected again meanwhile');
     }
@@ -297,13 +293,13 @@ export class MailOAuth {
   }
 
   /**
-   * DELETE /mail/oauth: the tokens are forgotten, then the refresh token revoked at the provider when it has an endpoint
+   * DELETE /mail/oauth: connections being made dropped, the tokens forgotten, then the refresh token revoked at the provider when it has an endpoint
    * for that (revoked null: it has none; false: it did not confirm). Tokens for another client are only forgotten.
    */
   async disconnect(): Promise<{ revoked: boolean | null }> {
     const imap = this.client();
-    this.disconnects++;
-    this.startsAtDisconnect = this.starts;
+    // A connection started before Disconnect never finishes after it: connecting again starts afresh.
+    this.pending.clear();
     let s: Stored | null = null;
     try { s = readStored(this.db, sealingKey(this.cfg)); } catch { /* unreadable: forgotten all the same */ }
     // Forgotten even when the key cannot open them.

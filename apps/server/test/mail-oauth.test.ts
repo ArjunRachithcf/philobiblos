@@ -533,6 +533,41 @@ describe('disconnecting', () => {
     expect(isSealed(db, OAUTH_SEALED)).toBe(true);
   });
 
+  it('a connection started before a disconnect cannot finish after it; the refresh that lost then revokes its rotated token (review probe)', async () => {
+    const db = household();
+    const o = await connected(db);
+    provider.rotate = true;
+    clock = new Date(clock.getTime() + 3600_000);
+    let release!: () => void;
+    provider.gate = new Promise((ok) => { release = ok; });
+    const pending = o.accessToken().then(() => null, (e: unknown) => e as Error);
+    await expect.poll(() => provider.requests.some((r) => r.path === 'held')).toBe(true);
+    const before = o.start(ME, { accept: oauthView(db).allowsVersion }); // started, then Disconnect
+    await o.disconnect();
+    await expect(o.finish(ME, consent(before.authorizeUrl))).rejects.toMatchObject({ status: 400 });
+    release();
+    expect((await pending)?.message).toMatch(/meanwhile/);
+    expect(isSealed(db, OAUTH_SEALED)).toBe(false);
+    expect(provider.requests.filter((r) => r.path === '/revoke').map((r) => r.form.get('token'))).toEqual(['rt-1-' + 'r'.repeat(20), 'rt-2-' + 'r'.repeat(20)]);
+  });
+
+  it('a connection started after the disconnect and left to expire does not keep the rotated token from being revoked', async () => {
+    const db = household();
+    const o = await connected(db);
+    provider.rotate = true;
+    clock = new Date(clock.getTime() + 3600_000);
+    let release!: () => void;
+    provider.gate = new Promise((ok) => { release = ok; });
+    const pending = o.accessToken().then(() => null, (e: unknown) => e as Error);
+    await expect.poll(() => provider.requests.some((r) => r.path === 'held')).toBe(true);
+    await o.disconnect();
+    o.start(ME, { accept: oauthView(db).allowsVersion });
+    clock = new Date(clock.getTime() + PENDING_MS + 1);
+    release();
+    expect((await pending)?.message).toMatch(/meanwhile/);
+    expect(provider.requests.filter((r) => r.path === '/revoke').map((r) => r.form.get('token'))).toEqual(['rt-1-' + 'r'.repeat(20), 'rt-2-' + 'r'.repeat(20)]);
+  });
+
   it('a refresh that loses to a new connection: its rotated token is not revoked (at some providers that ends the new grant), nothing written', async () => {
     const db = household();
     const o = await connected(db);
