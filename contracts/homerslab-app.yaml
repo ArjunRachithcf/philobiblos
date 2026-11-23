@@ -36,11 +36,11 @@ secrets:
 # Files the household gives the app, mounted read-only at `mount`, the key set to that path. Not secrets: a certificate is
 # public; a missing optional file leaves the key unset.
 files:
-  - { key: PHILOBIBLOS_IMAP_CA_FILE, mount: /config/imap-ca.pem, optional: true, read_only: true, description: 'The certificate (PEM) the mailbox server''s must chain to instead of the system''s CAs: a self-hosted server''s own, or Proton Mail Bridge''s (docs/mail-providers.md)' }
+  - { key: PHILOBIBLOS_IMAP_CA_FILE, mount: /config/imap-ca.pem, optional: true, read_only: true, description: 'The certificate (PEM) the mailbox server''s must chain to instead of the system''s CAs: a self-hosted server''s own, or a local mail bridge''s (docs/mail-providers.md)' }
 config:
   - { key: PHILOBIBLOS_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
   - { key: PHILOBIBLOS_IMAP_HOST, optional: true, description: IMAP host of the Philobiblos-only mailbox (TLS only) }
-  - { key: PHILOBIBLOS_IMAP_PORT, optional: true, description: 'Its port (default 993); TLS from the first byte on any port, never STARTTLS (a self-hosted server, Proton Mail Bridge set to SSL: docs/mail-providers.md)' }
+  - { key: PHILOBIBLOS_IMAP_PORT, optional: true, description: 'Its port (default 993); TLS from the first byte on any port, never STARTTLS (a self-hosted server, a local mail bridge set to SSL: docs/mail-providers.md)' }
   - { key: PHILOBIBLOS_IMAP_USER, optional: true, description: Its user name }
   - { key: PHILOBIBLOS_IMAP_FOLDER, optional: true, description: 'The folder the bookshop''s mail arrives in (default INBOX)' }
   - { key: PHILOBIBLOS_IMAP_AUTH, optional: true, description: 'password (an app password, the default) or xoauth2 (a token from the household''s own OAuth client, connected by an admin in Settings; docs/mail-providers.md)' }
@@ -71,8 +71,8 @@ network:
   push_egress: [fcm.googleapis.com, updates.push.services.mozilla.com, web.push.apple.com, '*.notify.windows.com']
   optional_egress: [api.anthropic.com]
   optional_egress_note: api.anthropic.com only when the household opts in to Claude in Settings; with Ollama nothing leaves for AI.
-# NEEDS HomersLab (philobiblos#49): Proton Mail Bridge listens on its own loopback only, so Philobiblos must share its network
-# namespace (docs/mail-providers.md); until HomersLab can run Bridge that way, the mailbox under HomersLab is a server reached
+# NEEDS HomersLab (philobiblos#49): a mail bridge that listens on its own loopback only needs Philobiblos to share its network
+# namespace (docs/mail-providers.md); until HomersLab can run one that way, the mailbox under HomersLab is a server reached
 # by name (PHILOBIBLOS_IMAP_HOST, PHILOBIBLOS_IMAP_PORT, and its own certificate in PHILOBIBLOS_IMAP_CA_FILE if it has one).
 # NEEDS HomersLab (philobiblos#8): the media worker is a second container from the same image, `node /app/worker/dist/main.js`,
 # as its own user in the app's group, with no network, a read-only root, no capabilities, 768 MB and 64 processes,
