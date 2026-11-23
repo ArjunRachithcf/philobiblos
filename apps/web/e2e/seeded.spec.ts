@@ -316,7 +316,11 @@ test('the mailbox: what connecting allows; the provider\'s return read once and 
     asked = new URL(route.request().url());
     await route.fulfill({ status: 302, headers: { location: `${ORIGIN}/settings/mail-oauth?code=e2e-code-123&state=${asked.searchParams.get('state')}` } });
   });
+  // The page is on /settings already, so its URL says nothing about the round trip: wait for the code handed to the
+  // server (the click's start, the provider, the return), which comes only after the provider was asked (philobiblos#55).
+  const finished = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/mail/oauth/finish');
   await card.getByRole('button', { name: 'Connect the mailbox' }).click();
+  await finished;
   // Back on Settings, the code and the state gone from the address bar.
   await expect(page).toHaveURL(`${ORIGIN}/settings`);
   const a = asked as URL | null;
