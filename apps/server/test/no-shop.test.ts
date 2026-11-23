@@ -261,6 +261,35 @@ describe('a copy marked owned by a tap (PUT /orders/{id}/lines/{bookId})', () =>
     expect((await tap('b_tide', true)).statusCode).toBe(409);
     expect((await tap('b_tide', false)).statusCode).toBe(409);
     expect(copiesOf('b_tide')).toHaveLength(1);
+    // A second invoice of the book is a second copy bought: of no order (the line was the first invoice's), the total as it was.
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', lines: [{ isbn: '9780000000002', price: 1400 }] }, new Date(iso));
+    expect(copiesOf('b_tide').map((c) => [c.orderId, c.priceC]).sort()).toEqual([['o_now', 1500], [null, 1400]].sort());
+    expect(db.select().from(t.order).where(eq(t.order.id, 'o_now')).get()!.invoicedC).toBe(1500);
+  });
+
+  it('a tap, then the invoice typed in: the invoice takes the tap\'s copy (one copy, its price paid), the order invoiced, no undo (philobiblos#47)', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    const tapped = line('b_tide').copyId!;
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', lines: [{ isbn: '9780000000002', price: 1500 }] }, new Date(iso));
+    expect(copiesOf('b_tide').map((c) => [c.id, c.source, c.orderId, c.priceC])).toEqual([[tapped, 'manual', 'o_now', 1500]]);
+    expect(line('b_tide')).toMatchObject({ state: 'delivered', copyId: null, tappedFrom: null });
+    expect(db.select().from(t.order).where(eq(t.order.id, 'o_now')).get()).toMatchObject({ status: 'invoiced', invoicedC: 1500 });
+    expect(db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => o.priceC)).toEqual([1500]);
+    const r = await get('/api/orders/o_now');
+    expect(r.json().lines.find((l: { book: { id: string } }) => l.book.id === 'b_tide')).toMatchObject({ state: 'delivered', ownedByTap: false });
+    expect((await tap('b_tide', false)).statusCode).toBe(409); // the invoice's copy now: never undone here
+    expect(copiesOf('b_tide')).toHaveLength(1);
+  });
+
+  it('a tap, then an invoice of two copies: the tap\'s copy and one more, both at the price paid', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    const tapped = line('b_tide').copyId!;
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', lines: [{ isbn: '9780000000002', price: 1500, qty: 2 }] }, new Date(iso));
+    const copies = copiesOf('b_tide');
+    expect(copies.map((c) => [c.orderId, c.priceC])).toEqual([['o_now', 1500], ['o_now', 1500]]);
+    expect(copies.map((c) => c.id)).toContain(tapped);
   });
 
   it('a quote after a tap leaves the bought line as it is (delivered, still undoable)', async () => {

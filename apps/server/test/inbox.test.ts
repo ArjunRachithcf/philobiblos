@@ -13,6 +13,7 @@ import * as t from '../src/db/schema';
 import type { Db } from '../src/db/open';
 import { MAX_COPIES, PAGE, UNVERIFIED_ID, mailItemId, shareItemId } from '../src/inbox/inbox';
 import { MediaUnavailable, type MediaOutcome, type runMediaJob } from '../src/media/client';
+import { markOwned } from '../src/month/plan';
 import { refreshMail } from '../src/mail/job';
 import { IMAGE_HEADER, SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, SHARE_UPLOADS, ShareProcessor, imageType, shareFileType } from '../src/shares/shares';
 import { MAX_LIVE_TOKENS, findShareToken } from '../src/shares/tokens';
@@ -591,6 +592,24 @@ describe('the Inbox', () => {
     expect(box.audience).toBe('kids');
     expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, box.id)).all().length).toBe(MAX_COPIES);
     expect(a.db.select().from(t.reading).where(eq(t.reading.bookId, box.id)).all().map((r) => [r.personId, r.status])).toEqual([['p_kid1', 'to_read']]);
+  });
+
+  it('an invoice line added after its book was marked owned by a tap: the tap\'s copy is one of the invoice\'s (philobiblos#47)', async () => {
+    const a = await app();
+    const now = new Date().toISOString();
+    a.db.insert(t.order).values({ id: 'o_q', month: '2026-11', status: 'quoted', createdAt: now }).run();
+    a.db.insert(t.orderLine).values({ orderId: 'o_q', bookId: 'b_tide', forPerson: 'p_alex', state: 'quoted', quotedC: 900 }).run();
+    markOwned(a.db, 'o_q', 'b_tide', { owned: true });
+    const tapped = a.db.select().from(t.orderLine).where(eq(t.orderLine.orderId, 'o_q')).get()!.copyId!;
+    a.db.insert(t.mailSeen).values({ messageId: '<tap@quillmere.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1235', lines: [
+      { ean: null, title: 'The Long Tide of Markets', qty: 2, priceC: 1000, totalC: 2000, vatPct: 2.6, bookId: null },
+    ] }) }).run();
+    expect((await post(a, `/api/inbox/${mailItemId('<tap@quillmere.example>')}/books/0`, { action: 'add', for: 'me' })).statusCode).toBe(200);
+    const copies = a.db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all();
+    expect(copies.map((c) => [c.source, c.orderId, c.priceC])).toEqual([['invoice', 'o_q', 1000], ['invoice', 'o_q', 1000]]);
+    expect(copies.map((c) => c.id)).toContain(tapped);
+    expect(a.db.select().from(t.orderLine).where(eq(t.orderLine.orderId, 'o_q')).get()).toMatchObject({ state: 'delivered', copyId: null });
+    expect(a.db.select().from(t.order).where(eq(t.order.id, 'o_q')).get()).toMatchObject({ status: 'invoiced', invoicedC: 2000 });
   });
 
   it('matched lines never show; a dismissed item takes no decisions; an unverified mail is no item of its own (PR #16 review)', async () => {

@@ -10,6 +10,7 @@ import { applyMail, matchBook, monthOfSubject, unmatchedLines } from '../src/mai
 import { PARSER_VERSION, PDF_TRIES, refreshMail, type MailDeps } from '../src/mail/job';
 import * as parse from '../src/mail/parse';
 import { addressParts, htmlLines, openVerified, type VerifiedMail } from '../src/mail/read';
+import { markOwned } from '../src/month/plan';
 import { SEALED } from '../src/routes/month';
 import type { MediaOutcome } from '../src/media/client';
 import { MediaUnavailable } from '../src/media/client';
@@ -331,6 +332,18 @@ describe('invoices: copies, through the media worker only', () => {
     const row = kept(db, '<i1@quillmere.example>');
     expect(row).toMatchObject({ kind: 'invoice', accepted: 1 });
     expect(row.parsedJson).not.toMatch(/Kundennummer|5550001|%PDF/);
+  });
+
+  it('a book marked owned by a tap when the parcel came, then the shop\'s invoice read: the tap\'s copy is the invoice\'s, never a second (philobiblos#47)', async () => {
+    const db = world();
+    markOwned(db, 'o_nov', 'b_tide', { owned: true }, new Date(NOW));
+    const tapped = lines(db).b_tide!.copyId!;
+    await run(db, fakeBox([{ uid: 1, raw: await invoice('i1t') }]), { pdfText: async () => invoiceRows() });
+    const tide = db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all();
+    expect(tide.map((c) => [c.id, c.source, c.orderId, c.priceC, c.acquiredAt])).toEqual([[tapped, 'invoice', 'o_nov', 1990, '2026-11-16T08:00:00.000Z']]);
+    expect(lines(db).b_tide).toMatchObject({ state: 'delivered', copyId: null, tappedFrom: null });
+    expect(order(db)).toMatchObject({ status: 'invoiced', invoicedC: 1990 + 3380 });
+    expect(() => markOwned(db, 'o_nov', 'b_tide', { owned: false })).toThrow(/invoice/);
   });
 
   it('the same invoice again under another Message-ID: read, never counted twice', async () => {

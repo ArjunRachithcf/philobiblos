@@ -243,7 +243,7 @@ CREATE TABLE order_line (
   estimate_c INTEGER, quoted_c INTEGER, delivery TEXT,
   state     TEXT NOT NULL DEFAULT 'planned' CHECK (state IN ('planned','quoted','unavailable','delivered','rolled_over')),
   why_audience TEXT,                       -- who may read the AI's why (NULL: everyone); its person when built on something private to them
-  copy_id   TEXT REFERENCES copy(id) ON DELETE SET NULL, -- the copy a tap made (no-shop mode): set while the tap can be undone
+  copy_id   TEXT REFERENCES copy(id) ON DELETE SET NULL, -- the copy a tap made (no-shop mode): set while the tap can be undone; a later invoice of the book takes the copy and clears it
   tapped_from TEXT,                        -- the line's state the tap found ('planned' | 'quoted'): what the undo puts back
   PRIMARY KEY (order_id, book_id)
 );

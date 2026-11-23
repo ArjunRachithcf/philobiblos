@@ -11,7 +11,7 @@
 // signed In-Reply-To (a bookshop mail already tied to it), or the one of the month its signed Subject names as Compose
 // wrote it ("Book order, November 2026"); only the bookshop's signed mail ties anything (Compose copies the request to
 // no one). With no order, every line is unmatched.
-import { and, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -160,17 +160,33 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
 
 /**
  * An invoice line's effect (a verified mail's, or one a person typed in: orders/entries.ts): `qty` copies owned at the
- * unit price, the price learnt, and the line of the composed order the book was ordered in, if any (not delivered yet),
- * delivered. Returns that order's id.
+ * unit price, the price learnt, and the line of the composed order the book was ordered in, if any, delivered (see
+ * `deliver`). Returns that order's id.
  */
 export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }, now: string): string | null {
-  // The order it was ordered in, if any: a composed one, the line not delivered yet.
-  const line = tx.select({ orderId: t.orderLine.orderId }).from(t.orderLine).innerJoin(t.order, eq(t.order.id, t.orderLine.orderId))
-    .where(and(eq(t.orderLine.bookId, l.bookId), inArray(t.order.status, ['drafted', 'quoted', 'invoiced']), inArray(t.orderLine.state, ['planned', 'quoted']))).orderBy(sql`${t.order.month} DESC`).get();
-  for (let i = 0; i < l.qty; i++) tx.insert(t.copy).values({ id: ulid(), bookId: l.bookId, source: l.source, orderId: line?.orderId ?? null, priceC: l.unitC, acquiredAt: l.acquiredAt }).run();
+  const orderId = deliver(tx, l);
   const v = { priceC: l.unitC, availability: null, seenAt: now };
   tx.insert(t.bookOffer).values({ bookId: l.bookId, source: 'invoice', ...v }).onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: v }).run();
-  if (line) tx.update(t.orderLine).set({ state: 'delivered' }).where(and(eq(t.orderLine.orderId, line.orderId), eq(t.orderLine.bookId, l.bookId))).run();
+  return orderId;
+}
+
+/**
+ * An invoice's copies of one book (`receive`'s, and the Inbox's for a line that matched no book when it came): the line of
+ * a composed order it was ordered in, the latest month's, delivered. That line is one not delivered yet, or one a tap
+ * delivered when the parcel came (philobiblos#47): the tap's copy (`order_line.copy_id`) is then the invoice's first, at
+ * the price paid, and the line no longer the tap's, so its Undo is refused like any invoice's. Never two copies of one
+ * book bought once. Returns the line's order id.
+ */
+export function deliver(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }): string | null {
+  const line = tx.select({ orderId: t.orderLine.orderId, copyId: t.orderLine.copyId, state: t.orderLine.state }).from(t.orderLine).innerJoin(t.order, eq(t.order.id, t.orderLine.orderId))
+    .where(and(eq(t.orderLine.bookId, l.bookId), inArray(t.order.status, ['drafted', 'quoted', 'invoiced']),
+      or(inArray(t.orderLine.state, ['planned', 'quoted']), and(eq(t.orderLine.state, 'delivered'), isNotNull(t.orderLine.copyId)))))
+    .orderBy(sql`${t.order.month} DESC`).get();
+  const copy = { bookId: l.bookId, source: l.source, orderId: line?.orderId ?? null, priceC: l.unitC, acquiredAt: l.acquiredAt };
+  const tapped = line?.state === 'delivered' ? line.copyId : null;
+  if (tapped) tx.update(t.copy).set(copy).where(eq(t.copy.id, tapped)).run();
+  for (let i = tapped ? 1 : 0; i < l.qty; i++) tx.insert(t.copy).values({ id: ulid(), ...copy }).run();
+  if (line) tx.update(t.orderLine).set({ state: 'delivered', copyId: null, tappedFrom: null }).where(and(eq(t.orderLine.orderId, line.orderId), eq(t.orderLine.bookId, l.bookId))).run();
   return line?.orderId ?? null;
 }
 

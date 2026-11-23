@@ -948,7 +948,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Any adult: a book of a composed order bought with no invoice to record, marked owned by a tap (owned: true): one copy (source manual, of this order, priced as the shop quoted it or not at all; no price learnt) and the line delivered; only a planned or quoted line, so a second tap is 409. owned: false undoes a tap (its copy removed, the line as it was); a line an invoice or the Inbox delivered is never undone here (409). While a line is delivered the picks stay as they are. */
+        /** Any adult: a book of a composed order bought with no invoice to record, marked owned by a tap (owned: true): one copy (source manual, of this order, priced as the shop quoted it or not at all; no price learnt) and the line delivered; only a planned or quoted line, so a second tap is 409. owned: false undoes a tap (its copy removed, the line as it was); a line an invoice or the Inbox delivered is never undone here (409). An invoice of the book that comes after a tap takes the tap's copy (never a second) and ends its undo. While a line is delivered the picks stay as they are. */
         put: operations["markOwned"];
         post?: never;
         delete?: never;

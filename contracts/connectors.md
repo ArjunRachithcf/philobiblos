@@ -205,7 +205,10 @@ answers the list of its books still to buy (planned or quoted).
   (`order_line.copy_id`, `tapped_from`). A
   second tap is 409, never a second copy; an unavailable line is 409. `{ owned: false }` undoes a tap while the line holds
   its copy: the copy removed, the line as the tap found it (planned or quoted); a line an invoice or the Inbox delivered is
-  never undone here (409). A quote (mailed or typed) never changes a delivered line. While any line of the order is delivered, its picks, budget and list stay as they are (409), so picking again
+  never undone here (409). **An invoice after a tap** (mailed, typed, imported or added in the Inbox) takes the tap's copy
+  as its first (its source, price paid and date; the rest of its quantity new copies), clears `copy_id` and `tapped_from`, and
+  invoices the order: one copy for one book bought, and Undo is then 409 like any invoice's (philobiblos#47). A line an
+  invoice delivered is never taken again: a second invoice of the book is a copy of no order. A quote (mailed or typed) never changes a delivered line. While any line of the order is delivered, its picks, budget and list stay as they are (409), so picking again
   never drops a book in the library.
 
 ## Price lookup (ADR 0008)
