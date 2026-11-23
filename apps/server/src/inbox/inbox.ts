@@ -275,7 +275,7 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
   const it = resolve(db, me, id);
   if (db.select().from(t.inboxDecision).where(and(eq(t.inboxDecision.item, id), inArray(t.inboxDecision.idx, [index, -1]))).get()) throw new InboxError(409, 'decided already');
 
-  let book: { title: string | null; author: string | null; ean: string | null; notBook?: boolean; eanUnreadable?: boolean; invoice?: { qty: number; unitC: number; totalC: number; date: string | null } } | undefined;
+  let book: { title: string | null; author: string | null; ean: string | null; notBook?: boolean; eanUnreadable?: boolean; invoice?: { qty: number; unitC: number; totalC: number; date: string | null; readAt: string } } | undefined;
   let shareId: string | null = null;
   let origin: 'share' | 'manual' | 'ai' = 'manual';
   if (it.kind === 'ai') {
@@ -296,7 +296,7 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
       const qty = typeof l.qty === 'number' && l.qty > 0 ? l.qty : 1;
       book = {
         title: str(l.title), author: str(l.author, 200), ean: str(l.ean, 13), notBook: l.notBook === true, eanUnreadable: l.eanUnreadable === true,
-        ...(it.row.kind === 'invoice' && typeof l.totalC === 'number' ? { invoice: { qty, unitC: Math.round(l.totalC / qty), totalC: l.totalC, date: str(p.date, 40) } } : {}),
+        ...(it.row.kind === 'invoice' && typeof l.totalC === 'number' ? { invoice: { qty, unitC: Math.round(l.totalC / qty), totalC: l.totalC, date: str(p.date, 40), readAt: it.row.seenAt } } : {}),
       };
     }
   }
@@ -325,7 +325,8 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
       // The invoice says the household bought it: copies and the price paid, as the invoice's effect would have made
       // had the book been known (the order line it was ordered in delivered), and on the to-read pile of whoever it is for.
       const inv = book.invoice;
-      const acquired = inv.date && !Number.isNaN(Date.parse(inv.date)) ? new Date(inv.date).toISOString() : iso;
+      // An invoice with no date it can read counts from when its mail was read, never from this decision (philobiblos#53).
+      const acquired = inv.date && !Number.isNaN(Date.parse(inv.date)) ? new Date(inv.date).toISOString() : inv.readAt;
       // A line of more copies than one makes is invoiced for the copies made, at the price of one (philobiblos#53).
       const copies = Math.min(inv.qty, MAX_COPIES);
       const orderId = receive(tx, { bookId, qty: copies, unitC: inv.unitC, acquiredAt: acquired, source: 'invoice' }, iso);

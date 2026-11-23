@@ -2,7 +2,7 @@
 // scores from packages/scoring, the query language, tabs, facets, pages, and who may change what, per route.
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { scoreAdult } from '@philobiblos/scoring';
 import { buildApp, type BuiltApp } from '../src/app';
 import { allCandidates } from '../src/backlog/backlog';
@@ -111,13 +111,13 @@ describe('the list', () => {
     const priced = (await list('sort:price')).items.find((i) => i.price != null)!;
     const other = (await list('sort:price')).items.find((i) => i.price == null && i.book.id !== priced.book.id)!;
     db.insert(t.bookOffer).values([
-      { bookId: priced.book.id, source: 'invoice', priceC: 0, seenAt: '2026-11-02T00:00:00.000Z' },
-      { bookId: other.book.id, source: 'invoice', priceC: 0, seenAt: '2026-11-02T00:00:00.000Z' },
+      { bookId: priced.book.id, source: 'test-free', priceC: 0, seenAt: '2026-11-02T00:00:00.000Z' },
+      { bookId: other.book.id, source: 'test-free', priceC: 0, seenAt: '2026-11-02T00:00:00.000Z' },
     ]).run();
     const after = (await list('sort:price')).items;
     expect(after.find((i) => i.id === priced.id)!.price).toBe(priced.price);
     expect(after.find((i) => i.id === other.id)!.price).toBeUndefined();
-    db.delete(t.bookOffer).where(and(eq(t.bookOffer.source, 'invoice'), inArray(t.bookOffer.bookId, [priced.book.id, other.book.id]))).run();
+    db.delete(t.bookOffer).where(eq(t.bookOffer.source, 'test-free')).run();
   });
 
   it('a book the household comes to own closes as owned', async () => {

@@ -516,7 +516,7 @@ describe('the Inbox', () => {
     expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, book.id)).all().map((c) => [c.source, c.priceC])).toEqual([['invoice', 1500], ['invoice', 1500]]);
     // The price paid learnt, as a typed or a mailed invoice learns it (philobiblos#51), dated by the invoice's mail, not
     // by the decision (philobiblos#53).
-    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, book.id)).all().map((o) => [o.source, o.priceC, o.availability, o.seenAt])).toEqual([['invoice', 1500, null, '2026-11-16T08:00:00.000Z']]);
+    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, book.id)).all().map((o) => [o.source, o.priceC, o.availability, o.seenAt])).toEqual([['invoice', 1500, null, '2026-11-16T00:00:00.000Z']]);
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'skip' })).statusCode).toBe(409);
     // A toy, or a row whose EAN could not be read (a position number as much as a book), can only be skipped.
     expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'add' })).statusCode).toBe(400);
@@ -627,6 +627,17 @@ describe('the Inbox', () => {
     expect((await post(a, `/api/inbox/${mailItemId('<old@quillmere.example>')}/books/0`, { action: 'add', for: 'me' })).statusCode).toBe(200);
     expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all().map((c) => c.priceC).sort()).toEqual([1400, 1800]);
     expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => [o.source, o.priceC, o.seenAt])).toEqual([['invoice', 1800, '2026-11-10T00:00:00.000Z']]);
+  });
+
+  it('an invoice with no date it can read counts from when its mail was read, not from the decision (philobiblos#53)', async () => {
+    const a = await app();
+    a.db.insert(t.mailSeen).values({ messageId: '<undated@quillmere.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: '2026-10-02T07:00:00.000Z', accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1238', lines: [
+      { ean: null, title: 'The Long Tide of Markets', qty: 1, priceC: 1400, totalC: 1400, vatPct: 2.6, bookId: null },
+    ] }) }).run();
+    a.db.transaction((tx) => { receive(tx, { bookId: 'b_tide', qty: 1, unitC: 1800, acquiredAt: '2026-11-10T00:00:00.000Z', source: 'invoice' }, new Date().toISOString()); });
+    expect((await post(a, `/api/inbox/${mailItemId('<undated@quillmere.example>')}/books/0`, { action: 'add', for: 'me' })).statusCode).toBe(200);
+    expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all().map((c) => [c.priceC, c.acquiredAt]).sort()).toEqual([[1400, '2026-10-02T07:00:00.000Z'], [1800, '2026-11-10T00:00:00.000Z']]);
+    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => [o.priceC, o.seenAt])).toEqual([[1800, '2026-11-10T00:00:00.000Z']]);
   });
 
   it('a line of more copies than an Inbox line makes invoices its order for the copies made, at the price of one (philobiblos#53)', async () => {

@@ -161,4 +161,38 @@ describe('upgrades', () => {
     // A database made new has no settings row until the first start, which gives it its currency (or none).
     expect(openDb(':memory:').$client.prepare('SELECT count(*) AS n FROM household_settings').get()).toEqual({ n: 0 });
   });
+  it('a price paid learnt before philobiblos#53 is dated by its invoice\'s day: the latest copy bought at that price, never later than its own day', () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'philobiblos-mig-')), 'drizzle');
+    cpSync(drizzleDir, dir, { recursive: true });
+    const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
+    const before = journal.entries.findIndex((e) => e.tag === '0019_invoice_price_day');
+    expect(before).toBeGreaterThan(0);
+    writeFileSync(join(dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.slice(0, before) }));
+    const client = new Database(':memory:');
+    client.pragma('foreign_keys = ON');
+    const db = drizzle(client);
+    migrate(db, { migrationsFolder: dir });
+    const book = client.prepare(`INSERT INTO book (id, title, authors_json, audience, norm_key, created_at) VALUES (?, ?, '[]', 'adult', ?, '2026-01-01T00:00:00.000Z')`);
+    for (const id of ['b1', 'b2', 'b3', 'b4']) book.run(id, id, id);
+    const copy = client.prepare('INSERT INTO copy (id, book_id, source, price_c, acquired_at) VALUES (?, ?, ?, ?, ?)');
+    copy.run('c1', 'b1', 'invoice', 1400, '2026-10-01T08:00:00.000Z'); // decided in the Inbox on 11-20
+    copy.run('c2', 'b1', 'invoice', 1400, '2026-09-01T08:00:00.000Z');
+    copy.run('c3', 'b1', 'invoice', 1800, '2026-11-25T08:00:00.000Z'); // another price: not the one learnt
+    copy.run('c4', 'b2', 'manual', 1500, '2026-11-12T00:00:00.000Z');
+    copy.run('c5', 'b3', 'invoice', 1600, '2027-06-01T00:00:00.000Z'); // misdated ahead
+    const offer = client.prepare('INSERT INTO book_offer (book_id, source, price_c, seen_at) VALUES (?, ?, ?, ?)');
+    offer.run('b1', 'invoice', 1400, '2026-11-20T14:00:00.000Z');
+    offer.run('b2', 'invoice', 1500, '2026-11-16T10:00:00.000Z');
+    offer.run('b3', 'invoice', 1600, '2026-11-16T10:00:00.000Z');
+    offer.run('b4', 'invoice', 1700, '2026-11-14T10:00:00.000Z'); // no copy at its price
+    offer.run('b4', 'quote', 1700, '2026-11-14T10:00:00.000Z');
+    migrate(db, { migrationsFolder: drizzleDir });
+    expect(client.prepare('SELECT book_id, source, seen_at FROM book_offer ORDER BY book_id, source').all()).toEqual([
+      { book_id: 'b1', source: 'invoice', seen_at: '2026-10-01T00:00:00.000Z' },
+      { book_id: 'b2', source: 'invoice', seen_at: '2026-11-12T00:00:00.000Z' },
+      { book_id: 'b3', source: 'invoice', seen_at: '2026-11-16T00:00:00.000Z' },
+      { book_id: 'b4', source: 'invoice', seen_at: '2026-11-14T00:00:00.000Z' },
+      { book_id: 'b4', source: 'quote', seen_at: '2026-11-14T10:00:00.000Z' },
+    ]);
+  });
 });
