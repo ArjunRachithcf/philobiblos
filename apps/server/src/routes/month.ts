@@ -1,6 +1,7 @@
 // This month and its order (spec §4, §5; ADR 0007). Every adult sees the plan and may change their own picks and the
 // kids'; the one-month budget is admins' (like the budget itself); Compose is any adult's, and so is an order's quote or an
-// invoice typed in or imported (src/orders/entries.ts). The rules are in src/month/ and src/orders/.
+// invoice typed in or imported (src/orders/entries.ts), and the plain list with its books marked owned by a tap (no-shop
+// mode, src/orders/list.ts). The rules are in src/month/ and src/orders/.
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { requireAdmin } from '../auth/hook';
 import type { Config } from '../config';
@@ -9,7 +10,7 @@ import { SealError, isSealed, keyProblem, sealingKey, unseal } from '../househol
 import { enabledConnectors, orderAddress } from '../connectors/enabled';
 import type { Registry } from '../connectors/load';
 import { EntryError, recordEntry } from '../orders/entries';
-import { MonthError, changePicks, checkWindow, composeOrder, getMonth, getOrder, setMonthBudget, thisMonth } from '../month/plan';
+import { MonthError, changePicks, checkWindow, composeOrder, getMonth, getOrder, markOwned, orderListCsv, setMonthBudget, thisMonth } from '../month/plan';
 
 export const SEALED = { bookshopEmail: 'bookshop_email', deliveryAddress: 'delivery_address' } as const;
 
@@ -38,9 +39,14 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, con
     try {
       const b = req.body;
       if (b !== undefined && b !== null && (typeof b !== 'object' || Array.isArray(b))) throw new MonthError(400, 'a JSON object is needed');
+      for (const k of Object.keys(b ?? {})) if (k !== 'month' && k !== 'list') throw new MonthError(400, `unknown field ${k.slice(0, 40)}`);
       const month = b?.month ?? thisMonth(db);
       if (typeof month !== 'string') throw new MonthError(400, 'month: YYYY-MM');
+      const list = (b as { list?: unknown } | undefined)?.list ?? false;
+      if (typeof list !== 'boolean') throw new MonthError(400, 'list: true or false');
       checkWindow(db, month, true);
+      // No-shop mode: the plain list needs no address and opens nothing sealed.
+      if (list) return reply.code(201).send(composeOrder(db, month, req.caller!.personId, 'list'));
       const problem = keyProblem(cfg);
       if (problem && (isSealed(db, SEALED.bookshopEmail) || isSealed(db, SEALED.deliveryAddress))) throw new MonthError(409, `the sealing key is ${problem}: the server's PHILOBIBLOS_SEALING_KEY needs fixing`);
       const open = (name: string) => (isSealed(db, name) ? unseal(db, sealingKey(cfg), name) : null);
@@ -59,5 +65,17 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, con
   });
   app.get<{ Params: { id: string } }>('/orders/:id', async (req, reply) => {
     try { return getOrder(db, req.params.id); } catch (e) { return fail(reply, e); }
+  });
+  // No-shop mode: the list as a CSV to download (its cells guarded against spreadsheet formulas: orders/list.ts).
+  app.get<{ Params: { id: string } }>('/orders/:id/list.csv', async (req, reply) => {
+    try {
+      const { month, csv } = orderListCsv(db, req.params.id);
+      return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="book-order-${month}.csv"`)
+        .header('cache-control', 'no-store').send(csv);
+    } catch (e) { return fail(reply, e); }
+  });
+  // A book of the order bought with no invoice to record: marked owned by a tap, or the tap undone.
+  app.put<{ Params: { id: string; bookId: string } }>('/orders/:id/lines/:bookId', async (req, reply) => {
+    try { return markOwned(db, req.params.id, req.params.bookId, req.body ?? null); } catch (e) { return fail(reply, e); }
   });
 }

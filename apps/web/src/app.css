@@ -210,3 +210,14 @@ dialog.lib-sheet::backdrop { background: var(--scrim); -webkit-backdrop-filter: 
 .re-book legend { padding: 0; }
 .re-book + .re-book { padding-top: var(--space-4); border-top: 1px solid var(--separator); }
 .re-check { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+/* No-shop mode's printed list (philobiblos#27 slice 5): on screen the text box shows it; printed, it is the whole page. */
+.mo-print { display: none; }
+@media print {
+  body * { visibility: hidden; }
+  .mo-print, .mo-print * { visibility: visible; }
+  .mo-print { display: block; position: absolute; inset: 0 0 auto 0; padding: 0; color: #000; background: #fff; font-size: 12pt; }
+  .mo-print h2 { font-size: 16pt; margin: 0 0 12pt; }
+  .mo-print ol { margin: 0; padding-left: 20pt; }
+  .mo-print li { margin: 0 0 6pt; break-inside: avoid; }
+}

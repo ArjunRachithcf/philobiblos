@@ -28,12 +28,13 @@ export function orderText(o: { month: string; lines: OrderLineText[]; deliveryAd
 
 /**
  * The Compose link. When the whole text would make the link too long, the link carries the greeting and a line asking
- * the person to paste the list, which the screen shows in full with a Copy button (`complete: false`).
+ * the person to paste the list, which the screen shows in full with a Copy button (`complete: false`). `to: null` is the
+ * plain list's (no-shop mode): a link to no one, the person picks the recipient in their own mail app.
  */
-export function mailto(to: string, subject: string, body: string): { url: string; complete: boolean } {
-  if (!EMAIL.test(to)) throw new Error('not an address');
+export function mailto(to: string | null, subject: string, body: string): { url: string; complete: boolean } {
+  if (to !== null && !EMAIL.test(to)) throw new Error('not an address');
   const enc = (s: string) => encodeURIComponent(s.replace(/\r?\n/g, '\r\n'));
-  const url = (b: string) => `mailto:${to}?subject=${enc(subject)}&body=${enc(b)}`;
+  const url = (b: string) => `mailto:${to ?? ''}?subject=${enc(subject)}&body=${enc(b)}`;
   const full = url(body);
   if (full.length <= MAILTO_MAX) return { url: full, complete: true };
   return { url: url('Hello,\n\n(Paste the order from Philobiblos here: it is too long for this link.)\n'), complete: false };

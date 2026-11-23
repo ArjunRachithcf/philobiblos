@@ -82,7 +82,7 @@ export const SHARE_ID = '01JC0000000000000000000000';
 const PARAMS: Record<string, Record<string, string>> = {
   getBrain: { personId: 'p_alex' }, reviewLink: { fromBook: 'b_ledger', toBook: 'b_tide' }, reviewBookIdea: { bookId: 'b_tide', ideaId: 'i_markets' }, reviewIdeaProposal: { proposalId: 'ip_tide' }, editIdea: { ideaId: 'i_markets' },
   undoMerge: { mergeId: 'm_old' },
-  getOrder: { id: 'o_old' }, getMonth: { month: THIS_MONTH }, setMonthBudget: { month: THIS_MONTH }, changePicks: { month: THIS_MONTH },
+  getOrder: { id: 'o_old' }, getOrderList: { id: 'o_old' }, markOwned: { id: 'o_tap', bookId: 'b_tap' }, getMonth: { month: THIS_MONTH }, setMonthBudget: { month: THIS_MONTH }, changePicks: { month: THIS_MONTH },
   renameFilter: { id: 'default-1' }, removeFilter: { id: 'default-2' },
   getShare: { id: SHARE_ID }, removePushSubscription: { id: 'ps_alex' }, decideFound: { itemId: mailItemId('<inv-1@bookshop.example>'), index: '0' }, dismissInboxItem: { itemId: UNVERIFIED_ID },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
@@ -102,6 +102,7 @@ export const nowherePush: Egress = {
 /** Request bodies that name something real in household() where a sample would be refused. */
 const BODIES: Record<string, unknown> = {
   bulkBacklog: { ids: ['p_alex.b_tide'], action: 'reopen' },
+  markOwned: { owned: true },
   reviewLink: { state: 'confirmed' }, reviewBookIdea: { state: 'confirmed' }, reviewIdeaProposal: { state: 'confirmed' }, editIdea: { name: 'Markets and value' },
   addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
   decideFound: { action: 'skip' },

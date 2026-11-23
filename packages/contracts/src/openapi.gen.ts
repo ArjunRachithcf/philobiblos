@@ -830,7 +830,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Turn the month's picks into an order and its Compose link, a mailto with the text filled in (Philobiblos never sends mail; the text asks for a quote and never holds a card number). The month defaults to the current one. */
+        /** Turn the month's picks into an order and its Compose link, a mailto with the text filled in (Philobiblos never sends mail; the text asks for a quote and never holds a card number). The month defaults to the current one. With list: true (no-shop mode, philobiblos#27), the order as a plain list for any shop or none instead: its mail text to no recipient, without the delivery address (listUrl, listText), and its CSV at /orders/{id}/list.csv; it needs no bookshop address and opens nothing sealed. */
         post: operations["createOrderDraft"];
         delete?: never;
         options?: never;
@@ -866,6 +866,40 @@ export interface paths {
         put?: never;
         /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop's connector's mail. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
         post: operations["recordOrderEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{id}/list.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Any adult: the plain list of a composed order (not picked) as a CSV to download (text/csv, an attachment, never cached): the books still to buy (planned or quoted), a row each with isbn, title, author (the first), qty 1, an empty price and the estimate, the columns an invoice imported reads (POST /orders/entries; estimate is named back), so the same file with the prices paid records what was bought. No delivery address and no one's name. A cell a spreadsheet would run as a formula (starting =, +, -, @, their full-width forms, or a tab or CR) is written with a leading quote (philobiblos#45), which the import reads back. */
+        get: operations["getOrderList"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{id}/lines/{bookId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Any adult: a book of a composed order bought with no invoice to record, marked owned by a tap (owned: true): one copy (source manual, of this order, priced as the shop quoted it or not at all; no price learnt) and the line delivered; only a planned or quoted line, so a second tap is 409. owned: false undoes a tap (its copy removed, the line as it was); a line an invoice or the Inbox delivered is never undone here (409). While a line is delivered the picks stay as they are. */
+        put: operations["markOwned"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1330,6 +1364,13 @@ export interface components {
             composeSubject?: string;
             /** @description the order text in full (only in the Compose answer) */
             composeText?: string;
+            /** @description no-shop mode (list: true): a mailto: to no recipient with the list's text, without the delivery address; the person picks the shop in their own mail app */
+            listUrl?: string;
+            /** @description as composeComplete, for listUrl */
+            listComplete?: boolean;
+            listSubject?: string;
+            /** @description the list's mail text in full (only in the list's answer): the books, no delivery address, no card line */
+            listText?: string;
             estimate?: components["schemas"]["Money"];
             quoted?: components["schemas"]["Money"];
             invoiced?: components["schemas"]["Money"];
@@ -1341,6 +1382,8 @@ export interface components {
                 delivery?: string;
                 /** @enum {unknown} */
                 state?: "planned" | "quoted" | "unavailable" | "delivered" | "rolled_over";
+                /** @description delivered by a tap (PUT /orders/{id}/lines/{bookId}), which can still be undone */
+                ownedByTap?: boolean;
             }[];
         };
         /** @description lines or csv, one of them. A quote names its month; an invoice may have a number and a date. */
@@ -3782,6 +3825,8 @@ export interface operations {
             content: {
                 "application/json": {
                     month?: string;
+                    /** @description the plain list instead of the mail to the bookshop */
+                    list?: boolean;
                 };
             };
         };
@@ -3815,7 +3860,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description No bookshop address yet, nothing picked, or the bookshop has the order already */
+            /** @description No bookshop address yet (Compose), nothing picked, the bookshop has the order already, or a book of it is in the library already (a tap) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3905,6 +3950,106 @@ export interface operations {
                 };
             };
             /** @description The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that shop's invoice number counts already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getOrderList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The CSV (UTF-8 with a byte order mark, CRLF) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such order */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The order is only picked: the list is not made yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    markOwned: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                bookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    owned: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Order"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such order, or no such book in it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The order is only picked; the line is unavailable or delivered already (owned), or was not marked owned here (undo) */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -15,6 +15,7 @@ import { actsFor, getPerson, household, view, type Person } from '../household/p
 import { getLibrary } from '../library/library';
 import { personSettings } from '../library/settings';
 import { householdZone } from '../jobs/schedule';
+import { listCsv, listText } from '../orders/list';
 import { mailto, orderText } from './order-mail';
 
 type S = components['schemas'];
@@ -128,8 +129,11 @@ export function keepPlan(db: Db, month: string): { kept: boolean; lines: number 
   return { kept: !had, lines: db.select({ b: t.orderLine.bookId }).from(t.orderLine).where(eq(t.orderLine.orderId, o.id)).all().length };
 }
 
-function editable(o: typeof t.order.$inferSelect) {
+function editable(db: Db, o: typeof t.order.$inferSelect) {
   if (o.status !== 'picked' && o.status !== 'drafted') throw new MonthError(409, 'the bookshop has this order already; changes come with its reply');
+  // A book bought from the list (a tap) is in the library: picking again would drop its line and the tap's undo.
+  const bought = db.select({ b: t.orderLine.bookId }).from(t.orderLine).where(and(eq(t.orderLine.orderId, o.id), eq(t.orderLine.state, 'delivered'))).get();
+  if (bought) throw new MonthError(409, 'a book of this order is in the library already; undo “Owned” first to change the picks');
 }
 
 function mayChange(db: Db, me: string, personId: string) {
@@ -197,7 +201,10 @@ function orderView(db: Db, o: typeof t.order.$inferSelect): S['Order'] {
     ...(o.estimateC != null ? { estimate: o.estimateC } : {}), ...(o.quotedC != null ? { quoted: o.quotedC } : {}), ...(o.invoicedC != null ? { invoiced: o.invoicedC } : {}),
     lines: lines.map((l) => {
       const b = books.get(l.bookId)!;
-      return { book: { id: b.id, title: b.title, authors: JSON.parse(b.authorsJson) as string[] }, for: l.forPerson, ...(l.estimateC != null ? { estimate: l.estimateC } : {}), state: l.state };
+      return {
+        book: { id: b.id, title: b.title, authors: JSON.parse(b.authorsJson) as string[], ...(b.isbn13 ? { isbn13: b.isbn13 } : {}) }, for: l.forPerson,
+        ...(l.estimateC != null ? { estimate: l.estimateC } : {}), ...(l.quotedC != null ? { quoted: l.quotedC } : {}), state: l.state, ownedByTap: l.copyId != null,
+      };
     }),
   };
 }
@@ -234,7 +241,7 @@ export function changePicks(db: Db, month: string, me: string, body: unknown): S
     return lineFor(row);
   });
   const o = keep(db, month, me);
-  editable(o);
+  editable(db, o);
   // Pick again: your own picks and the kids'; another adult's stay as they are (theirs to change).
   const kidIds = new Set(kids(db).map((k) => k.id));
   const others = () => db.select().from(t.orderLine).where(eq(t.orderLine.orderId, o.id)).all()
@@ -265,7 +272,7 @@ export function setMonthBudget(db: Db, month: string, me: string, body: unknown)
     if ((b.min as number) > (b.max as number)) throw new MonthError(400, 'budget: the minimum is above the maximum');
   }
   const o = keep(db, month, me);
-  editable(o);
+  editable(db, o);
   const b = body as { min: number; max: number } | null;
   db.transaction((tx) => {
     if (b) tx.insert(t.monthOverride).values({ month, budgetMinC: b.min, budgetMaxC: b.max }).onConflictDoUpdate({ target: t.monthOverride.month, set: { budgetMinC: b.min, budgetMaxC: b.max } }).run();
@@ -285,21 +292,78 @@ export function setMonthBudget(db: Db, month: string, me: string, body: unknown)
 
 export interface OrderPlaces { bookshopEmail: string | null; deliveryAddress: string | null }
 
-/** POST /orders: the month's picks as an order, and its Compose link (never sent by Philobiblos). */
-export function composeOrder(db: Db, month: string, me: string, places: OrderPlaces): S['Order'] {
+/**
+ * POST /orders: the month's picks as an order, and its Compose link (never sent by Philobiblos). `places: 'list'` is
+ * no-shop mode (philobiblos#27 slice 5): the plain list for any shop or none, its mail text to no one and without the
+ * delivery address (orders/list.ts), so it needs no address and opens nothing sealed.
+ */
+export function composeOrder(db: Db, month: string, me: string, places: OrderPlaces | 'list'): S['Order'] {
   checkMonth(month);
-  if (!places.bookshopEmail) throw new MonthError(409, 'an admin adds the bookshop’s address in Settings first');
+  const list = places === 'list';
+  if (!list && !places.bookshopEmail) throw new MonthError(409, 'an admin adds the bookshop’s address in Settings first, or make a plain list');
   const o = keep(db, month, me);
-  editable(o);
+  editable(db, o);
   const lines = db.select().from(t.orderLine).where(eq(t.orderLine.orderId, o.id)).all();
   if (!lines.length) throw new MonthError(409, 'nothing is picked this month');
   const books = new Map(db.select().from(t.book).where(inArray(t.book.id, lines.map((l) => l.bookId))).all().map((b) => [b.id, b]));
-  const { subject, body } = orderText({
-    month, deliveryAddress: places.deliveryAddress, signedBy: getPerson(db, me)!.name,
+  const text = {
+    month, signedBy: getPerson(db, me)!.name,
     lines: lines.map((l) => { const b = books.get(l.bookId)!; return { title: b.title, authors: JSON.parse(b.authorsJson) as string[], isbn13: b.isbn13 }; }),
-  });
-  const link = mailto(places.bookshopEmail, subject, body);
+  };
+  const { subject, body } = list ? listText(text) : orderText({ ...text, deliveryAddress: places.deliveryAddress });
+  const link = list ? mailto(null, subject, body) : mailto(places.bookshopEmail!, subject, body);
   const estimate = lines.reduce((n, l) => n + (l.estimateC ?? 0), 0);
   db.update(t.order).set({ status: 'drafted', estimateC: estimate }).where(eq(t.order.id, o.id)).run();
-  return { ...orderView(db, orderOf(db, month)!), composeUrl: link.url, composeComplete: link.complete, composeTo: places.bookshopEmail, composeSubject: subject, composeText: body };
+  const view = orderView(db, orderOf(db, month)!);
+  if (list) return { ...view, listUrl: link.url, listComplete: link.complete, listSubject: subject, listText: body };
+  return { ...view, composeUrl: link.url, composeComplete: link.complete, composeTo: places.bookshopEmail!, composeSubject: subject, composeText: body };
+}
+
+/** GET /orders/{id}/list.csv: the books still to buy (planned or quoted), once the list or the mail is made. */
+export function orderListCsv(db: Db, id: string): { month: string; csv: string } {
+  const o = db.select().from(t.order).where(eq(t.order.id, id)).get();
+  if (!o) throw new MonthError(404, 'no such order');
+  if (o.status === 'picked') throw new MonthError(409, 'make the list first: the picks may still change');
+  const lines = db.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, o.id), inArray(t.orderLine.state, ['planned', 'quoted']))).all();
+  const books = new Map(lines.length ? db.select().from(t.book).where(inArray(t.book.id, lines.map((l) => l.bookId))).all().map((b) => [b.id, b]) : []);
+  return {
+    month: o.month,
+    csv: listCsv(lines.map((l) => {
+      const b = books.get(l.bookId)!;
+      return { title: b.title, authors: JSON.parse(b.authorsJson) as string[], isbn13: b.isbn13, estimateC: l.quotedC ?? l.estimateC };
+    })),
+  };
+}
+
+/**
+ * PUT /orders/{id}/lines/{bookId}: a book of a composed order bought with no invoice to record, marked owned by a tap
+ * (`owned: true`): one copy (manual, of this order, priced as the shop quoted it or not at all; nothing learnt), the line
+ * delivered. Only a planned or quoted line, so a second tap changes nothing (409). `owned: false` undoes a tap while its
+ * copy is the tap's: the copy removed, the line as it was. A line an invoice delivered is never undone here.
+ */
+export function markOwned(db: Db, id: string, bookId: string, body: unknown, now = new Date()): S['Order'] {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new MonthError(400, 'a JSON object is needed: { owned }');
+  const b = body as Record<string, unknown>;
+  for (const k of Object.keys(b)) if (k !== 'owned') throw new MonthError(400, `unknown field ${k.slice(0, 40)}`);
+  if (typeof b.owned !== 'boolean') throw new MonthError(400, 'owned: true or false');
+  const owned = b.owned;
+  db.transaction((tx) => {
+    const o = tx.select().from(t.order).where(eq(t.order.id, id)).get();
+    if (!o) throw new MonthError(404, 'no such order');
+    const l = tx.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, id), eq(t.orderLine.bookId, bookId))).get();
+    if (!l) throw new MonthError(404, 'no such book in this order');
+    const at = and(eq(t.orderLine.orderId, id), eq(t.orderLine.bookId, bookId));
+    if (owned) {
+      if (o.status === 'picked') throw new MonthError(409, 'make the list first: the picks may still change');
+      if (l.state !== 'planned' && l.state !== 'quoted') throw new MonthError(409, l.state === 'delivered' ? 'it is in the library already' : 'the shop could not deliver it: it goes to next month');
+      const copyId = ulid();
+      tx.insert(t.copy).values({ id: copyId, bookId, source: 'manual', orderId: id, priceC: l.state === 'quoted' ? l.quotedC : null, acquiredAt: now.toISOString() }).run();
+      tx.update(t.orderLine).set({ state: 'delivered', copyId }).where(at).run();
+    } else {
+      if (l.state !== 'delivered' || !l.copyId) throw new MonthError(409, 'only a book marked owned here can be unmarked; an invoice’s copies stay');
+      tx.update(t.orderLine).set({ state: l.quotedC != null ? 'quoted' : 'planned', copyId: null }).where(at).run();
+      tx.delete(t.copy).where(eq(t.copy.id, l.copyId)).run();
+    }
+  }, { behavior: 'immediate' });
+  return getOrder(db, id);
 }

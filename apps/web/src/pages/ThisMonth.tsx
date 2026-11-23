@@ -2,6 +2,8 @@
 // fill is the order's total), the order's progress, where your brain grows (the Focus card, the brain in miniature),
 // each adult's picks with their move, the kids' with their theme, and Compose: your own mail app opens with the order;
 // then the shop's quote or an invoice, typed in or imported, for a shop whose mail Philobiblos does not read (RecordEntry).
+// No-shop mode (philobiblos#27 slice 5): instead of Compose, the order as a plain list for any shop or none (its mail text
+// to no one, a printed page, a CSV), and each book bought marked owned by a tap (undone by another).
 // Nothing acts on a value change: the handles move a draft, a button applies it (WCAG 3.2.2).
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { components } from '@philobiblos/contracts/openapi';
@@ -37,13 +39,24 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
     try { setPlan(await fn()); setComposed(null); setStatus(said); } catch (e) { setError(message(e)); }
   };
   const change = (body: object, said: string) => act(() => api<Plan>(`/month/${month}/picks`, { method: 'POST', body }), said);
-  const compose = async () => {
+  const compose = async (list: boolean) => {
     setError(null);
     try {
-      const o = await api<Order>('/orders', { method: 'POST', body: { month } });
-      setComposed(o); setStatus('The order is ready to open in your mail app.');
+      const o = await api<Order>('/orders', { method: 'POST', body: list ? { month, list: true } : { month } });
+      setComposed(o); setStatus(list ? 'The list is ready to print, mail or download.' : 'The order is ready to open in your mail app.');
       await load();
     } catch (e) { setError(e instanceof ApiError && e.status === 409 ? `${message(e)}.` : message(e)); }
+  };
+  // A tap at a time: a second tap while the first runs is refused by the server anyway (409), never a second copy.
+  const [tapping, setTapping] = useState(false);
+  const own = async (bookId: string, title: string, owned: boolean) => {
+    if (!plan?.order?.id || tapping) return;
+    setError(null); setTapping(true);
+    try {
+      await api<Order>(`/orders/${plan.order.id}/lines/${encodeURIComponent(bookId)}`, { method: 'PUT', body: { owned } });
+      setStatus(owned ? `${title} is in the library.` : `${title} is off the library again.`);
+      await load();
+    } catch (e) { setError(message(e)); } finally { setTapping(false); }
   };
 
   const name = month ? `${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}` : '';
@@ -75,7 +88,8 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
               <PickList key={k.person!.id} title={`For ${k.person!.name}`} note="One theme and one author each" picks={k.picks ?? []} canChange kid
                 onRemove={(p) => void change({ remove: [{ bookId: p.candidate!.book!.id, for: k.person!.id }] }, `${p.candidate!.book!.title} is off this month’s list.`)} />
             ))}
-            <ComposeCard total={plan.total ?? 0} order={composed} empty={!adultCount && !kidCount} onCompose={() => void compose()} go={go} />
+            <ComposeCard total={plan.total ?? 0} order={composed} empty={!adultCount && !kidCount} onCompose={(list) => void compose(list)} go={go} />
+            {plan.order && plan.order.status !== 'picked' && (plan.order.lines?.length ?? 0) > 0 && <Bought order={plan.order} busy={tapping} onOwn={(b, t, o) => void own(b, t, o)} />}
             <RecordEntry month={month} monthName={name} orderStatus={plan.order?.status ?? null} onRecorded={() => void load()} />
           </>
         )}
@@ -258,26 +272,50 @@ function PickList({ title, note, picks, canChange, kid, onRemove }: { title: str
 
 // ---------------------------------------------------------------------------------------------------------- compose
 
-function ComposeCard({ total, order, empty, onCompose, go }: { total: number; order: Order | null; empty: boolean; onCompose: () => void; go: (to: string) => void }) {
+function ComposeCard({ total, order, empty, onCompose, go }: { total: number; order: Order | null; empty: boolean; onCompose: (list: boolean) => void; go: (to: string) => void }) {
   const id = useId();
   const fmt = useMoney().format;
   const [copied, setCopied] = useState('');
+  const list = order?.listUrl !== undefined;
   const copy = async () => {
-    try { await navigator.clipboard.writeText(order!.composeText ?? ''); setCopied('Copied.'); } catch { setCopied('Select the text and copy it.'); }
+    try { await navigator.clipboard.writeText((list ? order!.listText : order!.composeText) ?? ''); setCopied('Copied.'); } catch { setCopied('Select the text and copy it.'); }
   };
   return (
     <section className="card stack" aria-labelledby={`${id}-h`}>
       <div>
-        <h2 className="card-title" id={`${id}-h`}>Order from the bookshop</h2>
+        <h2 className="card-title" id={`${id}-h`}>Order the books</h2>
         <p className="footnote">Compose writes the order to the bookshop, about {fmt(total)}, and asks for prices and delivery times first. Your mail app sends it, not Philobiblos, and it never holds a card number. <a href="/settings" onClick={(e) => { e.preventDefault(); go('/settings'); }}>Where orders go</a></p>
+        <p className="footnote">Or make a plain list for any shop, or none: print it, mail it to whoever you choose, or download it as a CSV. It holds the books only, not your address or anyone’s name.</p>
       </div>
       {!order ? (
-        <div className="btn-row"><button type="button" className="btn btn-primary" disabled={empty} onClick={onCompose}>Compose the order</button></div>
+        <div className="btn-row">
+          <button type="button" className="btn btn-primary" disabled={empty} onClick={() => onCompose(false)}>Compose the order</button>
+          <button type="button" className="btn" disabled={empty} onClick={() => onCompose(true)}>Make a plain list</button>
+        </div>
+      ) : list ? (
+        <>
+          <div className="btn-row">
+            <a className="btn btn-primary" href={order.listUrl}>Open in your mail app</a>
+            <button type="button" className="btn" onClick={() => void copy()}>Copy the list</button>
+            <button type="button" className="btn" onClick={() => window.print()}>Print the list</button>
+            <a className="btn" href={`/api/orders/${encodeURIComponent(order.id!)}/list.csv`} download>Download the CSV</a>
+            <button type="button" className="btn btn-plain" onClick={() => onCompose(false)}>Compose to the bookshop instead</button>
+            <span className="footnote" role="status">{copied}</span>
+          </div>
+          <p className="footnote">The mail goes to no one yet: choose the shop in your mail app. The CSV has the columns an invoice imports (below), so the same file with the prices paid records what you bought.</p>
+          {order.listComplete === false && <Notice kind="info" title="A long list.">The link holds a greeting only: paste the copied text into the mail.</Notice>}
+          <div className="field">
+            <label className="field-label" htmlFor={`${id}-t`}>The list’s text</label>
+            <textarea className="input textarea mo-text" id={`${id}-t`} readOnly value={`Subject: ${order.listSubject ?? ''}\n\n${order.listText ?? ''}`} />
+          </div>
+          <PrintedList order={order} />
+        </>
       ) : (
         <>
           <div className="btn-row">
             <a className="btn btn-primary" href={order.composeUrl} aria-describedby={`${id}-to`}>Open in your mail app</a>
             <button type="button" className="btn" onClick={() => void copy()}>Copy the order text</button>
+            <button type="button" className="btn btn-plain" onClick={() => onCompose(true)}>Make a plain list instead</button>
             <span className="footnote" role="status">{copied}</span>
           </div>
           <p id={`${id}-to`}>To: <b>{order.composeTo}</b></p>
@@ -288,6 +326,62 @@ function ComposeCard({ total, order, empty, onCompose, go }: { total: number; or
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+/** The printed page: the books alone (title, authors, ISBN, estimate), shown only when printing (app.css .mo-print). */
+function PrintedList({ order }: { order: Order }) {
+  const fmt = useMoney().format;
+  return (
+    <section className="mo-print">
+      <h2>{order.listSubject}</h2>
+      <ol>
+        {(order.lines ?? []).map((l) => (
+          <li key={l.book!.id}>
+            <b>{l.book!.title}</b>{l.book!.authors?.length ? `, ${l.book!.authors.join(', ')}` : ''}
+            {l.book!.isbn13 ? ` · ISBN ${l.book!.isbn13}` : ''}{l.estimate != null ? ` · about ${fmt(l.estimate)}` : ''}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------- bought
+
+const LINE_STATE: Record<string, string> = { planned: 'To buy', quoted: 'Quoted', unavailable: 'Not available: next month', delivered: 'In the library', rolled_over: 'Next month' };
+
+/** Each book of the composed order, marked owned by a tap once bought (no invoice to record), or the tap undone. */
+function Bought({ order, busy, onOwn }: { order: Order; busy: boolean; onOwn: (bookId: string, title: string, owned: boolean) => void }) {
+  const id = useId();
+  const lines = order.lines ?? [];
+  const inLibrary = lines.filter((l) => l.state === 'delivered').length;
+  return (
+    <section className="group-block" aria-labelledby={`${id}-h`}>
+      <div className="group-head"><h2 id={`${id}-h`}>Bought</h2><span>{inLibrary} of {lines.length} in the library</span></div>
+      <ul className="group" role="list">
+        {lines.map((l) => {
+          const b = l.book!;
+          const open = l.state === 'planned' || l.state === 'quoted';
+          return (
+            <li key={b.id} className="row">
+              <span className="row-main">
+                <span className="row-title wrap">{b.title}</span>
+                <span className="row-sub wrap">{(b.authors ?? []).join(', ')}{(b.authors?.length ? ' · ' : '') + (LINE_STATE[l.state ?? 'planned'] ?? '')}</span>
+              </span>
+              <span className="row-trail">
+                {open && <button type="button" className="btn btn-sm" disabled={busy} aria-label={`Mark ${b.title} owned`} onClick={() => onOwn(b.id, b.title, true)}>Owned</button>}
+                {l.ownedByTap && <button type="button" className="btn btn-sm btn-plain" disabled={busy} aria-label={`Undo: ${b.title} is not owned after all`} onClick={() => onOwn(b.id, b.title, false)}>Undo</button>}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="group-foot">
+        Bought a book with no invoice to record? Mark it owned and it goes to the library. If you record the shop’s invoice instead, leave its books here: the invoice makes their copies.
+        {' '}<a href={`/api/orders/${encodeURIComponent(order.id!)}/list.csv`} download>Download the books still to buy (CSV)</a>
+      </p>
     </section>
   );
 }

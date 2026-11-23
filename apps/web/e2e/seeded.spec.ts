@@ -5,6 +5,7 @@
 // the Inbox, share tokens and phone shares.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, request, test, type Page } from '@playwright/test';
 import { SEEDED_PORT, dataDir } from './env';
@@ -488,6 +489,48 @@ test('this month: picks, the budget bar by keyboard, a pick removed, Compose', a
   await expectAccessible(page, 'this month on a phone');
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.screenshot({ path: 'test-results/month.png', fullPage: true });
+  done();
+});
+
+test('this month, no shop: the plain list mailed to no one, printed and downloaded; a book marked owned, then undone (philobiblos#27)', async () => {
+  const done = noForeignRequests(page, ORIGIN);
+  // The order was composed to the bookshop (the test before): a plain list instead
+  await page.getByRole('link', { name: 'This month' }).click();
+  await page.getByRole('button', { name: 'Make a plain list instead' }).click();
+  const open = page.getByRole('link', { name: 'Open in your mail app' });
+  await expect(open).toHaveAttribute('href', /^mailto:\?subject=Book%20order%2C%20/);
+  const text = await page.getByLabel('The list’s text').inputValue();
+  expect(text).not.toContain('Example Street'); // the delivery address stays out of a list
+  expect(text).not.toMatch(/\b(?:\d[ -]?){13,19}\b|card number/i);
+  await expect(page.getByRole('listitem').filter({ has: page.getByText('Composed', { exact: true }) })).toHaveAttribute('aria-current', 'step');
+  await expectAccessible(page, 'this month, a plain list');
+
+  // Printed: the list alone
+  await page.emulateMedia({ media: 'print' });
+  const printed = page.locator('.mo-print');
+  await expect(printed).toBeVisible();
+  await expect(printed.getByRole('heading', { name: /^Book order, / })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'For you · non-fiction' })).toBeHidden();
+  await page.emulateMedia({ media: 'screen' });
+  await expect(printed).toBeHidden();
+
+  // Downloaded: a CSV whose cells a spreadsheet reads as text
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Download the CSV' }).click()]);
+  expect(download.suggestedFilename()).toMatch(/^book-order-\d{4}-\d{2}\.csv$/);
+  const csv = await readFile((await download.path())!, 'utf8');
+  expect(csv.startsWith('\ufeffisbn,title,author,qty,price,estimate\r\n')).toBe(true);
+
+  // Bought with no invoice: one tap, then undone (the next test records the quote and invoice of the same order)
+  const bought = page.getByRole('region', { name: 'Bought' });
+  const mark = bought.getByRole('button', { name: /^Mark .* owned$/ }).first();
+  const title = (await mark.getAttribute('aria-label'))!.replace(/^Mark (.*) owned$/, '$1');
+  await mark.click();
+  await expect(page.getByRole('status').filter({ hasText: `${title} is in the library.` })).toBeAttached();
+  await expect(bought.getByText(/^1 of \d+ in the library$/)).toBeVisible();
+  await expectAccessible(page, 'this month, a book bought');
+  await bought.getByRole('button', { name: `Undo: ${title} is not owned after all` }).click();
+  await expect(page.getByRole('status').filter({ hasText: `${title} is off the library again.` })).toBeAttached();
+  await expect(bought.getByText(/^0 of \d+ in the library$/)).toBeVisible();
   done();
 });
 

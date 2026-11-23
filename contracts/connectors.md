@@ -162,6 +162,32 @@ effects of the mail of its kind in the table above, on the same records, and not
   checked before anything changes, in one transaction; `dryRun: true` applies it and rolls it back, so it answers
   exactly what the entry would do.
 
+## No-shop mode: the order as a plain list (philobiblos#27 slice 5)
+
+For a shop with no address, or none: `POST /orders` with `list: true` composes the month's order (status drafted, as
+Compose does) without a bookshop address and without opening anything sealed (it works with no sealing key).
+
+- **The mail text** (`listUrl`, `listText`): the order's text with no delivery address, as a `mailto:` with no recipient
+  (the person chooses the shop in their own mail app); as long as Compose's, the link holds a greeting only past
+  `MAILTO_MAX` (`listComplete: false`). No card line, no Cc or Bcc.
+- **The printed page**: the web app prints the order's books alone (title, authors, ISBN, estimate).
+- **The CSV** (`GET /orders/{id}/list.csv`, any adult, once the order is not picked): the books still to buy (planned or
+  quoted), UTF-8 with a byte order mark, CRLF, every cell quoted; the columns `isbn` (as `978-…`, which a spreadsheet keeps
+  as text), `title`, `author` (the first), `qty` (1), `price` (empty) and `estimate` (the quote, else the estimate), so the
+  same file with the prices paid imports as an invoice (above; `estimate` is named back). An attachment, `no-store`.
+  **A formula is never written**: a cell that starts with `=`, `+`, `-`, `@` or their full-width forms (after any spaces,
+  or after a control character turned into a space), or with a tab or a carriage return, is written with a leading `'`
+  (OWASP "CSV Injection"; philobiblos#45); control characters become spaces, so a row is a line. An import reads that one
+  `'` back out (`unguardCell`), so an exported title comes back as it was.
+- None of the three holds the delivery address, a person's name or a card number.
+- **Owned by a tap** (`PUT /orders/{id}/lines/{bookId}`, `{ owned: true }`, any adult: the order and its copies are the
+  household's): for a composed order's planned or quoted line, one copy (source `manual`, of this order, priced as the shop
+  quoted it or not at all; no price learnt) and the line delivered, the copy kept on the line (`order_line.copy_id`). A
+  second tap is 409, never a second copy; an unavailable line is 409. `{ owned: false }` undoes a tap while the line holds
+  its copy: the copy removed, the line planned (or quoted) again; a line an invoice or the Inbox delivered is never undone
+  here (409). While any line of the order is delivered, its picks, budget and list stay as they are (409), so picking again
+  never drops a book in the library.
+
 ## Price lookup (ADR 0008)
 
 `PriceSource` interface, one per enabled connector with `prices`. `kind: jsonld`: GET its `url` as below and read only

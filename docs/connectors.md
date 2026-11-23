@@ -53,6 +53,14 @@ shop's mail would have had: copies owned, the order's lines quoted or delivered.
 connector, or your own name for another shop), and its number counts once for that shop, whether typed, imported or
 read from that connector's mail. Save a CSV as UTF-8 ("CSV UTF-8" in a spreadsheet): another encoding is refused. The rules are in `contracts/connectors.md` ("Typed in or imported").
 
+No shop at all, or one with no e-mail address: **Make a plain list** instead of Compose. The list holds the books only
+(title, authors, ISBN, the estimate), never the delivery address or anyone's name: **Open in your mail app** writes it to
+no one (choose the shop there), **Print the list** prints it alone, and **Download the CSV** saves it with the columns an
+invoice imports, so the same file with the prices paid filled in records what you bought. When you have bought a book
+and there is no invoice to record, tap **Owned** under *Bought*: it goes to the library (a copy, the line delivered), and
+**Undo** takes it back. Record an invoice or tap Owned for a book, not both: each makes its copy. The rules are in
+`contracts/connectors.md` ("No-shop mode").
+
 ## Upgrading from M3
 
 Before M4, one bookshop was built into Philobiblos, with its mail domains, its price host and a default ARC sealer for
