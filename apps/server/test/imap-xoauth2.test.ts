@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import tls from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { loadConfig } from '../src/config';
 import { MailboxError, openMailbox, type MailboxConfig } from '../src/net/imap';
 
 const fixture = (f: string) => fileURLToPath(new URL(`./fixtures/tls/${f}`, import.meta.url));
@@ -49,7 +50,7 @@ beforeAll(async () => {
 afterAll(() => { server.close(); });
 beforeEach(() => { imap.caps = 'IMAP4rev1 SASL-IR AUTH=XOAUTH2'; imap.commands = []; imap.payloads = []; });
 
-const box = (o: Partial<MailboxConfig> = {}): MailboxConfig => ({ host: 'imap.test', user: USER, folder: 'INBOX', accessToken: TOKEN, test: { ca: readFileSync(fixture('cert.pem'), 'utf8'), connectTo: '127.0.0.1', port }, ...o } as MailboxConfig);
+const box = (o: Partial<MailboxConfig> = {}): MailboxConfig => ({ host: 'imap.test', user: USER, folder: 'INBOX', accessToken: TOKEN, port, test: { ca: readFileSync(fixture('cert.pem'), 'utf8'), connectTo: '127.0.0.1' }, ...o } as MailboxConfig);
 
 describe('XOAUTH2', () => {
   it('signs in with the token in the SASL payload, then opens the folder read-only; never LOGIN', async () => {
@@ -66,7 +67,7 @@ describe('XOAUTH2', () => {
     const e = (await openMailbox(box({ accessToken: 'another-token-9876543210' })).then(() => null, (x: unknown) => x)) as Error;
     expect(e).toBeInstanceOf(MailboxError);
     expect(e.message).not.toContain('another-token');
-    expect(e.message).toBe('cannot sign in to imap.test:993 over TLS');
+    expect(e.message).toBe(`cannot sign in to imap.test:${port} over TLS`);
   });
 
   it('a server that offers no OAuth mechanism: refused, never a password fallback', async () => {
@@ -84,7 +85,7 @@ describe('XOAUTH2', () => {
 
 describe('a self-hosted server\'s or a bridge\'s own certificate (PHILOBIBLOS_IMAP_CA_FILE)', () => {
   it('trusted only when named; the host name is still checked', async () => {
-    const place = { test: { connectTo: '127.0.0.1', port } };
+    const place = { test: { connectTo: '127.0.0.1' } };
     // Without it the system's CAs do not know the certificate.
     await expect(openMailbox(box(place))).rejects.toBeInstanceOf(MailboxError);
     const m = await openMailbox(box({ ...place, caFile: fixture('cert.pem') }));
@@ -93,8 +94,21 @@ describe('a self-hosted server\'s or a bridge\'s own certificate (PHILOBIBLOS_IM
     await expect(openMailbox(box({ ...place, caFile: '/nonexistent/ca.pem' }))).rejects.toThrow('cannot read PHILOBIBLOS_IMAP_CA_FILE');
   });
 
-  it('the port is the one named, with TLS from the first byte', async () => {
-    const e = (await openMailbox(box({ port: 1143, accessToken: 'refused-token' })).then(() => null, (x: unknown) => x)) as Error;
-    expect(e.message).toBe('cannot sign in to imap.test:1143 over TLS');
+  it('PHILOBIBLOS_IMAP_PORT is the port connected to (philobiblos#49): loadConfig to openMailbox, no test port override', async () => {
+    const c = loadConfig({ PHILOBIBLOS_IMAP_HOST: 'imap.test', PHILOBIBLOS_IMAP_USER: USER, PHILOBIBLOS_IMAP_PASSWORD: 'unused', PHILOBIBLOS_IMAP_PORT: String(port), PHILOBIBLOS_IMAP_CA_FILE: fixture('cert.pem') });
+    const { password: _unused, ...place } = c.imap!;
+    // Only where the name resolves is the test's: the port, the CA and the host name checked are the configuration's.
+    const m = await openMailbox({ ...place, accessToken: TOKEN, test: { connectTo: '127.0.0.1' } });
+    await m.close();
+    expect(imap.payloads).toEqual([`user=${USER}\x01auth=Bearer ${TOKEN}\x01\x01`]);
+  });
+
+  it('no port named: 993, with TLS from the first byte', async () => {
+    const c = loadConfig({ PHILOBIBLOS_IMAP_HOST: 'imap.test', PHILOBIBLOS_IMAP_USER: USER, PHILOBIBLOS_IMAP_PASSWORD: 'unused' });
+    expect(c.imap!.port).toBe(993);
+    const { password: _unused, port: _993, ...place } = c.imap!;
+    const e = (await openMailbox({ ...place, accessToken: TOKEN, test: { ca: readFileSync(fixture('cert.pem'), 'utf8'), connectTo: '127.0.0.1' } }).then(() => null, (x: unknown) => x)) as Error;
+    expect(e.message).toBe('cannot sign in to imap.test:993 over TLS');
+    expect(imap.payloads).toEqual([]); // nothing reached the fake server on its own port
   });
 });
