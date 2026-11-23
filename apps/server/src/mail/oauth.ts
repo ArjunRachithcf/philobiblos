@@ -13,7 +13,7 @@
 // - A refresh happens only when the access token has less than a minute left, one at a time; a new refresh token in the
 //   answer replaces the old one (rotation). A refusal of the refresh token itself (invalid_grant) forgets the tokens.
 // - Disconnecting forgets the tokens first, then revokes the refresh token at the provider (RFC 7009) when it has an
-//   endpoint for that.
+//   endpoint for that. A refresh in flight that loses to it revokes the refresh token it was rotated to as well.
 // - No token, code or verifier is ever in an answer, a log or job_run; the provider's own words are never shown, only
 //   its RFC 6749 error code. The token client reaches the token and revocation endpoints and nothing else.
 import { createHash, randomBytes } from 'node:crypto';
@@ -273,7 +273,13 @@ export class MailOAuth {
       }
       throw new OAuthError(502, `the provider refused to refresh the token (${t.error})`);
     }
-    if (!same()) throw new OAuthError(409, 'the mailbox was disconnected or connected again meanwhile');
+    if (!same()) {
+      // Lost to a disconnect: the refresh token the provider rotated to is revoked as well, so none outlives Disconnect
+      // (philobiblos#49). Lost to a new connection: not revoked, as finish does not revoke the one it replaces (at some
+      // providers that would end the new grant too); the dropped token is never sent again.
+      if (t.refresh && t.refresh !== s.refresh && !isSealed(this.db, OAUTH_SEALED)) await this.revoke(imap.oauth, t.refresh);
+      throw new OAuthError(409, 'the mailbox was disconnected or connected again meanwhile');
+    }
     const now = this.now();
     // Rotation: a new refresh token replaces the old one, which is never sent again.
     const next: Stored = { ...s, refresh: t.refresh ?? s.refresh, access: t.access, expiresAt: new Date(now.getTime() + t.expiresIn * 1000).toISOString() };
@@ -293,10 +299,16 @@ export class MailOAuth {
     forget(this.db, OAUTH_SEALED);
     if (!imap.oauth.revokeUrl) return { revoked: null };
     if (!s || s.client !== fingerprint(imap, this.cfg.origin)) return { revoked: false };
+    return { revoked: await this.revoke(imap.oauth, s.refresh) };
+  }
+
+  /** A refresh token revoked at the provider (RFC 7009): whether it confirmed; null when it has no endpoint for that. */
+  private async revoke(o: OAuthClient, token: string): Promise<boolean | null> {
+    if (!o.revokeUrl) return null;
     try {
-      const r = await this.post(imap.oauth.revokeUrl, { token: s.refresh, token_type_hint: 'refresh_token', ...this.credentials(imap.oauth) });
-      return { revoked: r.status >= 200 && r.status < 300 };
-    } catch (e) { if (e instanceof OAuthError) return { revoked: false }; throw e; }
+      const r = await this.post(o.revokeUrl, { token, token_type_hint: 'refresh_token', ...this.credentials(o) });
+      return r.status >= 200 && r.status < 300;
+    } catch (e) { if (e instanceof OAuthError) return false; throw e; }
   }
 }
 

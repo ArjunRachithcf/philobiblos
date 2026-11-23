@@ -66,7 +66,9 @@ the client, its endpoints, the scope or the mailbox in the environment, the old 
 endpoints, and Settings asks for a new connection.
 
 **Disconnecting** (Settings, Mailbox) forgets the tokens, then revokes the refresh token at the provider if it has a
-revocation endpoint. Without one, also remove Philobiblos from the account's connected apps.
+revocation endpoint. A refresh still in flight when you disconnect writes nothing back, and if the provider answered it
+with a new refresh token, that one is revoked too. Without a revocation endpoint, also remove Philobiblos from the
+account's connected apps.
 
 The scope decides what a token can reach. For IMAP that is usually the whole mailbox, which is one more reason to
 connect only the mailbox Philobiblos uses and nothing else.
@@ -135,22 +137,36 @@ certificate and nothing else, and still checks that the certificate is for `PHIL
 set `PHILOBIBLOS_IMAP_PORT`; TLS still starts at the first byte.
 
 XOAUTH2 against your own identity provider works too, if its token endpoint is on a public address over https.
-Philobiblos's token client reaches public addresses only, as every outgoing request does (ADR 0009). An identity provider
-only on your home network is not reached, so use a password there.
+Philobiblos's token client reaches public addresses only, as every outgoing request does (ADR 0009). **A token endpoint
+only on your home network is not supported**, and that is a decision, not a gap: allowing private addresses for it
+would let whoever sets the environment's token URL point Philobiblos's token client (which sends the client secret and
+the refresh token) at the router, the edge or a neighbour container. Connecting then fails with *cannot reach … (private-address)*
+and nothing is sent. Use an app password for such a server: the IMAP connection itself may be on the home network.
 
 ## Proton Mail, through Bridge
 
-Proton Mail has no IMAP of its own. Proton Mail Bridge, Proton's app, runs on a computer of yours and offers the mailbox
-over IMAP there, with a password of its own that Bridge shows you. That password goes in `PHILOBIBLOS_IMAP_PASSWORD`.
-Bridge has to keep running for Philobiblos to read mail.
+Proton Mail has no IMAP of its own. Proton Mail Bridge, Proton's app, offers the mailbox over IMAP on the computer it runs
+on, with a password of its own that Bridge shows you. **Bridge needs a paid Proton plan**: a free account cannot use it.
+That password goes in `PHILOBIBLOS_IMAP_PASSWORD`. Bridge has to keep running for Philobiblos to read mail.
 
-Philobiblos speaks TLS from the first byte only and checks the certificate's name, so:
+Bridge listens on its own loopback address only (127.0.0.1), and its certificate names that address. In the shipped
+`docker-compose.yml`, 127.0.0.1 inside Philobiblos's container is the container's own loopback, not the computer's, so
+Bridge is not reached that way. Philobiblos has to share Bridge's network, in one of two ways:
+
+- **Bridge on the computer, Philobiblos on the host's network.** Give the `philobiblos` service `network_mode: host` (and
+  drop its `ports:`, which the host network does not take). 127.0.0.1 is then the computer's, where Bridge listens.
+  Philobiblos then listens on the computer's own port 8080, so put it behind your proxy as before.
+- **Bridge in a container of its own.** Give the `philobiblos` service `network_mode: "service:<bridge>"`, where `<bridge>`
+  is the name of Bridge's service in the same compose file. Both then share one network namespace, so 127.0.0.1 is the
+  same loopback for both. Move the `ports:` of `philobiblos` to Bridge's service, because only the service that owns the
+  namespace can publish ports.
+
+Then, as Philobiblos speaks TLS from the first byte only and checks the certificate's name:
 
 1. In Bridge's settings, set the IMAP connection to SSL (not STARTTLS), and note its IMAP port.
-2. Export Bridge's TLS certificate from its settings, and give its file to Philobiblos in `PHILOBIBLOS_IMAP_CA_FILE`.
-3. Set `PHILOBIBLOS_IMAP_HOST` to a name or address the certificate is for. Check with
-   `openssl x509 -in cert.pem -noout -ext subjectAltName`. Bridge listens on its own computer only, so Philobiblos runs on
-   the same one and uses the address the certificate names.
+2. Export Bridge's TLS certificate from its settings, mount the file read-only, and name it in `PHILOBIBLOS_IMAP_CA_FILE`.
+3. Set `PHILOBIBLOS_IMAP_HOST` to the address the certificate names (check with
+   `openssl x509 -in cert.pem -noout -ext subjectAltName`; usually 127.0.0.1).
 4. Set `PHILOBIBLOS_IMAP_PORT` to Bridge's IMAP port.
 
 ```sh
@@ -161,4 +177,7 @@ PHILOBIBLOS_IMAP_USER=books-mailbox@proton.example
 PHILOBIBLOS_IMAP_PASSWORD_FILE=/run/secrets/bridge-password
 ```
 
-Under HomersLab the IMAP port is 993: the manifest's egress allows only that one (`contracts/homerslab-app.yaml`).
+Under HomersLab the manifest (`contracts/homerslab-app.yaml`) takes `PHILOBIBLOS_IMAP_PORT` (its egress allows that
+port on `PHILOBIBLOS_IMAP_HOST`) and mounts the certificate you give it read-only at `/config/imap-ca.pem` for
+`PHILOBIBLOS_IMAP_CA_FILE`, so a self-hosted server with its own certificate works there. Bridge does not yet: HomersLab
+chooses the app's network itself and cannot yet share Bridge's loopback with it (noted in the manifest).

@@ -33,8 +33,11 @@ the other (`docs/mail-providers.md`):
   and mailbox they were given for: a change of either in the environment and they are never used or sent anywhere. The
   access token is refreshed with less than a minute left, one refresh at a time; a new refresh token replaces the old one
   (rotation); `invalid_grant` forgets them. Disconnecting forgets them, then revokes the refresh token (RFC 7009) when the
-  client names a revocation endpoint. The token client reaches the token and revocation endpoints only (https, public
-  addresses, never redirected); no token, code or verifier is in an answer, a log or `job_run`, and of a provider's
+  client names a revocation endpoint; a refresh that loses to a disconnect writes nothing back and revokes the refresh
+  token the provider rotated to as well (one that loses to a new connection does not: at some providers that would end
+  the new grant too). The token client reaches the token and revocation endpoints only (https, public addresses, never
+  redirected): **a token endpoint only on the home network is not supported** (decided, philobiblos#49: the client secret
+  and refresh token never go to a private address); no token, code or verifier is in an answer, a log or `job_run`, and of a provider's
   refusal only its RFC 6749 error code is repeated.
 
 **Every mail is hostile input.** Forwarded mail can be spoofed, so before a mail has any effect:
