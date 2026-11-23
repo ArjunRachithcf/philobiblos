@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import * as t from '../src/db/schema';
 import { refreshMail } from '../src/mail/job';
-import { MailUnreadable, addressParts, readMail, safeField } from '../src/mail/read';
+import { MailUnreadable, addressParts, mailDay, readMail, safeField } from '../src/mail/read';
 import { addressDomains, headerBlock, verifyBookshopMail } from '../src/mail/verify';
 import { dkimKeyResolver } from '../src/net/dns';
 import { SEALED } from '../src/routes/month';
@@ -117,6 +117,20 @@ describe('the header block is strict, and what was parsed is what was signed', (
     const other = headerBlock(message({ id: 'other1', subject: 'Something else' }));
     if (!('block' in other)) throw new Error('strict block expected');
     await expect(readMail(good, other.block)).rejects.toMatchObject({ code: 'headers_differ' });
+    // The same instant in another zone names another day (philobiblos#53): the Date header itself must be the block's.
+    const zoned = headerBlock(message({ id: 'same1', date: 'Mon, 16 Nov 2026 00:00:00 -0900' }));
+    if (!('block' in zoned)) throw new Error('strict block expected');
+    const late = await signed(message({ id: 'same1', date: 'Mon, 16 Nov 2026 10:00:00 +0100' }));
+    await expect(readMail(late, zoned.block)).rejects.toMatchObject({ code: 'headers_differ' });
+  });
+
+  it('a mail\'s day is the one its Date header names in its own zone; anything else is none (philobiblos#53)', () => {
+    expect(mailDay('Thu, 12 Nov 2026 00:30:00 +0100')).toBe('2026-11-12T00:00:00.000Z');
+    expect(mailDay('12 Nov 2026 23:59:59 -1100')).toBe('2026-11-12T00:00:00.000Z');
+    expect(mailDay('Sun, 1 Mar 2026 08:00:00 +0000')).toBe('2026-03-01T00:00:00.000Z');
+    for (const bad of ['Mon, 31 Feb 2026 08:00:00 +0000', 'Mon, 0 Nov 2026 08:00:00 +0000', '12 Foo 2026 08:00:00 +0000', '12 Nov 0026 08:00 +0000', '2026-11-12T08:00:00Z', 'garbage', '', null, undefined]) {
+      expect(mailDay(bad), String(bad)).toBeNull();
+    }
   });
 
   it('a verified mail keeps no text: only its fields, and where it is in the mailbox', async () => {
@@ -125,7 +139,7 @@ describe('the header block is strict, and what was parsed is what was signed', (
     await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 6, raw: mail }]), resolver });
     const kept = JSON.parse(db.select().from(t.mailSeen).get()!.parsedJson!);
     // A quote with no book in it is a layout Philobiblos does not know: refused, and only that is kept.
-    expect(kept).toEqual({ subject: 'Re: Book order', date: expect.any(String), messageId: '<fields1@quillmere.example>', inReplyTo: null, pdfs: 0, uidValidity: 7, uid: 6, parser: 'quote-1', expected: 'bookshop_quote', reason: 'no books' });
+    expect(kept).toEqual({ subject: 'Re: Book order', date: expect.any(String), day: '2026-11-16T00:00:00.000Z', messageId: '<fields1@quillmere.example>', inReplyTo: null, pdfs: 0, uidValidity: 7, uid: 6, parser: 'quote-1', expected: 'bookshop_quote', reason: 'no books' });
     expect(JSON.stringify(kept)).not.toMatch(/Somewhere|4111|19\.90/);
   });
 });

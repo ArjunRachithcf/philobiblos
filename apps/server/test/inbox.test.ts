@@ -629,6 +629,17 @@ describe('the Inbox', () => {
     expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => [o.source, o.priceC, o.seenAt])).toEqual([['invoice', 1800, '2026-11-10T00:00:00.000Z']]);
   });
 
+  it('an Inbox line is dated by the day its mail\'s Date header names in its own zone, as the mail\'s effect dates it (philobiblos#53)', async () => {
+    const a = await app();
+    const now = new Date().toISOString();
+    a.db.transaction((tx) => { receive(tx, { bookId: 'b_tide', qty: 1, unitC: 1800, acquiredAt: '2026-11-12T00:00:00.000Z', source: 'invoice' }, now); });
+    a.db.insert(t.mailSeen).values({ messageId: '<zone@quillmere.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1239', date: '2026-11-11T23:30:00.000Z', day: '2026-11-12T00:00:00.000Z', lines: [
+      { ean: null, title: 'The Long Tide of Markets', qty: 1, priceC: 1400, totalC: 1400, vatPct: 2.6, bookId: null },
+    ] }) }).run();
+    expect((await post(a, `/api/inbox/${mailItemId('<zone@quillmere.example>')}/books/0`, { action: 'add', for: 'me' })).statusCode).toBe(200);
+    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => [o.priceC, o.seenAt])).toEqual([[1400, '2026-11-12T00:00:00.000Z']]);
+  });
+
   it('an invoice with no date it can read counts from when its mail was read, not from the decision (philobiblos#53)', async () => {
     const a = await app();
     a.db.insert(t.mailSeen).values({ messageId: '<undated@quillmere.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: '2026-10-02T07:00:00.000Z', accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1238', lines: [

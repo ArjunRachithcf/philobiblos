@@ -275,7 +275,7 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
   const it = resolve(db, me, id);
   if (db.select().from(t.inboxDecision).where(and(eq(t.inboxDecision.item, id), inArray(t.inboxDecision.idx, [index, -1]))).get()) throw new InboxError(409, 'decided already');
 
-  let book: { title: string | null; author: string | null; ean: string | null; notBook?: boolean; eanUnreadable?: boolean; invoice?: { qty: number; unitC: number; totalC: number; date: string | null; readAt: string } } | undefined;
+  let book: { title: string | null; author: string | null; ean: string | null; notBook?: boolean; eanUnreadable?: boolean; invoice?: { qty: number; unitC: number; totalC: number; date: string | null; day: string | null; readAt: string } } | undefined;
   let shareId: string | null = null;
   let origin: 'share' | 'manual' | 'ai' = 'manual';
   if (it.kind === 'ai') {
@@ -296,7 +296,7 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
       const qty = typeof l.qty === 'number' && l.qty > 0 ? l.qty : 1;
       book = {
         title: str(l.title), author: str(l.author, 200), ean: str(l.ean, 13), notBook: l.notBook === true, eanUnreadable: l.eanUnreadable === true,
-        ...(it.row.kind === 'invoice' && typeof l.totalC === 'number' ? { invoice: { qty, unitC: Math.round(l.totalC / qty), totalC: l.totalC, date: str(p.date, 40), readAt: it.row.seenAt } } : {}),
+        ...(it.row.kind === 'invoice' && typeof l.totalC === 'number' ? { invoice: { qty, unitC: Math.round(l.totalC / qty), totalC: l.totalC, date: str(p.date, 40), day: DAY.test(str(p.day, 24) ?? '') ? str(p.day, 24) : null, readAt: it.row.seenAt } } : {}),
       };
     }
   }
@@ -329,7 +329,7 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
       const acquired = inv.date && !Number.isNaN(Date.parse(inv.date)) ? new Date(inv.date).toISOString() : inv.readAt;
       // A line of more copies than one makes is invoiced for the copies made, at the price of one (philobiblos#53).
       const copies = Math.min(inv.qty, MAX_COPIES);
-      const orderId = receive(tx, { bookId, qty: copies, unitC: inv.unitC, acquiredAt: acquired, source: 'invoice' }, iso);
+      const orderId = receive(tx, { bookId, qty: copies, unitC: inv.unitC, acquiredAt: acquired, source: 'invoice', day: inv.day }, iso);
       if (orderId) invoiceOrders(tx, new Map([[orderId, copies === inv.qty ? inv.totalC : inv.unitC * copies]]));
       if (forWho) tx.insert(t.reading).values({ personId: target.id, bookId, status: 'to_read', updatedAt: iso }).onConflictDoNothing().run();
     } else {
@@ -340,6 +340,9 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
   });
   return itemNow(db, me, id);
 }
+
+/** A mail's day as read.ts `mailDay` keeps it (a mail read before it was kept has none: the UTC day of its date). */
+const DAY = /^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/;
 
 /** Copies an invoice line added from the Inbox makes at most (a line's quantity is two digits). */
 export const MAX_COPIES = 20;

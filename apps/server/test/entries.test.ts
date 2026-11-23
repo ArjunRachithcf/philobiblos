@@ -207,8 +207,8 @@ const PDF = Buffer.from('%PDF-1.4\n% invented, read only by the fake worker belo
 const rows = (): MediaOutcome => ({ id: 'j', ok: true, kind: 'pdf.text', pages: 1, truncated: false, rows: [
   ['9780000000002', 'The Long Tide of Markets', '1 ST', '19.90', '19.90 CHF', '2.6 %'], ['Total', '19.90 CHF'],
 ] });
-async function mailInvoice(db: W, number: string) {
-  const raw = await signed(message({ id: `inv-${number}`, from: 'rechnung@quillmere.example', subject: `Ihre Quillmere-Rechnung Nr. ${number}`, body: 'Guten Tag, Ihre Rechnung finden Sie im Anhang.', pdf: PDF }));
+async function mailInvoice(db: W, number: string, date?: string) {
+  const raw = await signed(message({ id: `inv-${number}`, from: 'rechnung@quillmere.example', subject: `Ihre Quillmere-Rechnung Nr. ${number}`, body: 'Guten Tag, Ihre Rechnung finden Sie im Anhang.', pdf: PDF, ...(date ? { date } : {}) }));
   await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 1, raw }]), resolver, pdfText: async () => rows() });
 }
 const paid = (db: W, bookId: string) => db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, bookId)).all().map((o) => [o.source, o.priceC, o.seenAt]);
@@ -232,6 +232,14 @@ describe('the price paid learnt: the latest invoice\'s, by its date (philobiblos
     expect(paid(db, 'b_tide')).toEqual([['invoice', 1990, '2026-11-16T00:00:00.000Z']]);
     record(db, { kind: 'invoice', number: 'R-2', date: '2026-11-16', lines: [{ isbn: '9780000000002', qty: 1, price: 1890 }] });
     expect(paid(db, 'b_tide')).toEqual([['invoice', 1890, '2026-11-16T00:00:00.000Z']]);
+  });
+
+  it('a mail\'s day is the one its Date header names, in its own zone: just after midnight there is that day, not the day before in UTC', async () => {
+    const db = world();
+    await mailInvoice(db, '88002', 'Thu, 12 Nov 2026 00:30:00 +0100');
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1990, '2026-11-12T00:00:00.000Z']]);
+    record(db, { kind: 'invoice', number: 'R-1', date: '2026-11-11', lines: [{ isbn: '9780000000002', qty: 1, price: 1500 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1990, '2026-11-12T00:00:00.000Z']]);
   });
 
   it('a day still to come counts as today: an invoice misdated ahead holds the price no longer than today\'s invoices', () => {

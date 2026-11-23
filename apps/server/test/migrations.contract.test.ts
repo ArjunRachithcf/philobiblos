@@ -161,7 +161,7 @@ describe('upgrades', () => {
     // A database made new has no settings row until the first start, which gives it its currency (or none).
     expect(openDb(':memory:').$client.prepare('SELECT count(*) AS n FROM household_settings').get()).toEqual({ n: 0 });
   });
-  it('a price paid learnt before philobiblos#53 is dated by its invoice\'s day: the latest copy bought at that price, never later than its own day', () => {
+  it('prices learnt before philobiblos#53 are repaired: each invoice row is the latest invoice\'s price and day, a free row goes (philobiblos#53)', () => {
     const dir = join(mkdtempSync(join(tmpdir(), 'philobiblos-mig-')), 'drizzle');
     cpSync(drizzleDir, dir, { recursive: true });
     const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
@@ -173,26 +173,51 @@ describe('upgrades', () => {
     const db = drizzle(client);
     migrate(db, { migrationsFolder: dir });
     const book = client.prepare(`INSERT INTO book (id, title, authors_json, audience, norm_key, created_at) VALUES (?, ?, '[]', 'adult', ?, '2026-01-01T00:00:00.000Z')`);
-    for (const id of ['b1', 'b2', 'b3', 'b4']) book.run(id, id, id);
+    for (const id of ['free', 'older', 'ahead', 'none', 'order', 'tap', 'tie', 'quoted']) book.run(id, id, id);
     const copy = client.prepare('INSERT INTO copy (id, book_id, source, price_c, acquired_at) VALUES (?, ?, ?, ?, ?)');
-    copy.run('c1', 'b1', 'invoice', 1400, '2026-10-01T08:00:00.000Z'); // decided in the Inbox on 11-20
-    copy.run('c2', 'b1', 'invoice', 1400, '2026-09-01T08:00:00.000Z');
-    copy.run('c3', 'b1', 'invoice', 1800, '2026-11-25T08:00:00.000Z'); // another price: not the one learnt
-    copy.run('c4', 'b2', 'manual', 1500, '2026-11-12T00:00:00.000Z');
-    copy.run('c5', 'b3', 'invoice', 1600, '2027-06-01T00:00:00.000Z'); // misdated ahead
     const offer = client.prepare('INSERT INTO book_offer (book_id, source, price_c, seen_at) VALUES (?, ?, ?, ?)');
-    offer.run('b1', 'invoice', 1400, '2026-11-20T14:00:00.000Z');
-    offer.run('b2', 'invoice', 1500, '2026-11-16T10:00:00.000Z');
-    offer.run('b3', 'invoice', 1600, '2026-11-16T10:00:00.000Z');
-    offer.run('b4', 'invoice', 1700, '2026-11-14T10:00:00.000Z'); // no copy at its price
-    offer.run('b4', 'quote', 1700, '2026-11-14T10:00:00.000Z');
+    // A free line (0) read after the real price overwrote it.
+    copy.run('c1', 'free', 'invoice', 1990, '2026-11-01T08:00:00.000Z');
+    copy.run('c2', 'free', 'invoice', 0, '2026-11-12T08:00:00.000Z');
+    offer.run('free', 'invoice', 0, '2026-11-12T09:00:00.000Z');
+    // An old invoice's line decided in the Inbox after a newer typed invoice: its price overwrote the newer one.
+    copy.run('c3', 'older', 'manual', 1500, '2026-11-12T00:00:00.000Z');
+    copy.run('c4', 'older', 'invoice', 1400, '2026-10-01T08:00:00.000Z');
+    offer.run('older', 'invoice', 1400, '2026-11-20T14:00:00.000Z');
+    // A mail misdated ahead: its day is never later than when it was read.
+    copy.run('c5', 'ahead', 'invoice', 1600, '2027-06-01T00:00:00.000Z');
+    offer.run('ahead', 'invoice', 1600, '2026-11-16T10:00:00.000Z');
+    // Only free copies: no price learnt.
+    copy.run('c6', 'none', 'invoice', 0, '2026-11-03T08:00:00.000Z');
+    offer.run('none', 'invoice', 0, '2026-11-03T09:00:00.000Z');
+    // A copy of another source (an order's, the seed's) is no invoice.
+    copy.run('c7', 'order', 'invoice', 1200, '2026-11-01T08:00:00.000Z');
+    copy.run('c8', 'order', 'order', 2500, '2026-11-20T08:00:00.000Z');
+    copy.run('c9', 'order', 'seed', 2600, '2026-11-21T08:00:00.000Z');
+    offer.run('order', 'invoice', 1200, '2026-11-01T09:00:00.000Z');
+    // A tap's copy (priced as quoted) is no invoice either, while the tap holds it.
+    client.prepare(`INSERT INTO person (id, name, role) VALUES ('p', 'P', 'adult')`).run();
+    client.prepare(`INSERT INTO "order" (id, month, status, created_at) VALUES ('o', '2026-11', 'quoted', '2026-11-01T00:00:00.000Z')`).run();
+    copy.run('c10', 'tap', 'invoice', 1100, '2026-11-02T08:00:00.000Z');
+    copy.run('c11', 'tap', 'manual', 1300, '2026-11-22T08:00:00.000Z');
+    client.prepare(`INSERT INTO order_line (order_id, book_id, for_person, state, quoted_c, copy_id, tapped_from) VALUES ('o', 'tap', 'p', 'delivered', 1300, 'c11', 'quoted')`).run();
+    offer.run('tap', 'invoice', 1100, '2026-11-02T09:00:00.000Z');
+    // Two copies of the same day: the one written last (an invoice's copies are written in its order).
+    copy.run('c12', 'tie', 'invoice', 1700, '2026-11-05T08:00:00.000Z');
+    copy.run('c13', 'tie', 'manual', 1750, '2026-11-05T08:00:00.000Z');
+    offer.run('tie', 'invoice', 1700, '2026-11-05T09:00:00.000Z');
+    // Quotes: a free one goes, a priced one stays as it was.
+    offer.run('quoted', 'quote', 0, '2026-11-14T10:00:00.000Z');
+    offer.run('older', 'quote', 1450, '2026-11-14T10:00:00.000Z');
     migrate(db, { migrationsFolder: drizzleDir });
-    expect(client.prepare('SELECT book_id, source, seen_at FROM book_offer ORDER BY book_id, source').all()).toEqual([
-      { book_id: 'b1', source: 'invoice', seen_at: '2026-10-01T00:00:00.000Z' },
-      { book_id: 'b2', source: 'invoice', seen_at: '2026-11-12T00:00:00.000Z' },
-      { book_id: 'b3', source: 'invoice', seen_at: '2026-11-16T00:00:00.000Z' },
-      { book_id: 'b4', source: 'invoice', seen_at: '2026-11-14T00:00:00.000Z' },
-      { book_id: 'b4', source: 'quote', seen_at: '2026-11-14T10:00:00.000Z' },
+    expect(client.prepare('SELECT book_id, source, price_c, seen_at FROM book_offer ORDER BY book_id, source').all()).toEqual([
+      { book_id: 'ahead', source: 'invoice', price_c: 1600, seen_at: '2026-11-16T00:00:00.000Z' },
+      { book_id: 'free', source: 'invoice', price_c: 1990, seen_at: '2026-11-01T00:00:00.000Z' },
+      { book_id: 'older', source: 'invoice', price_c: 1500, seen_at: '2026-11-12T00:00:00.000Z' },
+      { book_id: 'older', source: 'quote', price_c: 1450, seen_at: '2026-11-14T10:00:00.000Z' },
+      { book_id: 'order', source: 'invoice', price_c: 1200, seen_at: '2026-11-01T00:00:00.000Z' },
+      { book_id: 'tap', source: 'invoice', price_c: 1100, seen_at: '2026-11-02T00:00:00.000Z' },
+      { book_id: 'tie', source: 'invoice', price_c: 1750, seen_at: '2026-11-05T00:00:00.000Z' },
     ]);
   });
 });

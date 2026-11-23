@@ -51,7 +51,7 @@ export const HOUSEHOLD = ['shelf.household@example.org'];
 const word = (v: string) => (/^[\x20-\x7e]*$/.test(v) ? v : `=?utf-8?B?${Buffer.from(v).toString('base64')}?=`);
 
 /** An invented bookshop mail; with `pdf`, a multipart one with that PDF attached. */
-export function message(o: { from?: string; extra?: string; body?: string; id?: string; subject?: string; html?: boolean; pdf?: Buffer } = {}): Buffer {
+export function message(o: { from?: string; extra?: string; body?: string; id?: string; subject?: string; html?: boolean; pdf?: Buffer; date?: string } = {}): Buffer {
   const body = o.body ?? 'Dear customer,\r\nAuthor: Mira Okafor / Title: The Long Tide of Markets / ISBN: 9780000000002 / Price: CHF 19.90\r\nKind regards';
   const b = 'shelf-test-boundary';
   return Buffer.from([
@@ -59,7 +59,7 @@ export function message(o: { from?: string; extra?: string; body?: string; id?: 
     'To: shelf.household@example.org',
     `Subject: ${word(o.subject ?? 'Re: Book order')}`,
     `Message-ID: <${o.id ?? `m${Math.random().toString(36).slice(2)}`}@quillmere.example>`,
-    'Date: Mon, 16 Nov 2026 09:00:00 +0100',
+    `Date: ${o.date ?? 'Mon, 16 Nov 2026 09:00:00 +0100'}`,
     ...(o.extra ? [o.extra] : []),
     'MIME-Version: 1.0',
     ...(o.pdf

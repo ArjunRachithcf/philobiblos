@@ -2,8 +2,8 @@
 // of the household's (the delivery address, a name, a card number typed into a request the bookshop quotes back), in
 // more spellings than any filter can find (Zürich and Zurich, Str. and strasse, soft hyphens, split PDF cells, unusual
 // separators), so the store holds structured fields only. This slice keeps the headers that tie a mail to an order
-// (Message-ID, In-Reply-To, the date), its subject through `safeField`, how many PDFs it has, and where it is in the
-// mailbox (UIDVALIDITY and UID). The parsers of M3 (d) read the mail again from the mailbox (which Philobiblos never
+// (Message-ID, In-Reply-To, the date and the day it names), its subject through `safeField`, how many PDFs it has,
+// and where it is in the mailbox (UIDVALIDITY and UID). The parsers of M3 (d) read the mail again from the mailbox (which Philobiblos never
 // changes), in memory, and keep only what they extract: order number, date, line items, totals and status, each
 // string field through `safeField` as a second line of defence.
 //
@@ -26,6 +26,8 @@ export const MAIL_LIMITS = {
 export interface MailContent {
   subject: string | null;
   date: string | null;
+  /** The day its Date header names in its own zone, as UTC midnight (`mailDay`): an invoice's price is dated by it. */
+  day: string | null;
   messageId: string | null;
   inReplyTo: string | null;
   /** PDFs among the attachments, by their bytes. */
@@ -135,7 +137,8 @@ export async function readMail(raw: Buffer, headerBlock: Buffer, address: string
     throw new MailUnreadable(String((e as { code?: string }).code ?? 'malformed').slice(0, 40));
   }
   const same = (k: 'subject' | 'messageId' | 'date' | 'inReplyTo') => (mail[k] ?? null) === (signed[k] ?? null);
-  if (!same('subject') || !same('messageId') || !same('date') || !same('inReplyTo') || JSON.stringify(mail.from ?? null) !== JSON.stringify(signed.from ?? null)) {
+  const dateHeader = (m: typeof mail) => m.headers?.find((h) => h.key === 'date')?.value ?? null;
+  if (!same('subject') || !same('messageId') || !same('date') || dateHeader(mail) !== dateHeader(signed) || !same('inReplyTo') || JSON.stringify(mail.from ?? null) !== JSON.stringify(signed.from ?? null)) {
     throw new MailUnreadable('headers_differ');
   }
   const one = (v: unknown, max: number) => (typeof v === 'string' && v ? v.slice(0, max) : null);
@@ -145,7 +148,7 @@ export async function readMail(raw: Buffer, headerBlock: Buffer, address: string
     // Every field kept passes safeField, the generated ids too (philobiblos#13).
     content: {
       subject: safeField(mail.subject, address),
-      date: one(mail.date, 64), messageId: safeField(one(mail.messageId, 300), address), inReplyTo: safeField(one(mail.inReplyTo, 300), address),
+      date: one(mail.date, 64), day: mailDay(dateHeader(mail)), messageId: safeField(one(mail.messageId, 300), address), inReplyTo: safeField(one(mail.inReplyTo, 300), address),
       pdfs: pdfs.length,
     },
     text: text.length > TEXT_MAX ? '' : text, tooLong: text.length > TEXT_MAX, pdfs, threadRef: one(mail.inReplyTo, 300), signedSubject: one(mail.subject, 300),
@@ -182,4 +185,18 @@ export async function openVerified(raw: Buffer, o: { shops: ShopMail[]; arcSeale
   const mail = Object.freeze({ ...read, auth: auth as VerifiedMail['auth'] });
   VERIFIED.add(mail);
   return { ok: true, mail };
+}
+
+const MAIL_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/**
+ * The day an RFC 5322 Date header names in its own zone, as UTC midnight: "Thu, 12 Nov 2026 00:30:00 +0100" →
+ * "2026-11-12T00:00:00.000Z" (in UTC it is still the 11th). Null for anything else, or a day that does not exist.
+ */
+export function mailDay(header: string | null | undefined): string | null {
+  const r = /^\s*(?:[A-Za-z]{3},\s*)?(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s/.exec((header ?? '').slice(0, 64));
+  if (!r) return null;
+  const y = Number(r[3]), m = MAIL_MONTHS.indexOf(r[2]!), d = Number(r[1]);
+  if (y < 1900 || m < 0 || d < 1) return null;
+  const at = new Date(Date.UTC(y, m, d));
+  return at.getUTCMonth() === m ? at.toISOString() : null;
 }
