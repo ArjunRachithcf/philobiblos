@@ -41,7 +41,7 @@ const OAUTH_ERRORS = new Set(['invalid_request', 'invalid_client', 'invalid_gran
 const errorCode = (v: unknown) => (typeof v === 'string' && OAUTH_ERRORS.has(v) ? v : 'error');
 
 /** A token, an authorization code: printable ASCII without spaces (RFC 6749 A.11, A.12, A.17). */
-const TOKEN = /^[\x21-\x7e]{1,16384}$/;
+const TOKEN = /^[\x21-\x7e]{1,8192}$/;
 const STATE = /^[A-Za-z0-9_-]{43}$/;
 
 export class OAuthError extends Error {
@@ -125,7 +125,8 @@ export function mailView(db: Db, cfg: Pick<Config, 'imap' | 'origin' | 'sealingK
       connected: Boolean(stored && current),
       ...(stored && current ? { connectedAt: stored.at } : {}),
       // Tokens are kept that are not used: for another client or mailbox, or sealed under another key.
-      needsReconnect: unreadable || Boolean(stored && !current),
+      // A key problem hides whether they are current; they can still be forgotten (Disconnect needs no key).
+      needsReconnect: unreadable || Boolean(stored && !current) || (problem !== null && isSealed(db, OAUTH_SEALED)),
       revocable: imap.oauth.revokeUrl !== null,
       ...(blocked ? { connectBlocked: blocked } : {}),
     },
@@ -146,7 +147,8 @@ export interface MailOAuthOptions {
 /** The OAuth side of the mailbox: connecting, the tokens, disconnecting. One per server (its pending connections are its own). */
 export class MailOAuth {
   private readonly pending = new Map<string, Pending>();
-  private refreshing: Promise<string> | null = null;
+  /** The refresh in flight, and the refresh token it uses: only a caller holding the same tokens waits for it. */
+  private refreshing: { refresh: string; token: Promise<string> } | null = null;
   private readonly egress: FormEgress | null;
   private readonly now: () => Date;
 
@@ -171,7 +173,10 @@ export class MailOAuth {
   /** The client's own credentials in a token or revocation request (client_secret_post, or the id alone for a public client). */
   private credentials(o: OAuthClient): Record<string, string> {
     if (!o.clientSecret) return { client_id: o.clientId };
-    const secret = 'value' in o.clientSecret ? o.clientSecret.value : readFileSync(o.clientSecret.file, 'utf8').trim();
+    let secret: string;
+    try { secret = 'value' in o.clientSecret ? o.clientSecret.value : readFileSync(o.clientSecret.file, 'utf8').trim(); } catch {
+      throw new OAuthError(409, 'cannot read PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET_FILE');
+    }
     return { client_id: o.clientId, client_secret: secret };
   }
 
@@ -249,8 +254,11 @@ export class MailOAuth {
     if (!s) throw new OAuthError(409, 'the mailbox is not connected: an admin connects it in Settings (Mailbox)');
     if (s.client !== fingerprint(imap, this.cfg.origin)) throw new OAuthError(409, 'the OAuth client or the mailbox changed on the server since it was connected: an admin connects it again in Settings');
     if (s.access && s.expiresAt && new Date(s.expiresAt).getTime() - this.now().getTime() > REFRESH_EARLY_MS) return s.access;
-    this.refreshing ??= this.refresh(imap, key, s).finally(() => { this.refreshing = null; });
-    return this.refreshing;
+    if (this.refreshing?.refresh !== s.refresh) {
+      const mine = { refresh: s.refresh, token: this.refresh(imap, key, s).finally(() => { if (this.refreshing === mine) this.refreshing = null; }) };
+      this.refreshing = mine;
+    }
+    return this.refreshing.token;
   }
 
   private async refresh(imap: ImapSettings & { oauth: OAuthClient }, key: Buffer, s: Stored): Promise<string> {

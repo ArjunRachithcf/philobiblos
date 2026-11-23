@@ -31,12 +31,15 @@ import { loadConnectors, type Registry } from './connectors/load';
 import { enabledConnectors } from './connectors/enabled';
 import { connectorRoutes } from './routes/connectors';
 import type { Egress, EgressOptions } from './net/egress';
-import { MailOAuth, type MailOAuthOptions } from './mail/oauth';
+import { MailOAuth, REDIRECT_PATH, type MailOAuthOptions } from './mail/oauth';
 import { mailRoutes } from './routes/mail';
 
 /** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md); a
  * file up to the largest by type (SHARE_BYTES: a video), each type and the whole share checked in shares.ts. */
 export const SHARE_LIMITS = { files: 30, fileSize: SHARE_BYTES.video, fields: 10, fieldSize: 64 * 1024, parts: 40 };
+
+/** A request's URL as a log line shows it: the mail provider's return without its query (mail/oauth.ts REDIRECT_PATH). */
+export const logUrl = (url: string) => (url.split('?')[0]!.replace(/\/+$/, '') === REDIRECT_PATH ? REDIRECT_PATH : url);
 
 export interface BuiltApp {
   app: FastifyInstance; apiRoutes: { method: string; url: string }[];
@@ -58,7 +61,11 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   // The bookshop connectors, read once (connectors/load.ts); each counts only once an admin enables it.
   const connectors = opts.connectors ?? loadConnectors(cfg.connectorDirs);
   const app = Fastify({
-    logger: opts.logger ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]'] } : false,
+    logger: opts.logger ? {
+      redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]'],
+      // The mail provider's return carries an authorization code and a state in its query: never in a log line.
+      serializers: { req: (r: { method: string; url: string; hostname?: string; ip?: string }) => ({ method: r.method, url: logUrl(r.url), hostname: r.hostname, remoteAddress: r.ip }) },
+    } : false,
     trustProxy: false,
     bodyLimit: 1024 * 1024,
     // No request may take longer than a share's upload may (SHARE_UPLOADS.deadlineMs, which shares.ts enforces to the

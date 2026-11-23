@@ -3,11 +3,13 @@
 // client the way a real provider does, and rotates refresh tokens when told to. Nothing here reaches a real provider.
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import https from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { buildApp, type BuiltApp } from '../src/app';
+import { buildApp, logUrl, type BuiltApp } from '../src/app';
 import { createSession } from '../src/auth/sessions';
 import { loadConfig, type Config } from '../src/config';
 import type { Db } from '../src/db/open';
@@ -36,6 +38,8 @@ const provider = {
   next: [] as { status: number; body: unknown }[],
   n: 0,
   revokeStatus: 200,
+  /** While set, a refresh is answered only once it resolves (a refresh held in flight). */
+  gate: null as Promise<void> | null,
 };
 const b64url = (b: Buffer) => b.toString('base64url');
 let server: https.Server, port = 0;
@@ -68,6 +72,15 @@ beforeAll(async () => {
         }
         return send(200, issue());
       }
+      if (form.get('grant_type') === 'refresh_token' && provider.gate) {
+        const gate = provider.gate;
+        provider.gate = null;
+        // Recorded as held until it is let through; then it is answered (and recorded) as any other.
+        provider.requests.pop();
+        provider.requests.push({ path: 'held', form });
+        void gate.then(() => { provider.requests.splice(provider.requests.findIndex((r) => r.path === 'held'), 1); req.emit('end'); });
+        return;
+      }
       if (form.get('grant_type') === 'refresh_token') {
         const r = form.get('refresh_token') ?? '';
         if (!provider.refresh.has(r)) return send(400, { error: 'invalid_grant', error_description: `unknown ${r}` });
@@ -85,7 +98,7 @@ beforeAll(async () => {
 });
 afterAll(() => { server.close(); });
 beforeEach(() => {
-  Object.assign(provider, { requests: [], rotate: false, next: [], revokeStatus: 200, n: 0 });
+  Object.assign(provider, { requests: [], rotate: false, next: [], revokeStatus: 200, n: 0, gate: null });
   provider.codes.clear();
   provider.refresh.clear();
 });
@@ -153,6 +166,7 @@ describe('configuration: the admin\'s own OAuth client, from the environment', (
     [{ PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL: 'https://other.test/token?client_secret=x' }, /no query parameters/],
     [{ PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL: 'https://other.test/authorize?redirect_uri=https://evil.example/' }, /redirect_uri is Philobiblos's to set/],
     [{ PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL: 'https://other.test/authorize?state=fixed' }, /state is Philobiblos's to set/],
+    [{ PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL: 'https://other.test/authorize?response_mode=form_post' }, /response_mode is Philobiblos's to set/],
     [{ PHILOBIBLOS_IMAP_OAUTH_SCOPE: 'mail "read' }, /SCOPE/],
     [{ PHILOBIBLOS_IMAP_AUTH: undefined }, /PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID is set, but PHILOBIBLOS_IMAP_AUTH is not xoauth2/],
   ])('%j is refused at start', (over, msg) => {
@@ -384,6 +398,49 @@ describe('the tokens: used, refreshed and rotated, never sent where they were no
     expect(provider.requests.filter((r) => r.path === '/revoke')).toHaveLength(0);
   });
 
+  it('a reconnect while an old refresh is in flight: the new tokens get their own refresh', async () => {
+    const db = household();
+    const o = await connected(db);
+    clock = new Date(clock.getTime() + 3600_000);
+    let release!: () => void;
+    provider.gate = new Promise((ok) => { release = ok; });
+    const old = o.accessToken().then(() => null, (e: unknown) => e as Error);
+    await expect.poll(() => provider.requests.some((r) => r.path === 'held')).toBe(true);
+    // Connected again meanwhile, with an access token that is already out of date.
+    provider.next.push({ status: 200, body: { access_token: 'at-new', refresh_token: 'rt-new', token_type: 'Bearer', expires_in: 0 } });
+    await o.finish(ME, consent(o.start(ME, { accept: oauthView(db).allowsVersion }).authorizeUrl));
+    provider.refresh.add('rt-new');
+    const fresh = o.accessToken();
+    release();
+    expect(await fresh).toMatch(/^at-\d+-a+$/);
+    expect((await old)?.message).toMatch(/connected again meanwhile/);
+    expect(tokenRequests().map((r) => r.form.get('refresh_token')).filter(Boolean).sort()).toEqual(['rt-1-' + 'r'.repeat(20), 'rt-new']);
+  });
+
+  it('a client secret file that cannot be read: said so, nothing sent', async () => {
+    const db = enableShop(household());
+    await connected(db);
+    const cfg = config({ PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET: undefined, PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET_FILE: '/nonexistent/secret' });
+    const o = oauthOf(db, cfg);
+    const out = await refreshMail(db, { ...cfg, connectors: CONNECTORS }, { open: async () => fakeBox([]), token: () => o.accessToken() });
+    // The fingerprint holds no secret: the same client, its secret now from a file.
+    clock = new Date(clock.getTime() + 3600_000);
+    expect(out.status).toBe('done');
+    const out2 = await refreshMail(db, { ...cfg, connectors: CONNECTORS }, { open: async () => fakeBox([]), token: () => o.accessToken() });
+    expect(out2).toEqual({ status: 'blocked', detail: 'cannot read PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET_FILE' });
+    expect(tokenRequests()).toHaveLength(1);
+  });
+
+  it('a sealing key that is wrong: Settings offers to disconnect, which forgets without a key', async () => {
+    const db = household();
+    await connected(db);
+    const cfg = config({ PHILOBIBLOS_SEALING_KEY: 'not base64 of 32 bytes' });
+    expect(mailView(db, cfg).oauth).toMatchObject({ connected: false, needsReconnect: true });
+    expect(mailView(db, cfg).oauth!.connectBlocked).toMatch(/sealing key/);
+    expect(await oauthOf(db, cfg).disconnect()).toEqual({ revoked: false });
+    expect(isSealed(db, OAUTH_SEALED)).toBe(false);
+  });
+
   it('not connected: the mail job waits for an admin', async () => {
     const db = enableShop(household());
     const o = oauthOf(db);
@@ -427,6 +484,30 @@ describe('disconnecting', () => {
     await o.disconnect();
     expect((await pending)?.message).toMatch(/disconnected or connected again meanwhile/);
     expect(isSealed(db, OAUTH_SEALED)).toBe(false);
+  });
+});
+
+describe('logs', () => {
+  it('the provider\'s return is logged without its code and state', () => {
+    expect(logUrl('/settings/mail-oauth?code=c-123&state=s-456')).toBe('/settings/mail-oauth');
+    expect(logUrl('/settings/mail-oauth/?error=access_denied&state=s')).toBe('/settings/mail-oauth');
+    expect(logUrl('/api/month?x=1')).toBe('/api/month?x=1');
+  });
+
+  it('the server\'s own log lines of that request hold neither', async () => {
+    const web = mkdtempSync(join(tmpdir(), 'philobiblos-web-'));
+    writeFileSync(join(web, 'index.html'), '<!doctype html><title>Philobiblos</title>');
+    const lines: string[] = [];
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: string | Uint8Array) => { lines.push(String(c)); return true; }) as typeof process.stdout.write;
+    try {
+      const { app } = await buildApp({ ...config(), webDir: web }, household(), { logger: true });
+      const r = await app.inject({ url: '/settings/mail-oauth?code=code-in-the-url&state=state-in-the-url' });
+      expect(r.statusCode).toBe(200);
+      await app.close();
+    } finally { process.stdout.write = write; rmSync(web, { recursive: true, force: true }); }
+    expect(lines.join('')).toContain('"url":"/settings/mail-oauth"');
+    expect(lines.join('')).not.toMatch(/code-in-the-url|state-in-the-url/);
   });
 });
 

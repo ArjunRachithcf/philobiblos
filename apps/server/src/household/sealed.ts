@@ -63,7 +63,7 @@ function sealedRow(key: Buffer, name: string, value: string, now: Date) {
 }
 
 export function seal(db: Db, key: Buffer, name: string, value: string | null, now = new Date()): void {
-  if (value === null) { db.delete(t.sealedSecret).where(eq(t.sealedSecret.key, name)).run(); return; }
+  if (value === null) { forget(db, name); return; }
   const row = sealedRow(key, name, value, now);
   db.insert(t.sealedSecret).values(row).onConflictDoUpdate({ target: t.sealedSecret.key, set: { ciphertext: row.ciphertext, keyId: row.keyId, updatedAt: row.updatedAt } }).run();
 }

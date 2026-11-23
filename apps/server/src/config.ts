@@ -230,7 +230,9 @@ function place(env: NodeJS.ProcessEnv): MailboxPlace {
 }
 
 /** Parameters Philobiblos sets on the authorization request itself; an admin's authorize URL may not carry them. */
-export const OAUTH_OWN_PARAMS = ['response_type', 'client_id', 'redirect_uri', 'scope', 'state', 'code_challenge', 'code_challenge_method', 'login_hint'];
+// response_mode too: the code must come back in the query, which is where the web app reads it; request and request_uri
+// would carry parameters Philobiblos did not set.
+export const OAUTH_OWN_PARAMS = ['response_type', 'response_mode', 'client_id', 'redirect_uri', 'scope', 'state', 'code_challenge', 'code_challenge_method', 'login_hint', 'request', 'request_uri'];
 
 /** An OAuth endpoint: https, no credentials or fragment; only the authorization endpoint may carry query parameters. */
 function oauthUrl(name: string, v: string, query: boolean): string {

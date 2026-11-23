@@ -73,8 +73,8 @@ export interface Egress {
 export interface FormEgress {
   form(url: string, params: URLSearchParams): Promise<Response>;
 }
-/** The largest form Philobiblos sends (an authorization code or a refresh token, with the client's id and secret). */
-export const FORM_MAX = 16 << 10;
+/** The largest form Philobiblos sends (an authorization code or a refresh token of at most 8 K, with the client's id and secret). */
+export const FORM_MAX = 32 << 10;
 
 /** The largest request body Philobiblos sends (an AI job's images, base64, with its prompt). */
 export const POST_MAX = 32 << 20;

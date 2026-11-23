@@ -217,13 +217,13 @@ describe('an OAuth form (mail/oauth.ts: token and revocation endpoints)', () => 
     expect((await former().form('https://other.test/who', new URLSearchParams())).status).toBe(401);
     expect((await fails(former().form('https://other.test/down', new URLSearchParams()), 'status')).status).toBe(503);
   });
-  it('never redirected; an answer of another type is refused, an empty one (a revocation\'s) is not; a form over 16 KB is not sent', async () => {
+  it('never redirected; an answer of another type is refused, an empty one (a revocation\'s) is not; a form over 32 KB is not sent', async () => {
     reset({ '/moved': redirect('https://other.test/t'), '/html': (q, r) => json({}, 'text/html')(q, r), '/empty': (_q, r) => { r.statusCode = 200; r.end(); } });
     await fails(former().form('https://other.test/moved', new URLSearchParams()), 'redirect');
     await fails(former().form('https://other.test/html', new URLSearchParams()), 'type');
     expect((await former().form('https://other.test/empty', new URLSearchParams({ token: 't' }))).status).toBe(200);
     seen = [];
-    await fails(former().form('https://other.test/empty', new URLSearchParams({ token: 'x'.repeat(16 << 10) })), 'too-large');
+    await fails(former().form('https://other.test/empty', new URLSearchParams({ token: 'x'.repeat(32 << 10) })), 'too-large');
     expect(seen).toHaveLength(0);
     await fails(former().form('https://books.test/t', new URLSearchParams()), 'not-allowed');
   });
