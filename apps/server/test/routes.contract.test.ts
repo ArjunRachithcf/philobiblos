@@ -179,7 +179,10 @@ describe('homerslab mode', () => {
     expect(ca).toMatchObject({ optional: true, read_only: true });
     expect(ca.mount).toMatch(/^\/[^\s]+\.pem$/);
     expect(m.volumes.map((v: { mount: string }) => v.mount)).not.toContain(ca.mount);
-    expect(m.network.egress).toContain('${PHILOBIBLOS_IMAP_HOST}:${PHILOBIBLOS_IMAP_PORT:-993}');
+    expect(m.network.egress).toContain('${PHILOBIBLOS_IMAP_HOST}:${PHILOBIBLOS_IMAP_PORT}');
+    // Plain ${VAR} substitution only, as every other entry: the port's default is its config entry's.
+    expect(m.config.find((c: { key: string }) => c.key === 'PHILOBIBLOS_IMAP_PORT')).toMatchObject({ optional: true, default: '993' });
+    expect(JSON.stringify(m.network)).not.toMatch(/:-/);
   });
   it('needs PHILOBIBLOS_ORIGIN, the edge\'s promise (HomersLab #236) and the trusted proxy', () => {
     expect(() => loadConfig({ PHILOBIBLOS_MODE: 'homerslab' })).toThrow(/PHILOBIBLOS_ORIGIN/);

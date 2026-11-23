@@ -153,9 +153,11 @@ Bridge listens on its own loopback address only (127.0.0.1), and its certificate
 `docker-compose.yml`, 127.0.0.1 inside Philobiblos's container is the container's own loopback, not the computer's, so
 Bridge is not reached that way. Philobiblos has to share Bridge's network, in one of two ways:
 
-- **Bridge on the computer, Philobiblos on the host's network.** Give the `philobiblos` service `network_mode: host` (and
-  drop its `ports:`, which the host network does not take). 127.0.0.1 is then the computer's, where Bridge listens.
-  Philobiblos then listens on the computer's own port 8080, so put it behind your proxy as before.
+- **Bridge on the computer, Philobiblos on the host's network.** Give the `philobiblos` service `network_mode: host`, drop
+  its `ports:` (the host network does not take them) and **set `PHILOBIBLOS_HOST=127.0.0.1`**: on the host's network
+  Philobiblos would otherwise listen on every interface of the computer (its default inside a container is 0.0.0.0),
+  open to the home network past your proxy. 127.0.0.1 is then the computer's, where Bridge listens, and Philobiblos
+  answers on the computer's own 127.0.0.1:8080, behind your proxy as before.
 - **Bridge in a container of its own.** Give the `philobiblos` service `network_mode: "service:<bridge>"`, where `<bridge>`
   is the name of Bridge's service in the same compose file. Both then share one network namespace, so 127.0.0.1 is the
   same loopback for both. Move the `ports:` of `philobiblos` to Bridge's service, because only the service that owns the
@@ -177,7 +179,8 @@ PHILOBIBLOS_IMAP_USER=books-mailbox@proton.example
 PHILOBIBLOS_IMAP_PASSWORD_FILE=/run/secrets/bridge-password
 ```
 
-Under HomersLab the manifest (`contracts/homerslab-app.yaml`) takes `PHILOBIBLOS_IMAP_PORT` (its egress allows that
-port on `PHILOBIBLOS_IMAP_HOST`) and mounts the certificate you give it read-only at `/config/imap-ca.pem` for
-`PHILOBIBLOS_IMAP_CA_FILE`, so a self-hosted server with its own certificate works there. Bridge does not yet: HomersLab
-chooses the app's network itself and cannot yet share Bridge's loopback with it (noted in the manifest).
+Under HomersLab the manifest (`contracts/homerslab-app.yaml`) takes `PHILOBIBLOS_IMAP_PORT` (default 993; its egress
+allows that port on `PHILOBIBLOS_IMAP_HOST`), so a server on another port works there. It also asks HomersLab to mount
+the certificate for `PHILOBIBLOS_IMAP_CA_FILE` read-only at `/config/imap-ca.pem`, which HomersLab cannot do yet (a
+NEEDS HomersLab note): until it can, a server with its own certificate works standalone only. Bridge does not work
+under HomersLab yet either: HomersLab chooses the app's network itself and cannot share Bridge's loopback with it.

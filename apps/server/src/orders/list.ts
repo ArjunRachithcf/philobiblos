@@ -34,7 +34,8 @@ export function csvCell(value: string): string {
 /**
  * A cell as the guard wrote it, read back: the one `'` before a formula character, before the spaces a tab or CR
  * became, or before another `'` left out. Anything else as it is, so a hand-written "'s-Hertogenbosch" keeps its
- * apostrophe (and the guard's "''s-Hertogenbosch" comes back as it).
+ * apostrophe (and the guard's "''s-Hertogenbosch" comes back as it). A hand-written cell that starts with two loses
+ * one: that is the guard's own form, and no title starts so.
  */
 export function unguardCell(cell: string): string {
   const rest = cell.slice(1);

@@ -340,7 +340,7 @@ describe('invoices: copies, through the media worker only', () => {
     const tapped = lines(db).b_tide!.copyId!;
     await run(db, fakeBox([{ uid: 1, raw: await invoice('i1t') }]), { pdfText: async () => invoiceRows() });
     const tide = db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all();
-    expect(tide.map((c) => [c.id, c.source, c.orderId, c.priceC, c.acquiredAt])).toEqual([[tapped, 'invoice', 'o_nov', 1990, '2026-11-16T08:00:00.000Z']]);
+    expect(tide.map((c) => [c.id, c.source, c.orderId, c.priceC, c.acquiredAt])).toEqual([[tapped, 'invoice', 'o_nov', 1990, NOW]]); // the parcel's arrival kept
     expect(lines(db).b_tide).toMatchObject({ state: 'delivered', copyId: null, tappedFrom: null });
     expect(order(db)).toMatchObject({ status: 'invoiced', invoicedC: 1990 + 3380 });
     expect(() => markOwned(db, 'o_nov', 'b_tide', { owned: false })).toThrow(/invoice/);

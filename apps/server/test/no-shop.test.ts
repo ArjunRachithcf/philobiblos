@@ -1,13 +1,14 @@
 // No-shop mode (philobiblos#27 slice 5): the month's order as a plain list (mail text, a printable page, a CSV) for any
 // shop or none, and its books marked owned by a tap (and the tap undone). Every book, name and number is invented. Each
 // rule has a test that fails when the rule is changed; the CSV's formula guard is philobiblos#45's.
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { seal } from '../src/household/sealed';
 import { parseCsv } from '../src/orders/csv';
+import { TAP_INVOICE_DAYS } from '../src/mail/effects';
 import { recordEntry } from '../src/orders/entries';
 import { LIST_COLUMNS, csvCell, listCsv, unguardCell } from '../src/orders/list';
 import { ORIGIN, TEST_SEALING_KEY, THIS_MONTH, household, sessionCookie } from './helpers';
@@ -103,7 +104,12 @@ const send = (method: 'POST' | 'PUT', url: string, payload: unknown, cookie = al
   built.app.inject({ method, url, payload: JSON.stringify(payload), headers: { cookie, origin: ORIGIN, 'content-type': 'application/json' } });
 const line = (bookId: string) => db.select().from(t.orderLine).where(eq(t.orderLine.bookId, bookId)).get()!;
 const copiesOf = (bookId: string) => db.select().from(t.copy).where(eq(t.copy.bookId, bookId)).all();
-const tap = (bookId: string, owned: unknown, cookie = alex) => send('PUT', `/api/orders/o_now/lines/${bookId}`, { owned }, cookie);
+/** A tap; the copy it made dated `iso`, the invoices' date here, so the tests do not depend on the day they run. */
+const tap = async (bookId: string, owned: unknown, cookie = alex) => {
+  const r = await send('PUT', `/api/orders/o_now/lines/${bookId}`, { owned }, cookie);
+  db.update(t.copy).set({ acquiredAt: iso }).where(eq(t.copy.source, 'manual')).run();
+  return r;
+};
 const makeList = async () => { const r = await send('POST', '/api/orders', { month: THIS_MONTH, list: true }); expect(r.statusCode, r.body).toBe(201); return r.json(); };
 
 describe('the order as a plain list (POST /orders, list: true)', () => {
@@ -305,6 +311,25 @@ describe('a copy marked owned by a tap (PUT /orders/{id}/lines/{bookId})', () =>
     const copies = copiesOf('b_tide');
     expect(copies.map((c) => [c.orderId, c.priceC])).toEqual([['o_now', 1500], ['o_now', 1500]]);
     expect(copies.map((c) => c.id)).toContain(tapped);
+  });
+
+  it('a tap long before an invoice of the book is another purchase: the invoice makes its own copy, the tap stays (philobiblos#47)', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    const later = new Date(Date.parse(iso) + (TAP_INVOICE_DAYS + 1) * 86_400_000);
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', date: later.toISOString().slice(0, 10), lines: [{ isbn: '9780000000002', price: 1500 }] }, later);
+    expect(copiesOf('b_tide').map((c) => [c.source, c.orderId, c.priceC]).sort()).toEqual([['manual', null, 1500], ['manual', 'o_now', null]]);
+    expect(line('b_tide').copyId).not.toBeNull(); // still the tap's, still undoable
+  });
+
+  it('a book tapped in one order and still to buy in a later one: the invoice delivers the later line, the tap stays', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    db.insert(t.order).values({ id: 'o_next', month: '2099-01', status: 'drafted', createdAt: iso }).run();
+    db.insert(t.orderLine).values({ orderId: 'o_next', bookId: 'b_tide', forPerson: 'p_sam', estimateC: 1890 }).run();
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', lines: [{ isbn: '9780000000002', price: 1500 }] }, new Date(iso));
+    expect(copiesOf('b_tide').map((c) => c.orderId).sort()).toEqual(['o_next', 'o_now']);
+    expect(db.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, 'o_now'), eq(t.orderLine.bookId, 'b_tide'))).get()!.copyId).not.toBeNull();
   });
 
   it('a quote after a tap leaves the bought line as it is (delivered, still undoable)', async () => {

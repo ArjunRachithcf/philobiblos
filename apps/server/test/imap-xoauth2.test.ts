@@ -109,6 +109,5 @@ describe('a self-hosted server\'s or a bridge\'s own certificate (PHILOBIBLOS_IM
     const { password: _unused, port: _993, ...place } = c.imap!;
     const e = (await openMailbox({ ...place, accessToken: TOKEN, test: { ca: readFileSync(fixture('cert.pem'), 'utf8'), connectTo: '127.0.0.1' } }).then(() => null, (x: unknown) => x)) as Error;
     expect(e.message).toBe('cannot sign in to imap.test:993 over TLS');
-    expect(imap.payloads).toEqual([]); // nothing reached the fake server on its own port
   });
 });

@@ -11,7 +11,7 @@
 // signed In-Reply-To (a bookshop mail already tied to it), or the one of the month its signed Subject names as Compose
 // wrote it ("Book order, November 2026"); only the bookshop's signed mail ties anything (Compose copies the request to
 // no one). With no order, every line is unmatched.
-import { and, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -170,24 +170,32 @@ export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number;
   return orderId;
 }
 
+/** How far apart a tap and the invoice of the same book may be for the invoice to take the tap's copy (philobiblos#47). */
+export const TAP_INVOICE_DAYS = 60;
+
 /**
- * An invoice's copies of one book (`receive`'s, and the Inbox's for a line that matched no book when it came): the line of
- * a composed order it was ordered in, the latest month's, delivered. That line is one not delivered yet, or one a tap
- * delivered when the parcel came (philobiblos#47): the tap's copy (`order_line.copy_id`) is then the invoice's first, at
- * the price paid, and the line no longer the tap's, so its Undo is refused like any invoice's. Never two copies of one
- * book bought once. Returns the line's order id.
+ * An invoice's copies of one book (`receive`'s, and the Inbox's for a line that matched no book when it came), and the
+ * line of a composed order it was ordered in delivered: the latest month's line not delivered yet, as before; failing
+ * that, a line a tap delivered when the parcel came (philobiblos#47) whose copy was made within TAP_INVOICE_DAYS of the
+ * invoice's date. The tap's copy (`order_line.copy_id`) is then the invoice's first, at the price paid (its arrival
+ * date kept), and the line no longer the tap's, so its Undo is refused like any invoice's: one copy for one book bought.
+ * A tap older than that is another purchase, and the invoice makes copies of its own. Returns the line's order id.
  */
 export function deliver(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }): string | null {
-  const line = tx.select({ orderId: t.orderLine.orderId, copyId: t.orderLine.copyId, state: t.orderLine.state }).from(t.orderLine).innerJoin(t.order, eq(t.order.id, t.orderLine.orderId))
-    .where(and(eq(t.orderLine.bookId, l.bookId), inArray(t.order.status, ['drafted', 'quoted', 'invoiced']),
-      or(inArray(t.orderLine.state, ['planned', 'quoted']), and(eq(t.orderLine.state, 'delivered'), isNotNull(t.orderLine.copyId)))))
-    .orderBy(sql`${t.order.month} DESC`).get();
-  const copy = { bookId: l.bookId, source: l.source, orderId: line?.orderId ?? null, priceC: l.unitC, acquiredAt: l.acquiredAt };
-  const tapped = line?.state === 'delivered' ? line.copyId : null;
-  if (tapped) tx.update(t.copy).set(copy).where(eq(t.copy.id, tapped)).run();
-  for (let i = tapped ? 1 : 0; i < l.qty; i++) tx.insert(t.copy).values({ id: ulid(), ...copy }).run();
-  if (line) tx.update(t.orderLine).set({ state: 'delivered', copyId: null, tappedFrom: null }).where(and(eq(t.orderLine.orderId, line.orderId), eq(t.orderLine.bookId, l.bookId))).run();
-  return line?.orderId ?? null;
+  const composed = and(eq(t.orderLine.bookId, l.bookId), inArray(t.order.status, ['drafted', 'quoted', 'invoiced']));
+  const open = tx.select({ orderId: t.orderLine.orderId }).from(t.orderLine).innerJoin(t.order, eq(t.order.id, t.orderLine.orderId))
+    .where(and(composed, inArray(t.orderLine.state, ['planned', 'quoted']))).orderBy(sql`${t.order.month} DESC`).get();
+  const at = Date.parse(l.acquiredAt);
+  const tap = open ? undefined : tx.select({ orderId: t.orderLine.orderId, copyId: t.copy.id, tappedAt: t.copy.acquiredAt }).from(t.orderLine)
+    .innerJoin(t.order, eq(t.order.id, t.orderLine.orderId)).innerJoin(t.copy, eq(t.copy.id, t.orderLine.copyId))
+    .where(and(composed, eq(t.orderLine.state, 'delivered'))).orderBy(sql`${t.order.month} DESC`).all()
+    .find((r) => Math.abs(Date.parse(r.tappedAt) - at) <= TAP_INVOICE_DAYS * 86_400_000);
+  const orderId = open?.orderId ?? tap?.orderId ?? null;
+  const copy = { bookId: l.bookId, source: l.source, orderId, priceC: l.unitC };
+  if (tap) tx.update(t.copy).set(copy).where(eq(t.copy.id, tap.copyId)).run();
+  for (let i = tap ? 1 : 0; i < l.qty; i++) tx.insert(t.copy).values({ id: ulid(), ...copy, acquiredAt: l.acquiredAt }).run();
+  if (orderId) tx.update(t.orderLine).set({ state: 'delivered', copyId: null, tappedFrom: null }).where(and(eq(t.orderLine.orderId, orderId), eq(t.orderLine.bookId, l.bookId))).run();
+  return orderId;
 }
 
 /** Each order an invoice delivered to: invoiced, its invoiced total grown by what the invoice charged for its books. */
