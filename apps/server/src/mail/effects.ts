@@ -163,11 +163,20 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
  * copies owned at the unit price (the copies' source is the caller's), the price paid learnt (book_offer, always source
  * 'invoice'), and the line of the composed order the book was ordered in, if any, delivered (see `deliver`). Returns
  * that order's id.
+ *
+ * The price learnt is the latest invoice's by the invoice's date (philobiblos#53): its row's seen_at is that date (a
+ * date still to come counts as `now`, so a misdated invoice never holds it), and an invoice dated before it leaves it,
+ * however late it is read or decided (an Inbox line weeks after its mail). One of the same date replaces it. A free
+ * line (0: a gift, a promotion) says nothing of what the book costs, and is no price learnt.
  */
 export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }, now: string): string | null {
   const orderId = deliver(tx, l);
-  const v = { priceC: l.unitC, availability: null, seenAt: now };
-  tx.insert(t.bookOffer).values({ bookId: l.bookId, source: 'invoice', ...v }).onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: v }).run();
+  if (l.unitC > 0) {
+    const at = Date.parse(l.acquiredAt);
+    const v = { priceC: l.unitC, availability: null, seenAt: !Number.isNaN(at) && at <= Date.parse(now) ? new Date(at).toISOString() : now };
+    tx.insert(t.bookOffer).values({ bookId: l.bookId, source: 'invoice', ...v })
+      .onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: v, setWhere: sql`excluded.seen_at >= ${t.bookOffer.seenAt}` }).run();
+  }
   return orderId;
 }
 

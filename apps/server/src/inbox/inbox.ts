@@ -326,8 +326,10 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
       // had the book been known (the order line it was ordered in delivered), and on the to-read pile of whoever it is for.
       const inv = book.invoice;
       const acquired = inv.date && !Number.isNaN(Date.parse(inv.date)) ? new Date(inv.date).toISOString() : iso;
-      const orderId = receive(tx, { bookId, qty: Math.min(inv.qty, MAX_COPIES), unitC: inv.unitC, acquiredAt: acquired, source: 'invoice' }, iso);
-      if (orderId) invoiceOrders(tx, new Map([[orderId, inv.totalC]]));
+      // A line of more copies than one makes is invoiced for the copies made, at the price of one (philobiblos#53).
+      const copies = Math.min(inv.qty, MAX_COPIES);
+      const orderId = receive(tx, { bookId, qty: copies, unitC: inv.unitC, acquiredAt: acquired, source: 'invoice' }, iso);
+      if (orderId) invoiceOrders(tx, new Map([[orderId, copies === inv.qty ? inv.totalC : inv.unitC * copies]]));
       if (forWho) tx.insert(t.reading).values({ personId: target.id, bookId, status: 'to_read', updatedAt: iso }).onConflictDoNothing().run();
     } else {
       // Already in that backlog: added all the same.

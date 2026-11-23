@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
@@ -15,6 +15,7 @@ import { MAX_COPIES, PAGE, UNVERIFIED_ID, mailItemId, shareItemId } from '../src
 import { MediaUnavailable, type MediaOutcome, type runMediaJob } from '../src/media/client';
 import { markOwned } from '../src/month/plan';
 import { refreshMail } from '../src/mail/job';
+import { receive } from '../src/mail/effects';
 import { IMAGE_HEADER, SHARE_PATIENCE_MS, SHARE_RATE, STAGED_MAX_AGE_MS, SHARE_UPLOADS, ShareProcessor, imageType, shareFileType } from '../src/shares/shares';
 import { MAX_LIVE_TOKENS, findShareToken } from '../src/shares/tokens';
 import { TOKEN_FAILURES } from '../src/auth/hook';
@@ -513,8 +514,9 @@ describe('the Inbox', () => {
     expect(r.statusCode, r.body).toBe(200);
     const book = a.db.select().from(t.book).where(eq(t.book.isbn13, '9780000000033')).get()!;
     expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, book.id)).all().map((c) => [c.source, c.priceC])).toEqual([['invoice', 1500], ['invoice', 1500]]);
-    // The price paid learnt, as a typed or a mailed invoice learns it (philobiblos#51).
-    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, book.id)).all().map((o) => [o.source, o.priceC, o.availability, o.seenAt])).toEqual([['invoice', 1500, null, a.db.select().from(t.inboxDecision).where(and(eq(t.inboxDecision.item, id), eq(t.inboxDecision.idx, 0))).get()!.decidedAt]]);
+    // The price paid learnt, as a typed or a mailed invoice learns it (philobiblos#51), dated by the invoice's mail, not
+    // by the decision (philobiblos#53).
+    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, book.id)).all().map((o) => [o.source, o.priceC, o.availability, o.seenAt])).toEqual([['invoice', 1500, null, '2026-11-16T08:00:00.000Z']]);
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'skip' })).statusCode).toBe(409);
     // A toy, or a row whose EAN could not be read (a position number as much as a book), can only be skipped.
     expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'add' })).statusCode).toBe(400);
@@ -613,6 +615,31 @@ describe('the Inbox', () => {
     expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => [o.source, o.priceC])).toEqual([['invoice', 1000]]);
     expect(a.db.select().from(t.orderLine).where(eq(t.orderLine.orderId, 'o_q')).get()).toMatchObject({ state: 'delivered', copyId: null });
     expect(a.db.select().from(t.order).where(eq(t.order.id, 'o_q')).get()).toMatchObject({ status: 'invoiced', invoicedC: 2000 });
+  });
+
+  it('an old invoice\'s line decided after a newer invoice keeps the newer price paid: by the invoices\' dates, not the decision\'s (philobiblos#53)', async () => {
+    const a = await app();
+    const now = new Date().toISOString();
+    a.db.transaction((tx) => { receive(tx, { bookId: 'b_tide', qty: 1, unitC: 1800, acquiredAt: '2026-11-10T00:00:00.000Z', source: 'invoice' }, now); });
+    a.db.insert(t.mailSeen).values({ messageId: '<old@quillmere.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1236', date: '2026-10-01', lines: [
+      { ean: null, title: 'The Long Tide of Markets', qty: 1, priceC: 1400, totalC: 1400, vatPct: 2.6, bookId: null },
+    ] }) }).run();
+    expect((await post(a, `/api/inbox/${mailItemId('<old@quillmere.example>')}/books/0`, { action: 'add', for: 'me' })).statusCode).toBe(200);
+    expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all().map((c) => c.priceC).sort()).toEqual([1400, 1800]);
+    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => [o.source, o.priceC, o.seenAt])).toEqual([['invoice', 1800, '2026-11-10T00:00:00.000Z']]);
+  });
+
+  it('a line of more copies than an Inbox line makes invoices its order for the copies made, at the price of one (philobiblos#53)', async () => {
+    const a = await app();
+    const now = new Date().toISOString();
+    a.db.insert(t.order).values({ id: 'o_q', month: '2026-11', status: 'quoted', createdAt: now }).run();
+    a.db.insert(t.orderLine).values({ orderId: 'o_q', bookId: 'b_tide', forPerson: 'p_alex', state: 'quoted', quotedC: 900 }).run();
+    a.db.insert(t.mailSeen).values({ messageId: '<many@quillmere.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: now, accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '1237', lines: [
+      { ean: null, title: 'The Long Tide of Markets', qty: MAX_COPIES + 5, priceC: 1000, totalC: (MAX_COPIES + 5) * 1000, vatPct: 2.6, bookId: null },
+    ] }) }).run();
+    expect((await post(a, `/api/inbox/${mailItemId('<many@quillmere.example>')}/books/0`, { action: 'add', for: 'me' })).statusCode).toBe(200);
+    expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all().length).toBe(MAX_COPIES);
+    expect(a.db.select().from(t.order).where(eq(t.order.id, 'o_q')).get()).toMatchObject({ status: 'invoiced', invoicedC: MAX_COPIES * 1000 });
   });
 
   it('matched lines never show; a dismissed item takes no decisions; an unverified mail is no item of its own (PR #16 review)', async () => {
