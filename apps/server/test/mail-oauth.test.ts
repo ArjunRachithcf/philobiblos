@@ -226,6 +226,8 @@ describe('connecting: authorization code with PKCE and a state, back to this Phi
     // Another admin's session, or another session of the same admin.
     const other = consent(o.start(ME, { accept }).authorizeUrl);
     await expect(o.finish({ personId: 'p_sam', sessionId: 's-sam' }, other)).rejects.toThrow(/not one Philobiblos started/);
+    const named = consent(o.start(ME, { accept }).authorizeUrl);
+    await expect(o.finish({ personId: 'p_sam', sessionId: ME.sessionId }, named)).rejects.toThrow(/not one Philobiblos started/);
     const mine = consent(o.start(ME, { accept }).authorizeUrl);
     await expect(o.finish({ ...ME, sessionId: 's-other' }, mine)).rejects.toThrow(/not one Philobiblos started/);
     // And the one that was tried by someone else is gone for its owner too.
@@ -360,23 +362,25 @@ describe('the tokens: used, refreshed and rotated, never sent where they were no
   });
 
   it('a client or mailbox changed in the environment: the tokens are not used, and never sent to its endpoints', async () => {
-    const db = household();
-    await connected(db);
     for (const over of [
       { PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL: 'https://books.test/token' },
       { PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID: 'another-client' },
       { PHILOBIBLOS_IMAP_USER: 'someone-else@shelf.test' },
       { PHILOBIBLOS_IMAP_OAUTH_SCOPE: 'mail.read mail.send offline_access' },
     ]) {
+      const db = household();
+      await connected(db);
       const cfg = config(over);
       const o = oauthOf(db, cfg);
       clock = new Date(clock.getTime() + 7200_000);
       await expect(o.accessToken()).rejects.toThrow(/changed on the server since it was connected/);
       expect(mailView(db, cfg).oauth).toMatchObject({ connected: false, needsReconnect: true });
       // Disconnecting forgets them without revoking anywhere.
-      expect(await oauthOf(household(), cfg).disconnect()).toEqual({ revoked: false });
+      expect(await o.disconnect()).toEqual({ revoked: false });
+      expect(isSealed(db, OAUTH_SEALED)).toBe(false);
     }
-    expect(tokenRequests()).toHaveLength(1);
+    // Each connection's one exchange, and nothing after.
+    expect(tokenRequests()).toHaveLength(4);
     expect(provider.requests.filter((r) => r.path === '/revoke')).toHaveLength(0);
   });
 
@@ -458,8 +462,11 @@ describe('the routes: admins, a fresh sign-in to connect, Settings shows what co
     expect(started.statusCode).toBe(200);
     const { authorizeUrl } = started.json();
     expect(new URL(authorizeUrl).searchParams.get('redirect_uri')).toBe(`${ORIGIN}${REDIRECT_PATH}`);
+    // An adult cannot finish it: refused before the state is even read, so it still works for the admin.
+    const early = consent(authorizeUrl);
+    expect((await built.app.inject({ method: 'POST', url: '/api/mail/oauth/finish', headers: h(adult), payload: early })).statusCode).toBe(403);
     // The finish from another admin's session is refused (and uses the state up).
-    const back = consent(authorizeUrl);
+    const back = early;
     const otherAdmin = sessionCookie(db, 'p_alex');
     expect((await built.app.inject({ method: 'POST', url: '/api/mail/oauth/finish', headers: h(otherAdmin), payload: back })).statusCode).toBe(400);
     const again = consent((await built.app.inject({ method: 'POST', url: '/api/mail/oauth/start', headers: h(admin), payload: { accept } })).json().authorizeUrl);

@@ -224,7 +224,6 @@ export class MailOAuth {
     this.pending.delete(id);
     const gone = 'this sign-in with the provider is not one Philobiblos started for you, or it took more than 10 minutes: connect again';
     if (!p || p.expires <= this.now().getTime() || p.personId !== by.personId || p.sessionId !== by.sessionId) throw new OAuthError(400, gone);
-    if (p.client !== fingerprint(imap, this.cfg.origin)) throw new OAuthError(409, 'the OAuth client or the mailbox changed on the server since you started: connect again');
     if (b.error !== undefined) throw new OAuthError(400, `the provider did not allow it (${errorCode(b.error)})`);
     if (typeof b.code !== 'string' || !TOKEN.test(b.code) || b.code.length > 4096) throw new OAuthError(400, 'code: the one the provider sent back');
     const key = this.key();
