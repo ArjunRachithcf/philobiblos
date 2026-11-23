@@ -88,3 +88,6 @@ export function unseal(db: Db, key: Buffer | null, name: string): string | null 
 }
 
 export const isSealed = (db: Db, name: string) => Boolean(db.select({ k: t.sealedSecret.key }).from(t.sealedSecret).where(eq(t.sealedSecret.key, name)).get());
+
+/** Removes what is sealed under `name`; no key is needed to forget. */
+export const forget = (db: Db, name: string) => { db.delete(t.sealedSecret).where(eq(t.sealedSecret.key, name)).run(); };

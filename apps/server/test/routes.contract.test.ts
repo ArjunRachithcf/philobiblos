@@ -7,9 +7,18 @@ import { parse } from 'yaml';
 import { EDGE_IDENTITY, loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { seal } from '../src/household/sealed';
+import { mailView } from '../src/mail/oauth';
+import type { FormEgress } from '../src/net/egress';
 import { ORIGIN, RFC8291_UA_KEY, TEST_SEALING_KEY, expectValid, nowherePush, fakeWebAuthn, household, inboxItems, isPublic, ops, request, security, sessionCookie } from './helpers';
 
-const standalone = () => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY });
+/** The mailbox with XOAUTH2 (the admin's own OAuth client, invented here), so POST /mail/oauth/* can answer. */
+const XOAUTH2 = {
+  PHILOBIBLOS_IMAP_HOST: 'imap.example.org', PHILOBIBLOS_IMAP_USER: 'shelf@example.org', PHILOBIBLOS_IMAP_AUTH: 'xoauth2', PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID: 'contract-client',
+  PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL: 'https://auth.example.org/authorize', PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL: 'https://auth.example.org/token', PHILOBIBLOS_IMAP_OAUTH_SCOPE: 'mail.read offline_access',
+};
+const standalone = () => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, ...XOAUTH2 });
+/** Its token endpoint, a stand-in: every code and refresh token is good. */
+const tokenEndpoint: FormEgress = { form: async (url) => ({ status: 200, type: 'application/json', url, body: Buffer.from(JSON.stringify({ access_token: 'contract-access', refresh_token: 'contract-refresh', token_type: 'Bearer', expires_in: 3600 })) }) };
 const homerslab = () => loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '127.0.0.1', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_DATA_DIR: '/nonexistent' });
 const HL_ADULT = { 'x-homerslab-person': 'hl-sam', 'x-homerslab-name': 'Sam', 'x-homerslab-role': 'adult' };
 const HL_KID = { 'x-homerslab-person': 'hl-kid', 'x-homerslab-name': 'Kid 1', 'x-homerslab-role': 'kid' };
@@ -33,7 +42,7 @@ beforeAll(async () => {
   kid = sessionCookie(db0, 'p_kid1');
   // A device of Alex's for DELETE /push/subscriptions/{id}; the pushes go nowhere (a stand-in push client).
   db0.insert(t.pushSubscription).values({ id: 'ps_alex', personId: 'p_alex', endpoint: 'https://fcm.googleapis.com/fcm/send/contract', p256dh: RFC8291_UA_KEY, auth: 'BTBZMqHH6r4Tts7J_aSIgg', createdAt: new Date().toISOString() }).run();
-  built = await buildApp(standalone(), db0, { webauthn: fakeWebAuthn(), push: nowherePush });
+  built = await buildApp(standalone(), db0, { webauthn: fakeWebAuthn(), push: nowherePush, mailOAuth: { egress: tokenEndpoint } });
   await built.app.ready();
 });
 afterAll(() => built.app.close());
@@ -55,6 +64,13 @@ describe('contracts/openapi.yaml', () => {
     const req = request(o);
     // Signing out everywhere would end the admin's sessions for the operations after it: someone else signs out.
     const cookie = o.op.operationId === 'signOutEverywhere' ? outsider() : admin;
+    // Connecting the mailbox names what Settings showed, and its finish a state its start made.
+    const start = async () => {
+      const accept = mailView(db0, standalone()).oauth!.allowsVersion;
+      return (await built.app.inject({ method: 'POST', url: '/api/mail/oauth/start', headers: { cookie, origin: ORIGIN }, payload: { accept } })).json() as { authorizeUrl: string };
+    };
+    if (o.op.operationId === 'startMailOAuth') req.payload = JSON.stringify({ accept: mailView(db0, standalone()).oauth!.allowsVersion });
+    if (o.op.operationId === 'finishMailOAuth') req.payload = JSON.stringify({ state: new URL((await start()).authorizeUrl).searchParams.get('state'), code: 'contract-code' });
     const res = await built.app.inject({ ...req, headers: { ...req.headers, ...(isPublic(o) ? {} : { cookie }) } });
     if (!isPublic(o)) expect(res.statusCode, res.body).toBeLessThan(300);
     // A JSON answer validates against its schema; the list's CSV is text (its own tests: no-shop.test.ts).
@@ -228,7 +244,8 @@ describe('no secrets in responses', () => {
     expect(r.headers['content-security-policy']).toContain("default-src 'self'");
     expect(r.headers['x-content-type-options']).toBe('nosniff');
   });
-  it('no Gmail or OAuth route exists', () => {
-    expect(built.apiRoutes.filter((r) => /gmail|oauth|google/i.test(r.url))).toEqual([]);
+  it('no Gmail route exists; the only OAuth routes connect the mailbox (XOAUTH2, the admin\'s own client)', () => {
+    expect(built.apiRoutes.filter((r) => /gmail|google/i.test(r.url))).toEqual([]);
+    expect(built.apiRoutes.filter((r) => /oauth/i.test(r.url)).map((r) => `${r.method} ${r.url}`).sort()).toEqual(['DELETE /api/mail/oauth', 'POST /api/mail/oauth/finish', 'POST /api/mail/oauth/start']);
   });
 });

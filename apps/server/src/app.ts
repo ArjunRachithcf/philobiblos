@@ -31,6 +31,8 @@ import { loadConnectors, type Registry } from './connectors/load';
 import { enabledConnectors } from './connectors/enabled';
 import { connectorRoutes } from './routes/connectors';
 import type { Egress, EgressOptions } from './net/egress';
+import { MailOAuth, type MailOAuthOptions } from './mail/oauth';
+import { mailRoutes } from './routes/mail';
 
 /** Phone shares: a carousel (Instagram allows 20 slides) or a video with its caption and link (contracts/connectors.md); a
  * file up to the largest by type (SHARE_BYTES: a video), each type and the whole share checked in shares.ts. */
@@ -44,7 +46,9 @@ export interface BuiltApp {
 
 export interface AppOptions { connectors?: Registry; ai?: AiJobOptions; push?: Egress; logger?: boolean; shareLimits?: Partial<typeof SHARE_LIMITS>; webauthn?: WebAuthn; jobs?: Partial<JobDeps>; media?: typeof runMediaJob; shareRetryMs?: number;
   /** Tests only: the book client's lookup (so nothing is looked up for real). */
-  egress?: Pick<EgressOptions, 'resolve'> }
+  egress?: Pick<EgressOptions, 'resolve'>;
+  /** Tests only: the mailbox's OAuth token client (their own provider) and clock. */
+  mailOAuth?: MailOAuthOptions }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   // The household's settings row, with PHILOBIBLOS_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
@@ -85,6 +89,8 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   const rules = () => egressRules({ ollamaUrl: cfg.ollamaUrl, shopHosts: shopHosts(enabledConnectors(db, connectors)) });
   const egress = createEgress({ rules, enabled: cfg.egress, ...opts.egress });
   const challenges = new Challenges();
+  // XOAUTH2 for the mailbox (mail/oauth.ts): its own token client, which reaches the OAuth client's endpoints only.
+  const mailOAuth = new MailOAuth(db, cfg, opts.mailOAuth);
   // Shares' files through the media worker; anything left from before a restart is picked up at once.
   // The AI reads a share once the media worker is done with it (ai/jobs.ts), each provider through its own client.
   const ai = new AiJobs(db, cfg, opts.ai);
@@ -99,12 +105,13 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     await backlogRoutes(api, cfg, db);
     await monthRoutes(api, cfg, db, connectors);
     await connectorRoutes(api, cfg, db, connectors);
+    await mailRoutes(api, mailOAuth);
     await knowledgeRoutes(api, db);
     await stubRoutes(api, cfg);
     await inboxRoutes(api, cfg, db, shares);
     const push = opts.push ?? pushClient(cfg);
     await pushRoutes(api, cfg, db, push);
-    await jobRoutes(api, cfg, db, { egress, connectors, shares, ai, push, ...opts.jobs });
+    await jobRoutes(api, cfg, db, { egress, connectors, shares, ai, push, ...opts.jobs, mail: { token: () => mailOAuth.accessToken(), ...opts.jobs?.mail } });
   }, { prefix: '/api' });
   if (cfg.webDir && existsSync(cfg.webDir)) {
     await app.register(fastifyStatic, { root: cfg.webDir });

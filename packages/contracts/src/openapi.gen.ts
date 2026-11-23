@@ -786,6 +786,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mail/oauth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admins, with a sign-in of the last 10 minutes (standalone; refused under HomersLab until its edge sends a recent sign-in): connect the mailbox with XOAUTH2 (PHILOBIBLOS_IMAP_AUTH=xoauth2, the admin's own OAuth client; docs/mail-providers.md). Answers the provider's authorization URL (authorization code, PKCE S256, a state used once within 10 minutes by this session), whose redirect URI is always PHILOBIBLOS_ORIGIN + /settings/mail-oauth. */
+        post: operations["startMailOAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mail/oauth/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admins: what the provider sent back to /settings/mail-oauth, from the session that started it, within 10 minutes. The code is exchanged with its PKCE verifier; the refresh and access tokens are sealed (never in an answer). The provider's refusal (error) is reported by its RFC 6749 code only. */
+        post: operations["finishMailOAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mail/oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Admins: forget the mailbox's tokens, then revoke the refresh token at the provider (RFC 7009) when the client names a revocation endpoint. Only narrows: no fresh sign-in needed. */
+        delete: operations["disconnectMailOAuth"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/push/key": {
         parameters: {
             query?: never;
@@ -1556,15 +1607,42 @@ export interface components {
                  */
                 readonly keyProblem?: "missing" | "unreadable";
             };
-            /** @description IMAP mailbox that receives only the forwarded bookshop mail (ADR 0007); its app password is a secret, never in the API */
-            mail?: {
-                host?: string;
-                /** @default 993 */
-                port: number;
-                user?: string;
-                /** @default INBOX */
-                folder: string;
-                readonly configured?: boolean;
+            mail?: components["schemas"]["MailSettings"];
+        };
+        /** @description The IMAP mailbox that receives only the forwarded bookshop mail (ADR 0007), from the environment: its app password or its OAuth tokens are never in the API */
+        MailSettings: {
+            host?: string;
+            /**
+             * @description TLS from the first byte, whatever the port
+             * @default 993
+             */
+            port: number;
+            user?: string;
+            /** @default INBOX */
+            folder: string;
+            configured?: boolean;
+            /**
+             * @description password: an app password (the default); xoauth2: a token from the admin's OAuth client, connected here (docs/mail-providers.md)
+             * @enum {unknown}
+             */
+            auth?: "password" | "xoauth2";
+            /** @description With xoauth2 only */
+            oauth?: {
+                /** @description PHILOBIBLOS_ORIGIN + /settings/mail-oauth: the one redirect URI to register with the provider */
+                redirectUri: string;
+                /** @description what connecting allows, shown before an admin connects */
+                allows: string[];
+                /** @description what POST /mail/oauth/start must carry as accept */
+                allowsVersion: string;
+                connected: boolean;
+                /** Format: date-time */
+                connectedAt?: string;
+                /** @description tokens are kept that are not used: for another client or mailbox (the environment changed), or sealed under another key */
+                needsReconnect: boolean;
+                /** @description the client names a revocation endpoint */
+                revocable: boolean;
+                /** @description why an admin cannot connect now (no sealing key; HomersLab's missing recent sign-in) */
+                connectBlocked?: string;
             };
         };
         PushSubscription: {
@@ -3712,6 +3790,147 @@ export interface operations {
                 };
             };
             /** @description The connector cannot be used, changed since Settings showed it, shares a mail domain with an enabled one, or its currency is not the household's */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    startMailOAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Settings.mail.oauth.allowsVersion of what the admin read */
+                    accept: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Where to send the admin */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uri */
+                        authorizeUrl: string;
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The mailbox signs in with a password, no sealing key, or what connecting allows changed since Settings showed it */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    finishMailOAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    state: string;
+                    code?: string;
+                    error?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Connected */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailSettings"];
+                };
+            };
+            /** @description Not a state this session started (or used, or older than 10 minutes), or the provider did not allow it */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The OAuth client or the mailbox changed since the start, or no sealing key */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The token endpoint refused the code, gave no refresh token, or could not be reached */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    disconnectMailOAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Forgotten */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description true: the provider confirmed; false: it did not (or the tokens were for another client, and were not sent); null: no revocation endpoint, remove the app at the provider */
+                        revoked: boolean | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The mailbox signs in with a password */
             409: {
                 headers: {
                     [name: string]: unknown;

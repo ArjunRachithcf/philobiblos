@@ -65,6 +65,17 @@ export interface Egress {
   push(url: string, body: Buffer, opts: { headers: Record<string, string> }): Promise<Response>;
 }
 
+/**
+ * An OAuth request (mail/oauth.ts: the token endpoint, the revocation endpoint): its parameters form-encoded, never
+ * redirected, within the GET deadline and FORM_MAX bytes, the answer JSON within LIMITS.json. A 400 or 401 is read too
+ * (the endpoint says why in its JSON: invalid_grant, say); any other status that is not 2xx is an EgressError.
+ */
+export interface FormEgress {
+  form(url: string, params: URLSearchParams): Promise<Response>;
+}
+/** The largest form Philobiblos sends (an authorization code or a refresh token, with the client's id and secret). */
+export const FORM_MAX = 16 << 10;
+
 /** The largest request body Philobiblos sends (an AI job's images, base64, with its prompt). */
 export const POST_MAX = 32 << 20;
 
@@ -139,7 +150,7 @@ export interface EgressOptions {
   test?: { ca?: string; isPublic?: (addr: string) => boolean; httpsPort?: number };
 }
 
-export function createEgress(o: EgressOptions): Egress {
+export function createEgress(o: EgressOptions): Egress & FormEgress {
   const resolve = o.resolve ?? systemResolve;
   const timeoutMs = o.timeoutMs ?? TIMEOUT_MS;
   const isPublic = o.test?.isPublic ?? isPublicAddress;
@@ -165,7 +176,7 @@ export function createEgress(o: EgressOptions): Egress {
     return all[0]!;
   }
 
-  function once(u: URL, rule: Rule, want: Want | 'push', headers: Record<string, string>, signal: AbortSignal, body?: Buffer): Promise<{ res: http.IncomingMessage; addr: LookupAddress }> {
+  function once(u: URL, rule: Rule, want: Want | 'push' | 'form', headers: Record<string, string>, signal: AbortSignal, body?: Buffer): Promise<{ res: http.IncomingMessage; addr: LookupAddress }> {
     return addressFor(u.hostname, rule.privateOk === true, signal).then((addr) => new Promise((ok, fail) => {
       // The connection goes to the address checked above; the name stays for TLS (SNI and the certificate).
       const lookup: LookupFunction = (_h, opts, cb) => {
@@ -177,8 +188,8 @@ export function createEgress(o: EgressOptions): Egress {
         ...(o.test?.httpsPort && u.protocol === 'https:' && !u.port ? { port: o.test.httpsPort } : {}),
         method: body ? 'POST' : 'GET', lookup, signal, agent: false, ...(o.test?.ca ? { ca: o.test.ca } : {}),
         headers: {
-          ...headers, 'user-agent': USER_AGENT, accept: want === 'json' ? 'application/json' : want === 'html' ? 'text/html' : want === 'push' ? '*/*' : 'image/*', 'accept-encoding': 'identity',
-          ...(body ? { 'content-type': want === 'push' ? 'application/octet-stream' : 'application/json', 'content-length': String(body.length) } : {}),
+          ...headers, 'user-agent': USER_AGENT, accept: want === 'json' || want === 'form' ? 'application/json' : want === 'html' ? 'text/html' : want === 'push' ? '*/*' : 'image/*', 'accept-encoding': 'identity',
+          ...(body ? { 'content-type': want === 'push' ? 'application/octet-stream' : want === 'form' ? 'application/x-www-form-urlencoded' : 'application/json', 'content-length': String(body.length) } : {}),
         },
       }, (res) => ok({ res, addr }));
       req.on('error', (e) => fail(signal.aborted ? new EgressError('timeout', `${u.hostname} took too long`) : new EgressError('network', `${u.hostname}: ${(e as NodeJS.ErrnoException).code ?? 'request failed'}`)));
@@ -186,11 +197,12 @@ export function createEgress(o: EgressOptions): Egress {
     }));
   }
 
-  async function exchange(url: string, want: Want | 'push', headers: Record<string, string>, deadline: number, body?: Buffer): Promise<Response> {
+  async function exchange(url: string, want: Want | 'push' | 'form', headers: Record<string, string>, deadline: number, body?: Buffer): Promise<Response> {
       if (o.enabled === false) throw new EgressError('off', 'outgoing requests are turned off (PHILOBIBLOS_EGRESS=off)');
       let u = new URL(url);
       const first = ruleFor(u);
       if (!first || u.username || u.password) throw new EgressError('not-allowed', `${u.protocol}//${u.host} is not on the egress allowlist`);
+      if (want === 'form' && body && body.length > FORM_MAX) throw new EgressError('too-large', `a form over ${FORM_MAX} bytes is not sent`);
       if (body && body.length > POST_MAX) throw new EgressError('too-large', `a request body over ${POST_MAX} bytes is not sent`);
       let rule = first;
       let crossed = 0;
@@ -223,9 +235,13 @@ export function createEgress(o: EgressOptions): Egress {
           const encoding = String(res.headers['content-encoding'] ?? 'identity').toLowerCase();
           if (encoding !== 'identity') { res.destroy(); throw new EgressError('encoding', `${u.hostname} sent ${encoding} content`); }
           const type = String(res.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
-          if (status < 200 || status >= 300) { res.destroy(); throw new EgressError('status', `${u.hostname} answered ${status}`, status); }
-          if (!TYPES[want].test(type)) { res.destroy(); throw new EgressError('type', `${u.hostname} sent ${type || 'no content type'}, not ${want}`); }
-          const limit = LIMITS[want];
+          // An OAuth endpoint's refusal is read: its JSON names the error (never shown as it is: mail/oauth.ts).
+          const readable = (status >= 200 && status < 300) || (want === 'form' && (status === 400 || status === 401));
+          if (!readable) { res.destroy(); throw new EgressError('status', `${u.hostname} answered ${status}`, status); }
+          const as: Want = want === 'form' ? 'json' : want;
+          // A revocation's 200 has no body (RFC 7009 2.2): a form's answer may come without a type, never with another.
+          if (!TYPES[as].test(type) && !(want === 'form' && type === '')) { res.destroy(); throw new EgressError('type', `${u.hostname} sent ${type || 'no content type'}, not ${as}`); }
+          const limit = LIMITS[as];
           if (Number(res.headers['content-length'] ?? 0) > limit) { res.destroy(); throw new EgressError('too-large', `${u.hostname} sent more than ${limit} bytes`); }
           const chunks: Buffer[] = [];
           let size = 0;
@@ -249,6 +265,7 @@ export function createEgress(o: EgressOptions): Egress {
   return {
     get: (url, want, opts = {}) => exchange(url, want, opts.headers ?? {}, timeoutMs),
     push: (url, body, opts) => exchange(url, 'push', opts.headers, timeoutMs, body),
+    form: (url, params) => exchange(url, 'form', {}, timeoutMs, Buffer.from(params.toString())),
     post: (url, body, opts) => exchange(url, 'json', opts.headers ?? {}, Math.min(opts.timeoutMs, o.postMaxMs ?? POST_TIMEOUT_MAX_MS), body),
   };
 }

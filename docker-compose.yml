@@ -27,11 +27,24 @@ services:
       # off: nothing leaves (prices, Open Library and covers stay as they are); docs/security.md
       PHILOBIBLOS_EGRESS: ${PHILOBIBLOS_EGRESS:-${SHELF_EGRESS:-on}}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # Mail (ADR 0007): the Philobiblos-only mailbox, read over IMAP (TLS) with an app password.
+      # Mail (ADR 0007): the Philobiblos-only mailbox, read over IMAP (TLS from the first byte) with an app password, or
+      # with XOAUTH2 for a provider that refuses passwords (PHILOBIBLOS_IMAP_AUTH=xoauth2: your own OAuth client, then
+      # connected by an admin in Settings). Which to use for your provider: docs/mail-providers.md.
       PHILOBIBLOS_IMAP_HOST: ${PHILOBIBLOS_IMAP_HOST:-${SHELF_IMAP_HOST:-}}
       PHILOBIBLOS_IMAP_USER: ${PHILOBIBLOS_IMAP_USER:-${SHELF_IMAP_USER:-}}
       PHILOBIBLOS_IMAP_PASSWORD: ${PHILOBIBLOS_IMAP_PASSWORD:-${SHELF_IMAP_PASSWORD:-}}
       PHILOBIBLOS_IMAP_FOLDER: ${PHILOBIBLOS_IMAP_FOLDER:-${SHELF_IMAP_FOLDER:-INBOX}}
+      # A self-hosted server or a local bridge: its port (TLS from the first byte all the same) and its own certificate
+      # (mount it read-only and name it here); empty: 993 and the system's CAs.
+      PHILOBIBLOS_IMAP_PORT: ${PHILOBIBLOS_IMAP_PORT:-}
+      PHILOBIBLOS_IMAP_CA_FILE: ${PHILOBIBLOS_IMAP_CA_FILE:-}
+      PHILOBIBLOS_IMAP_AUTH: ${PHILOBIBLOS_IMAP_AUTH:-password}
+      PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID: ${PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID:-}
+      PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET: ${PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET:-}
+      PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL: ${PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL:-}
+      PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL: ${PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL:-}
+      PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL: ${PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL:-}
+      PHILOBIBLOS_IMAP_OAUTH_SCOPE: ${PHILOBIBLOS_IMAP_OAUTH_SCOPE:-}
       # Whose ARC seal vouches for a forward that broke the bookshop's DKIM: your own mail provider's sealing domain, if
       # you forward through one (docs/connectors.md lists common ones). None by default: no provider is assumed.
       PHILOBIBLOS_MAIL_ARC_SEALERS: ${PHILOBIBLOS_MAIL_ARC_SEALERS:-${SHELF_MAIL_ARC_SEALERS:-}}

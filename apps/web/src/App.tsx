@@ -11,6 +11,8 @@ import { Proposals } from './pages/Proposals';
 import { ThisMonth } from './pages/ThisMonth';
 import { Library } from './pages/Library';
 import { Settings } from './pages/Settings';
+// Imported before the route is read: it takes the mail provider's return out of the address bar (Settings, Mailbox).
+import './pages/Mailbox';
 import { Inbox } from './pages/Inbox';
 import { Share } from './pages/Share';
 import { SignIn } from './pages/SignIn';

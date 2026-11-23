@@ -21,7 +21,8 @@ import type { Outcome } from '../jobs/books';
 import { SEALED } from '../routes/month';
 import { SealError, isSealed, sealingKey, unseal } from '../household/sealed';
 import { MediaUnavailable, runMediaJob, type MediaOutcome } from '../media/client';
-import type { Config } from '../config';
+import type { Config, ImapSettings } from '../config';
+import { OAuthError } from './oauth';
 import { MAIL_LIMITS, addressParts, openVerified, type VerifiedMail } from './read';
 import { PARSERS, classify, mailRules, parseInvoice, parseMarkup, parseQuote, parseShop, type MailRules, type Parsed } from './parse';
 import { enabledConnectors } from '../connectors/enabled';
@@ -47,11 +48,13 @@ export interface MailDeps {
   now?: () => Date;
   /** The media worker's PDF text (default: runMediaJob('pdf.text') in PHILOBIBLOS_WORK_DIR). */
   pdfText?: (pdf: Uint8Array) => Promise<MediaOutcome>;
+  /** With XOAUTH2: the mailbox's access token (mail/oauth.ts MailOAuth.accessToken). */
+  token?: () => Promise<string>;
 }
 
 const hash = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 
-export type MailJobConfig = Pick<Config, 'arcSealers' | 'mailRecipients' | 'sealingKey'> & { imap: MailboxConfig | null; workDir?: string | null; connectors: Registry };
+export type MailJobConfig = Pick<Config, 'arcSealers' | 'mailRecipients' | 'sealingKey'> & { imap: ImapSettings | null; workDir?: string | null; connectors: Registry };
 
 /** The kind and fields of a verified mail; an invoice's PDFs through the media worker (null: not now, try later). */
 async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Array) => Promise<MediaOutcome>, r: MailRules): Promise<Parsed | null> {
@@ -85,7 +88,7 @@ async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Arr
 }
 
 export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {}): Promise<Outcome> {
-  if (!cfg.imap) return { status: 'blocked', detail: 'no mailbox is set up (PHILOBIBLOS_IMAP_HOST, PHILOBIBLOS_IMAP_USER, PHILOBIBLOS_IMAP_PASSWORD)' };
+  if (!cfg.imap) return { status: 'blocked', detail: 'no mailbox is set up (PHILOBIBLOS_IMAP_HOST, PHILOBIBLOS_IMAP_USER, and PHILOBIBLOS_IMAP_PASSWORD or PHILOBIBLOS_IMAP_AUTH=xoauth2)' };
   const now = deps.now ?? (() => new Date());
   // Only the bookshops an admin enabled, as their files are now: their mail domains are the only senders that count.
   const enabled = enabledConnectors(db, cfg.connectors).filter((e) => e.connector.mail);
@@ -103,8 +106,19 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
   const recipients = [...new Set([...cfg.mailRecipients, ...(cfg.imap.user.includes('@') ? [cfg.imap.user] : [])].map((r) => r.toLowerCase()))];
   // Enabling a bookshop (or a new version of one) is a change of the checks: the window is read again under them.
   const configKey = hash(JSON.stringify([PARSER_VERSION, [...cfg.arcSealers].sort(), [...recipients].sort(), enabled.map((e) => [e.id, e.version])]));
+  // How it signs in: the app password, or (XOAUTH2) the access token, refreshed first when it is out of date.
+  let signIn: MailboxConfig;
+  const { oauth, password, ...place } = cfg.imap;
+  if (oauth) {
+    if (!deps.token) return { status: 'blocked', detail: 'the mailbox signs in with XOAUTH2, and no token is available' };
+    try { signIn = { ...place, accessToken: await deps.token() }; } catch (e) {
+      // Its own words only (mail/oauth.ts): never a token, never the provider's text.
+      if (e instanceof OAuthError) return { status: e.status === 502 ? 'failed' : 'blocked', detail: e.message };
+      throw e;
+    }
+  } else signIn = { ...place, password: password! };
   let box: Mailbox;
-  try { box = await (deps.open ?? openMailbox)(cfg.imap); } catch (e) {
+  try { box = await (deps.open ?? openMailbox)(signIn); } catch (e) {
     return { status: 'failed', detail: e instanceof MailboxError ? e.message : 'cannot reach the mailbox' };
   }
   const folder = cfg.imap.folder;

@@ -1,19 +1,30 @@
 // The Philobiblos-only mailbox over IMAP (ADR 0007, contracts/connectors.md): the only IMAP connection in Philobiblos, and only
-// these operations. TLS from the first byte on port 993 (no STARTTLS, so nothing to downgrade), the certificate and
-// the host name verified, TLS 1.2 or newer. The folder is opened with EXAMINE (read-only), and the reader only lists
+// these operations. TLS from the first byte (port 993 unless the household names another; never STARTTLS, so nothing to
+// downgrade), the certificate and the host name verified (against the system's CAs, or only the one certificate
+// PHILOBIBLOS_IMAP_CA_FILE names: a self-hosted server's, a local bridge's), TLS 1.2 or newer. It signs in with the app
+// password, or with XOAUTH2 (or OAUTHBEARER, when the server offers it) and the access token mail/oauth.ts gives. The folder is opened with EXAMINE (read-only), and the reader only lists
 // UIDs (UID SEARCH) and sizes and reads a message's bytes with BODY.PEEK: it never stores a flag, moves, copies, deletes, expunges
 // or appends (an architecture test, test/mail.test.ts, keeps every other call out of this file).
 import { readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { ImapFlow } from 'imapflow';
 
-export interface MailboxConfig {
+export type Secret = { value: string } | { file: string };
+
+/** Where the mailbox is. */
+export interface MailboxPlace {
   host: string;
+  /** Default 993; TLS from the first byte whatever it is. */
+  port?: number;
   user: string;
-  password: { value: string } | { file: string };
   folder: string;
+  /** A PEM file: the server's certificate must chain to it, and to nothing else (null: the system's CAs). */
+  caFile?: string | null;
   /** Tests only: the CA of their own server, the address it listens on and its port. */
-  test?: { ca: string; connectTo: string; port: number };
+  test?: { ca?: string; connectTo: string; port: number };
 }
+/** How it signs in: the app password, or an OAuth access token (never both). */
+export type MailboxConfig = MailboxPlace & ({ password: Secret; accessToken?: undefined } | { accessToken: string; password?: undefined });
 
 export interface MessageInfo { uid: number; size: number; messageId: string | null }
 export interface Mailbox {
@@ -29,16 +40,23 @@ export class MailboxError extends Error {
   constructor(message: string) { super(message); this.name = 'MailboxError'; }
 }
 
-const secret = (p: MailboxConfig['password']) => ('value' in p ? p.value : readFileSync(p.file, 'utf8').trim());
+const secret = (p: Secret) => ('value' in p ? p.value : readFileSync(p.file, 'utf8').trim());
 
 export async function openMailbox(c: MailboxConfig): Promise<Mailbox> {
+  const port = c.port ?? 993;
+  let ca: string | undefined = c.test?.ca;
+  if (!ca && c.caFile) {
+    try { ca = readFileSync(c.caFile, 'utf8'); } catch { throw new MailboxError('cannot read PHILOBIBLOS_IMAP_CA_FILE'); }
+  }
   const client = new ImapFlow({
     host: c.test?.connectTo ?? c.host,
-    port: c.test?.port ?? 993,
+    port: c.test?.port ?? port,
     secure: true,
     doSTARTTLS: false,
-    auth: { user: c.user, pass: secret(c.password) },
-    tls: { rejectUnauthorized: true, minVersion: 'TLSv1.2', servername: c.host, ...(c.test ? { ca: c.test.ca } : {}) },
+    // XOAUTH2 (or OAUTHBEARER) with the token, never a password beside it; imapflow refuses a token with control characters.
+    auth: c.accessToken !== undefined ? { user: c.user, accessToken: c.accessToken } : { user: c.user, pass: secret(c.password) },
+    // An IP address is checked against the certificate's IP names (SNI carries host names only).
+    tls: { rejectUnauthorized: true, minVersion: 'TLSv1.2', ...(isIP(c.host) ? {} : { servername: c.host }), ...(ca ? { ca } : {}) },
     logger: false,
     disableAutoIdle: true,
     disableCompression: true,
@@ -48,7 +66,7 @@ export async function openMailbox(c: MailboxConfig): Promise<Mailbox> {
   });
   // A failed sign-in says only that; the server's words (and the password) never reach a log or job_run.
   client.on('error', () => { /* reported through the calls below */ });
-  try { await client.connect(); } catch { throw new MailboxError(`cannot sign in to ${c.host}:993 over TLS`); }
+  try { await client.connect(); } catch { throw new MailboxError(`cannot sign in to ${c.host}:${port} over TLS`); }
   let box;
   try { box = await client.mailboxOpen(c.folder, { readOnly: true }); } catch { await client.logout().catch(() => {}); throw new MailboxError(`cannot open the folder ${c.folder}`); }
   if (!box.readOnly) { await client.logout().catch(() => {}); throw new MailboxError('the server did not open the folder read-only'); }

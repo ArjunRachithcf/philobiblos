@@ -9,7 +9,7 @@ import { dkimSign } from 'mailauth/lib/dkim/sign';
 import { describe, expect, it } from 'vitest';
 import * as t from '../src/db/schema';
 import { refreshMail } from '../src/mail/job';
-import { MailboxError, openMailbox, type MailboxConfig } from '../src/net/imap';
+import { MailboxError, openMailbox, type MailboxConfig, type MailboxPlace, type Secret } from '../src/net/imap';
 import { household } from './helpers';
 import { CONNECTORS } from './mailkit';
 
@@ -17,7 +17,7 @@ const IMAPS = Number(process.env.PHILOBIBLOS_IMAP_TEST_PORT ?? 0);
 const SMTP = Number(process.env.PHILOBIBLOS_SMTP_TEST_PORT ?? 0);
 const CA = readFileSync(new URL('./fixtures/tls/cert.pem', import.meta.url), 'utf8');
 const USER = 'shelf@shelf.test', PASS = 'test-password';
-const cfg = (o: Partial<MailboxConfig> = {}, test: Partial<NonNullable<MailboxConfig['test']>> = {}): MailboxConfig =>
+const cfg = (o: Partial<MailboxPlace> & { password?: Secret } = {}, test: Partial<NonNullable<MailboxConfig['test']>> = {}): MailboxPlace & { password: Secret } =>
   ({ host: 'imap.test', user: USER, password: { value: PASS }, folder: 'INBOX', ...o, test: { ca: CA, connectTo: '127.0.0.1', port: IMAPS, ...test } });
 
 /** SMTP, just enough to hand GreenMail a message. */

@@ -17,9 +17,25 @@ What follows applies to the connectors enabled now, and only to them. How to add
 
 No Gmail API and no Google token. The person sets up a filter in their own mail account that forwards **only** the
 bookshop's mail to a mailbox used by Philobiblos and nothing else. Philobiblos reads that mailbox over
-IMAP: TLS only (port 993, certificate verified, no STARTTLS downgrade, no plain auth without TLS), an app password kept
-as a secret (`PHILOBIBLOS_IMAP_PASSWORD`, never in the database, the API or logs), read-only (`EXAMINE`, never `STORE`,
-`MOVE`, `EXPUNGE` or delete; `mail_seen` keeps what was read). New messages after the last run, by UID.
+IMAP: TLS only (from the first byte, port 993 unless `PHILOBIBLOS_IMAP_PORT` names another; certificate and host name
+verified, against the system's CAs or only the certificate `PHILOBIBLOS_IMAP_CA_FILE` names; no STARTTLS downgrade, no
+plain auth without TLS), read-only (`EXAMINE`, never `STORE`, `MOVE`, `EXPUNGE` or delete; `mail_seen` keeps what was
+read). New messages after the last run, by UID. It signs in one of two ways, never both and never one as a fallback for
+the other (`docs/mail-providers.md`):
+
+- an app password kept as a secret (`PHILOBIBLOS_IMAP_PASSWORD`, never in the database, the API or logs), the default;
+- XOAUTH2 (`PHILOBIBLOS_IMAP_AUTH=xoauth2`, philobiblos#27; OAUTHBEARER when the server offers it) with an OAuth client
+  the household registered itself (Philobiblos ships none): its id, secret, endpoints and scope come from the environment
+  only. An admin connects the mailbox in Settings after reading what connecting allows, with a sign-in of the last 10
+  minutes: an authorization code with PKCE (S256) and a state, both 256 random bits, used once, within 10 minutes, by the
+  session that started it; the redirect URI is always `PHILOBIBLOS_ORIGIN` + `/settings/mail-oauth`. The refresh and
+  access tokens are sealed like the delivery address (`sealed_secret` `imap_oauth`), with the fingerprint of the client
+  and mailbox they were given for: a change of either in the environment and they are never used or sent anywhere. The
+  access token is refreshed with less than a minute left, one refresh at a time; a new refresh token replaces the old one
+  (rotation); `invalid_grant` forgets them. Disconnecting forgets them, then revokes the refresh token (RFC 7009) when the
+  client names a revocation endpoint. The token client reaches the token and revocation endpoints only (https, public
+  addresses, never redirected); no token, code or verifier is in an answer, a log or `job_run`, and of a provider's
+  refusal only its RFC 6749 error code is repeated.
 
 **Every mail is hostile input.** Forwarded mail can be spoofed, so before a mail has any effect:
 

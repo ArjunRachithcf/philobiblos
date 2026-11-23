@@ -42,3 +42,7 @@ out through a **Compose** action: a `mailto:` link with the text filled in, open
   A `gmail.readonly` token reads a person's whole mailbox, and a leak of the server would leak it; `gmail.compose` can
   write drafts in their name. A forwarding filter plus a dedicated mailbox limits what Shelf can ever see to the
   bookshop's mail, and a mailto link needs no permission at all. Security comes first (ADR 0009).
+- **Added** (2026-11-23, philobiblos#27): XOAUTH2 for a provider that refuses app passwords over IMAP, with an OAuth
+  client the household registers itself (none is built in). The token is for the Philobiblos-only mailbox, never a
+  person's own account, and is sealed; an admin connects it in Settings with a fresh sign-in after reading what it
+  allows, and disconnecting revokes it. The app password stays the default (`docs/mail-providers.md`).

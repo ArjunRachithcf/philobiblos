@@ -162,8 +162,9 @@ Providers: Ollama (local, the default) or Claude (API key, an explicit opt-in th
 ## 9. Sources (see `contracts/connectors.md`)
 
 Bookshops are connectors, data an admin enables (philobiblos#27, `docs/connectors.md`): any shop, any mail provider
-with IMAP. Mail (the bookshop's mail forwarded to a Philobiblos-only mailbox, read over IMAP; Compose links instead of
-drafts), price lookup (an enabled connector's search page, read-only, best effort), metadata (Open Library,
+with IMAP, signed in with an app password or with XOAUTH2 and the household's own OAuth client, which an admin connects
+in Settings (`docs/mail-providers.md`). Mail (the bookshop's mail forwarded to a Philobiblos-only mailbox, read over
+IMAP; Compose links instead of drafts), price lookup (an enabled connector's search page, read-only, best effort), metadata (Open Library,
 cached; ISBNs and titles only, listed under what leaves, an admin can turn it off), phone share, manual add, imports
 (Goodreads, StoryGraph, generic CSV, pasted), and an order's quote or an invoice typed in or imported as a CSV (any shop,
 or none), the order as a plain list (mail text, printed, CSV) with its books marked owned by a tap. Optional outgoing SMTP, off by default, sends one thing only: a join

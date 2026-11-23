@@ -1,6 +1,6 @@
 // Settings (spec §4): the household's monthly budget (one shared budget for the month's order; admins set it, everyone
 // sees it; no rollover), its currency and unknown price (philobiblos#27: none is built in) and where orders go (the bookshop's address and the delivery address, sealed on the server; the
-// delivery address is never shown back), the bookshops (Bookshops.tsx), when the monthly refresh runs, notifications (Notifications.tsx), the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
+// delivery address is never shown back), the bookshops (Bookshops.tsx), the mailbox (Mailbox.tsx: its XOAUTH2 connection), when the monthly refresh runs, notifications (Notifications.tsx), the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
 // arrives with its parts.
 import { useEffect, useId, useState } from 'react';
 import { api, message, type Me, type Settings as S } from '../api';
@@ -8,6 +8,7 @@ import { Notice, PageHead } from '../ui';
 import { ShareTokens } from './ShareTokens';
 import { AiSettings } from './AiSettings';
 import { Bookshops } from './Bookshops';
+import { Mailbox } from './Mailbox';
 import { Notifications } from './Notifications';
 import { unit, useMoney } from '../money';
 
@@ -77,6 +78,7 @@ export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }
         </section>
         <HouseholdMoney admin={admin} reload={reload} />
         <Bookshops admin={admin} />
+        <Mailbox admin={admin} />
         <OrderPlaces admin={admin} />
         <MonthlyRefresh admin={admin} />
         <Notifications admin={admin} />

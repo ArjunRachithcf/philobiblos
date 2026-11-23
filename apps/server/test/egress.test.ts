@@ -197,6 +197,38 @@ describe('a push message (Web Push)', () => {
   });
 });
 
+describe('an OAuth form (mail/oauth.ts: token and revocation endpoints)', () => {
+  const former = () => client([{ host: 'other.test' }], { isPublic: () => true, httpsPort: sport });
+  const body = (q: http.IncomingMessage) => new Promise<string>((ok) => { let b = ''; q.on('data', (c: Buffer) => { b += c.toString(); }); q.on('end', () => ok(b)); });
+  it('form-encoded, JSON back; a 400 or 401 is read (it names the error), other errors are not', async () => {
+    let got = '';
+    reset({
+      '/t': (q, r) => { void body(q).then((b) => { got = b; json({ access_token: 'x' })(q, r); }); },
+      '/bad': (q, r) => { r.statusCode = 400; json({ error: 'invalid_grant' })(q, r); },
+      '/who': (q, r) => { r.statusCode = 401; json({ error: 'invalid_client' })(q, r); },
+      '/down': (q, r) => { r.statusCode = 503; json({ error: 'temporarily_unavailable' })(q, r); },
+    });
+    const res = await former().form('https://other.test/t', new URLSearchParams({ grant_type: 'refresh_token', refresh_token: 'a b&c' }));
+    expect(JSON.parse(res.body.toString())).toEqual({ access_token: 'x' });
+    expect(got).toBe('grant_type=refresh_token&refresh_token=a+b%26c');
+    expect(seen[0]!.headers).toMatchObject({ 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': USER_AGENT });
+    expect(seen[0]!.headers.cookie).toBeUndefined();
+    expect((await former().form('https://other.test/bad', new URLSearchParams())).status).toBe(400);
+    expect((await former().form('https://other.test/who', new URLSearchParams())).status).toBe(401);
+    expect((await fails(former().form('https://other.test/down', new URLSearchParams()), 'status')).status).toBe(503);
+  });
+  it('never redirected; an answer of another type is refused, an empty one (a revocation\'s) is not; a form over 16 KB is not sent', async () => {
+    reset({ '/moved': redirect('https://other.test/t'), '/html': (q, r) => json({}, 'text/html')(q, r), '/empty': (_q, r) => { r.statusCode = 200; r.end(); } });
+    await fails(former().form('https://other.test/moved', new URLSearchParams()), 'redirect');
+    await fails(former().form('https://other.test/html', new URLSearchParams()), 'type');
+    expect((await former().form('https://other.test/empty', new URLSearchParams({ token: 't' }))).status).toBe(200);
+    seen = [];
+    await fails(former().form('https://other.test/empty', new URLSearchParams({ token: 'x'.repeat(16 << 10) })), 'too-large');
+    expect(seen).toHaveLength(0);
+    await fails(former().form('https://books.test/t', new URLSearchParams()), 'not-allowed');
+  });
+});
+
 describe('redirects', () => {
   it('on the same host: followed, at most 3', async () => {
     reset({ '/1': redirect('/2'), '/2': json({ at: 2 }), '/r0': redirect('/r1'), '/r1': redirect('/r2'), '/r2': redirect('/r3'), '/r3': redirect('/r4'), '/r4': json({}) });
