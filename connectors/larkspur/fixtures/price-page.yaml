@@ -1,0 +1,21 @@
+# An invented search page of Larkspur Books with Product markup: the matching book's offer in euros is the one read.
+title: The Long Tide of Markets
+authors: [Mira Okafor]
+page: |
+  <html><body><h1>Search results</h1>
+  <script>window.tracking = "never read"</script>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "ItemList", "itemListElement": [
+    {"@type": "ListItem", "position": 1, "item": {"@type": "Book", "name": "The Long Tide", "author": {"@type": "Person", "name": "Mira Okafor"},
+     "sku": "LK-1000", "offers": {"@type": "Offer", "price": "9.00", "priceCurrency": "EUR", "availability": "https://schema.org/InStock"}}},
+    {"@type": "ListItem", "position": 2, "item": {"@type": "Book", "name": "The Long Tide of Markets", "author": {"@type": "Person", "name": "Mira Okafor"},
+     "gtin13": "9780000000002", "offers": [
+       {"@type": "Offer", "price": "22.00", "priceCurrency": "USD", "availability": "https://schema.org/InStock"},
+       {"@type": "Offer", "price": "18.50", "priceCurrency": "EUR", "availability": "https://schema.org/InStock"}]}}
+  ]}
+  </script>
+  </body></html>
+expect:
+  externalId: '9780000000002'
+  priceC: 1850
+  availability: in stock

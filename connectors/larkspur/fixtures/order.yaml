@@ -1,0 +1,28 @@
+# An invented order mail of Larkspur Books, with schema.org Order markup (JSON-LD): names, titles and numbers are made up.
+from: Larkspur Books <orders@larkspur.example>
+subject: Your Larkspur receipt
+html: |
+  <html><body>
+  <p>Thank you for your order, A. Reader.</p>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@type": "Order", "orderNumber": "LK-20417",
+   "merchant": {"@type": "Organization", "name": "Larkspur Books"},
+   "acceptedOffer": [
+     {"@type": "Offer", "price": "19.90", "priceCurrency": "EUR",
+      "itemOffered": {"@type": "Book", "name": "The Long Tide of Markets", "author": {"@type": "Person", "name": "Mira Okafor"}, "isbn": "9780000000002"}},
+     {"@type": "Offer", "price": "11.00", "priceCurrency": "EUR", "eligibleQuantity": {"@type": "QuantitativeValue", "value": 2},
+      "itemOffered": {"@type": "Book", "name": "The Quiet Hedgehog", "author": "Lena Paulsen", "isbn": "978-0-00-000001-9"}},
+     {"@type": "Offer", "price": "8.50", "priceCurrency": "EUR",
+      "itemOffered": {"@type": "Product", "name": "Bookmark, brass", "gtin13": "4001234567890"}}
+   ]}
+  </script>
+  </body></html>
+expect:
+  kind: online_order
+  parser: markup-order-1
+  orderNumber: LK-20417
+  lines:
+    - { title: The Long Tide of Markets, author: Mira Okafor, ean: '9780000000002', qty: 1, priceC: 1990 }
+    - { title: The Quiet Hedgehog, author: Lena Paulsen, ean: '9780000000019', qty: 2, priceC: 1100 }
+    # Its EAN is no ISBN: the field filter drops a 13-digit run that is not one, so the line is kept as no book, without it.
+    - { title: 'Bookmark, brass', author: null, ean: null, qty: 1, priceC: 850, notBook: true }

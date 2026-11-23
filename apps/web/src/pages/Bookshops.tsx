@@ -48,6 +48,7 @@ export function Bookshops({ admin }: { admin: boolean }) {
                     {c.allows.quoteSenders.length > 0 && <li>Quotes and confirmations from {c.allows.quoteSenders.join(', ')}.</li>}
                     <li>{c.allows.priceHost ? <>Prices are looked up at {c.allows.priceHost} with a book’s title and first author.</> : 'No price lookup.'}</li>
                     {c.allows.orderTo && <li>Compose writes to {c.allows.orderTo} unless Where orders go names another address.</li>}
+                    {c.allows.markup && <li>The order and invoice markup in its signed mail counts: an invoice there adds its books to the library.</li>}
                     {c.currency && <li>Amounts in {c.currency}.</li>}
                   </ul>
                 )}

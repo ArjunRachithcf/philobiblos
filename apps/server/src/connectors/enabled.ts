@@ -51,6 +51,8 @@ export function allows(c: Connector) {
     quoteSenders: c.mail?.quote?.senders ?? [],
     priceHost,
     orderTo: c.order?.to ?? null,
+    // Its signed mail's schema.org Order and Invoice markup counts: an invoice there makes copies, as a PDF one does.
+    markup: Boolean(c.mail?.markup),
   };
 }
 
