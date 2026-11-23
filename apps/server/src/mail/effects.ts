@@ -159,9 +159,10 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
 }
 
 /**
- * An invoice line's effect (a verified mail's, or one a person typed in: orders/entries.ts): `qty` copies owned at the
- * unit price, the price learnt, and the line of the composed order the book was ordered in, if any, delivered (see
- * `deliver`). Returns that order's id.
+ * An invoice line's effect, the one way every invoice records a purchase (a verified mail's, one a person typed in:
+ * orders/entries.ts, and one added from the Inbox: inbox/inbox.ts; philobiblos#51): `qty` copies owned at the unit
+ * price, the price paid learnt (book_offer, source 'invoice'), and the line of the composed order the book was ordered
+ * in, if any, delivered (see `deliver`). Returns that order's id.
  */
 export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }, now: string): string | null {
   const orderId = deliver(tx, l);
@@ -174,14 +175,14 @@ export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number;
 export const TAP_INVOICE_DAYS = 60;
 
 /**
- * An invoice's copies of one book (`receive`'s, and the Inbox's for a line that matched no book when it came), and the
+ * An invoice's copies of one book (`receive`'s only: never called alone, so no invoice skips the price), and the
  * line of a composed order it was ordered in delivered: the latest month's line not delivered yet, as before; failing
  * that, a line a tap delivered when the parcel came (philobiblos#47) whose copy was made within TAP_INVOICE_DAYS of the
  * invoice's date. The tap's copy (`order_line.copy_id`) is then the invoice's first, at the price paid (its arrival
  * date kept), and the line no longer the tap's, so its Undo is refused like any invoice's: one copy for one book bought.
  * A tap older than that is another purchase, and the invoice makes copies of its own. Returns the line's order id.
  */
-export function deliver(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }): string | null {
+function deliver(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }): string | null {
   const composed = and(eq(t.orderLine.bookId, l.bookId), inArray(t.order.status, ['drafted', 'quoted', 'invoiced']));
   const open = tx.select({ orderId: t.orderLine.orderId }).from(t.orderLine).innerJoin(t.order, eq(t.order.id, t.orderLine.orderId))
     .where(and(composed, inArray(t.orderLine.state, ['planned', 'quoted']))).orderBy(sql`${t.order.month} DESC`).get();

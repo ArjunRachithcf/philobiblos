@@ -513,6 +513,8 @@ describe('the Inbox', () => {
     expect(r.statusCode, r.body).toBe(200);
     const book = a.db.select().from(t.book).where(eq(t.book.isbn13, '9780000000033')).get()!;
     expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, book.id)).all().map((c) => [c.source, c.priceC])).toEqual([['invoice', 1500], ['invoice', 1500]]);
+    // The price paid learnt, as a typed or a mailed invoice learns it (philobiblos#51).
+    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, book.id)).all().map((o) => [o.source, o.priceC, o.availability, o.seenAt])).toEqual([['invoice', 1500, null, a.db.select().from(t.inboxDecision).get()!.decidedAt]]);
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'skip' })).statusCode).toBe(409);
     // A toy, or a row whose EAN could not be read (a position number as much as a book), can only be skipped.
     expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'add' })).statusCode).toBe(400);
@@ -608,6 +610,7 @@ describe('the Inbox', () => {
     const copies = a.db.select().from(t.copy).where(eq(t.copy.bookId, 'b_tide')).all();
     expect(copies.map((c) => [c.source, c.orderId, c.priceC])).toEqual([['invoice', 'o_q', 1000], ['invoice', 'o_q', 1000]]);
     expect(copies.map((c) => c.id)).toContain(tapped);
+    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => [o.source, o.priceC])).toEqual([['invoice', 1000]]);
     expect(a.db.select().from(t.orderLine).where(eq(t.orderLine.orderId, 'o_q')).get()).toMatchObject({ state: 'delivered', copyId: null });
     expect(a.db.select().from(t.order).where(eq(t.order.id, 'o_q')).get()).toMatchObject({ status: 'invoiced', invoicedC: 2000 });
   });
