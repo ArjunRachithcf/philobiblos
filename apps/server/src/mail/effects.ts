@@ -159,10 +159,10 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
 }
 
 /**
- * An invoice line's effect, the one way every invoice records a purchase (a verified mail's, one a person typed in:
- * orders/entries.ts, and one added from the Inbox: inbox/inbox.ts; philobiblos#51): `qty` copies owned at the unit
- * price, the price paid learnt (book_offer, source 'invoice'), and the line of the composed order the book was ordered
- * in, if any, delivered (see `deliver`). Returns that order's id.
+ * An invoice line's effect, whichever way the invoice came (mailed, typed in, or a line added from the Inbox): `qty`
+ * copies owned at the unit price (the copies' source is the caller's), the price paid learnt (book_offer, always source
+ * 'invoice'), and the line of the composed order the book was ordered in, if any, delivered (see `deliver`). Returns
+ * that order's id.
  */
 export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }, now: string): string | null {
   const orderId = deliver(tx, l);

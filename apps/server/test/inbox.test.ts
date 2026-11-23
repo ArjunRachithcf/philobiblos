@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
@@ -514,7 +514,7 @@ describe('the Inbox', () => {
     const book = a.db.select().from(t.book).where(eq(t.book.isbn13, '9780000000033')).get()!;
     expect(a.db.select().from(t.copy).where(eq(t.copy.bookId, book.id)).all().map((c) => [c.source, c.priceC])).toEqual([['invoice', 1500], ['invoice', 1500]]);
     // The price paid learnt, as a typed or a mailed invoice learns it (philobiblos#51).
-    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, book.id)).all().map((o) => [o.source, o.priceC, o.availability, o.seenAt])).toEqual([['invoice', 1500, null, a.db.select().from(t.inboxDecision).get()!.decidedAt]]);
+    expect(a.db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, book.id)).all().map((o) => [o.source, o.priceC, o.availability, o.seenAt])).toEqual([['invoice', 1500, null, a.db.select().from(t.inboxDecision).where(and(eq(t.inboxDecision.item, id), eq(t.inboxDecision.idx, 0))).get()!.decidedAt]]);
     expect((await post(a, `/api/inbox/${id}/books/0`, { action: 'skip' })).statusCode).toBe(409);
     // A toy, or a row whose EAN could not be read (a position number as much as a book), can only be skipped.
     expect((await post(a, `/api/inbox/${id}/books/1`, { action: 'add' })).statusCode).toBe(400);
