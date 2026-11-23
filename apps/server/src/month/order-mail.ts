@@ -21,7 +21,7 @@ export function orderText(o: { month: string; lines: OrderLineText[]; deliveryAd
     ...list, '',
     ...(o.deliveryAddress ? ['Please send them to:', ...o.deliveryAddress.split(/\r?\n/).map((x) => x.trim()).filter(Boolean), ''] : []),
     'Could you reply with the prices and delivery times before sending anything? I will give the payment details myself.', '',
-    'Thank you,', o.signedBy,
+    'Thank you,', ...(o.signedBy ? [o.signedBy] : []),
   ].join('\n');
   return { subject, body };
 }

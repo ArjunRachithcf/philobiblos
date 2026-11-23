@@ -505,12 +505,19 @@ test('this month, no shop: the plain list mailed to no one, printed and download
   await expect(page.getByRole('listitem').filter({ has: page.getByText('Composed', { exact: true }) })).toHaveAttribute('aria-current', 'step');
   await expectAccessible(page, 'this month, a plain list');
 
-  // Printed: the list alone
-  await page.emulateMedia({ media: 'print' });
+  // Printed: the list alone, the books still to buy. The print dialog is the browser's: a stand-in records the call
+  // and leaves the page as it prints; afterprint puts it back, and any other print is the page as it is.
+  await page.evaluate(() => { window.print = () => { document.body.dataset.printed = 'yes'; }; });
+  const printList = async () => { await page.getByRole('button', { name: 'Print the list' }).click(); await page.emulateMedia({ media: 'print' }); };
   const printed = page.locator('.mo-print');
+  await printList();
+  await expect(page.locator('body[data-printed="yes"]')).toHaveCount(1);
   await expect(printed).toBeVisible();
   await expect(printed.getByRole('heading', { name: /^Book order, / })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'For you · non-fiction' })).toBeHidden();
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  await expect(printed).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'For you · non-fiction' })).toBeVisible();
   await page.emulateMedia({ media: 'screen' });
   await expect(printed).toBeHidden();
 
@@ -527,6 +534,12 @@ test('this month, no shop: the plain list mailed to no one, printed and download
   await mark.click();
   await expect(page.getByRole('status').filter({ hasText: `${title} is in the library.` })).toBeAttached();
   await expect(bought.getByText(/^1 of \d+ in the library$/)).toBeVisible();
+  // The printed list follows: the book bought is off it
+  await printList();
+  await expect(printed.getByRole('listitem')).not.toHaveCount(0);
+  await expect(printed.getByText(title, { exact: false })).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  await page.emulateMedia({ media: 'screen' });
   await expectAccessible(page, 'this month, a book bought');
   await bought.getByRole('button', { name: `Undo: ${title} is not owned after all` }).click();
   await expect(page.getByRole('status').filter({ hasText: `${title} is off the library again.` })).toBeAttached();

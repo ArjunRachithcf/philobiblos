@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "593d036d-0fe7-4ab4-86fa-f5b56c73d1d7",
+  "id": "f2623ebc-7d7c-4cdc-9cf1-8b9a1acbd04b",
   "prevId": "ba0fb4d5-92ac-4fa4-b0da-158e8e81845d",
   "tables": {
     "ai_run": {
@@ -2368,6 +2368,13 @@
         },
         "copy_id": {
           "name": "copy_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "tapped_from": {
+          "name": "tapped_from",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

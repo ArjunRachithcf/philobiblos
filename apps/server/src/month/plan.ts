@@ -203,7 +203,7 @@ function orderView(db: Db, o: typeof t.order.$inferSelect): S['Order'] {
       const b = books.get(l.bookId)!;
       return {
         book: { id: b.id, title: b.title, authors: JSON.parse(b.authorsJson) as string[], ...(b.isbn13 ? { isbn13: b.isbn13 } : {}) }, for: l.forPerson,
-        ...(l.estimateC != null ? { estimate: l.estimateC } : {}), ...(l.quotedC != null ? { quoted: l.quotedC } : {}), state: l.state, ownedByTap: l.copyId != null,
+        ...(l.estimateC != null ? { estimate: l.estimateC } : {}), ...(l.quotedC != null ? { quoted: l.quotedC } : {}), state: l.state, ownedByTap: l.state === 'delivered' && l.copyId != null,
       };
     }),
   };
@@ -301,22 +301,35 @@ export function composeOrder(db: Db, month: string, me: string, places: OrderPla
   checkMonth(month);
   const list = places === 'list';
   if (!list && !places.bookshopEmail) throw new MonthError(409, 'an admin adds the bookshop’s address in Settings first, or make a plain list');
+  // A composed order's list is read again (after a reload, or once books are bought): its books still to buy, and
+  // nothing changes, so it never needs the picks to be editable.
+  const had = orderOf(db, month);
+  if (list && had && had.status !== 'picked') return listOf(db, had);
   const o = keep(db, month, me);
   editable(db, o);
   const lines = db.select().from(t.orderLine).where(eq(t.orderLine.orderId, o.id)).all();
   if (!lines.length) throw new MonthError(409, 'nothing is picked this month');
-  const books = new Map(db.select().from(t.book).where(inArray(t.book.id, lines.map((l) => l.bookId))).all().map((b) => [b.id, b]));
-  const text = {
-    month, signedBy: getPerson(db, me)!.name,
-    lines: lines.map((l) => { const b = books.get(l.bookId)!; return { title: b.title, authors: JSON.parse(b.authorsJson) as string[], isbn13: b.isbn13 }; }),
-  };
-  const { subject, body } = list ? listText(text) : orderText({ ...text, deliveryAddress: places.deliveryAddress });
-  const link = list ? mailto(null, subject, body) : mailto(places.bookshopEmail!, subject, body);
   const estimate = lines.reduce((n, l) => n + (l.estimateC ?? 0), 0);
   db.update(t.order).set({ status: 'drafted', estimateC: estimate }).where(eq(t.order.id, o.id)).run();
-  const view = orderView(db, orderOf(db, month)!);
-  if (list) return { ...view, listUrl: link.url, listComplete: link.complete, listSubject: subject, listText: body };
-  return { ...view, composeUrl: link.url, composeComplete: link.complete, composeTo: places.bookshopEmail!, composeSubject: subject, composeText: body };
+  if (list) return listOf(db, orderOf(db, month)!);
+  const { subject, body } = orderText({ month, signedBy: getPerson(db, me)!.name, deliveryAddress: places.deliveryAddress, lines: lineTexts(db, lines) });
+  const link = mailto(places.bookshopEmail!, subject, body);
+  return { ...orderView(db, orderOf(db, month)!), composeUrl: link.url, composeComplete: link.complete, composeTo: places.bookshopEmail!, composeSubject: subject, composeText: body };
+}
+
+type LineRow = typeof t.orderLine.$inferSelect;
+const lineTexts = (db: Db, lines: LineRow[]) => {
+  const books = new Map(lines.length ? db.select().from(t.book).where(inArray(t.book.id, lines.map((l) => l.bookId))).all().map((b) => [b.id, b]) : []);
+  return lines.map((l) => { const b = books.get(l.bookId)!; return { title: b.title, authors: JSON.parse(b.authorsJson) as string[], isbn13: b.isbn13 }; });
+};
+/** The books of an order still to buy: its planned and quoted lines. */
+const toBuy = (db: Db, orderId: string) => db.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, orderId), inArray(t.orderLine.state, ['planned', 'quoted']))).all();
+
+/** A composed order as its plain list: the mail text of the books still to buy, to no one, unsigned, no address. */
+function listOf(db: Db, o: typeof t.order.$inferSelect): S['Order'] {
+  const { subject, body } = listText({ month: o.month, lines: lineTexts(db, toBuy(db, o.id)) });
+  const link = mailto(null, subject, body);
+  return { ...orderView(db, o), listUrl: link.url, listComplete: link.complete, listSubject: subject, listText: body };
 }
 
 /** GET /orders/{id}/list.csv: the books still to buy (planned or quoted), once the list or the mail is made. */
@@ -324,7 +337,7 @@ export function orderListCsv(db: Db, id: string): { month: string; csv: string }
   const o = db.select().from(t.order).where(eq(t.order.id, id)).get();
   if (!o) throw new MonthError(404, 'no such order');
   if (o.status === 'picked') throw new MonthError(409, 'make the list first: the picks may still change');
-  const lines = db.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, o.id), inArray(t.orderLine.state, ['planned', 'quoted']))).all();
+  const lines = toBuy(db, o.id);
   const books = new Map(lines.length ? db.select().from(t.book).where(inArray(t.book.id, lines.map((l) => l.bookId))).all().map((b) => [b.id, b]) : []);
   return {
     month: o.month,
@@ -358,10 +371,10 @@ export function markOwned(db: Db, id: string, bookId: string, body: unknown, now
       if (l.state !== 'planned' && l.state !== 'quoted') throw new MonthError(409, l.state === 'delivered' ? 'it is in the library already' : 'the shop could not deliver it: it goes to next month');
       const copyId = ulid();
       tx.insert(t.copy).values({ id: copyId, bookId, source: 'manual', orderId: id, priceC: l.state === 'quoted' ? l.quotedC : null, acquiredAt: now.toISOString() }).run();
-      tx.update(t.orderLine).set({ state: 'delivered', copyId }).where(at).run();
+      tx.update(t.orderLine).set({ state: 'delivered', copyId, tappedFrom: l.state }).where(at).run();
     } else {
       if (l.state !== 'delivered' || !l.copyId) throw new MonthError(409, 'only a book marked owned here can be unmarked; an invoice’s copies stay');
-      tx.update(t.orderLine).set({ state: l.quotedC != null ? 'quoted' : 'planned', copyId: null }).where(at).run();
+      tx.update(t.orderLine).set({ state: l.tappedFrom === 'quoted' ? 'quoted' : 'planned', copyId: null, tappedFrom: null }).where(at).run();
       tx.delete(t.copy).where(eq(t.copy.id, l.copyId)).run();
     }
   }, { behavior: 'immediate' });

@@ -42,7 +42,8 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, con
       for (const k of Object.keys(b ?? {})) if (k !== 'month' && k !== 'list') throw new MonthError(400, `unknown field ${k.slice(0, 40)}`);
       const month = b?.month ?? thisMonth(db);
       if (typeof month !== 'string') throw new MonthError(400, 'month: YYYY-MM');
-      const list = (b as { list?: unknown } | undefined)?.list ?? false;
+      const given = (b as { list?: unknown } | undefined)?.list;
+      const list = given === undefined ? false : given;
       if (typeof list !== 'boolean') throw new MonthError(400, 'list: true or false');
       checkWindow(db, month, true);
       // No-shop mode: the plain list needs no address and opens nothing sealed.

@@ -244,6 +244,7 @@ CREATE TABLE order_line (
   state     TEXT NOT NULL DEFAULT 'planned' CHECK (state IN ('planned','quoted','unavailable','delivered','rolled_over')),
   why_audience TEXT,                       -- who may read the AI's why (NULL: everyone); its person when built on something private to them
   copy_id   TEXT REFERENCES copy(id) ON DELETE SET NULL, -- the copy a tap made (no-shop mode): set while the tap can be undone
+  tapped_from TEXT,                        -- the line's state the tap found ('planned' | 'quoted'): what the undo puts back
   PRIMARY KEY (order_id, book_id)
 );
 -- An order's quote or an invoice a person typed in or imported from a CSV (philobiblos#27 slice 4: any shop, or none).

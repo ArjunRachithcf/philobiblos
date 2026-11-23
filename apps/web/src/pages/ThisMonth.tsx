@@ -6,6 +6,7 @@
 // to no one, a printed page, a CSV), and each book bought marked owned by a tap (undone by another).
 // Nothing acts on a value change: the handles move a draft, a button applies it (WCAG 3.2.2).
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { components } from '@philobiblos/contracts/openapi';
 import { ApiError, api, message, type Me } from '../api';
 import { Notice, PageHead } from '../ui';
@@ -53,9 +54,10 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
     if (!plan?.order?.id || tapping) return;
     setError(null); setTapping(true);
     try {
-      await api<Order>(`/orders/${plan.order.id}/lines/${encodeURIComponent(bookId)}`, { method: 'PUT', body: { owned } });
+      const order = await api<Order>(`/orders/${plan.order.id}/lines/${encodeURIComponent(bookId)}`, { method: 'PUT', body: { owned } });
+      // The answer is the order as it is now: the plan around it does not change with a tap.
+      setPlan((p) => (p ? { ...p, order } : p));
       setStatus(owned ? `${title} is in the library.` : `${title} is off the library again.`);
-      await load();
     } catch (e) { setError(message(e)); } finally { setTapping(false); }
   };
 
@@ -88,7 +90,7 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
               <PickList key={k.person!.id} title={`For ${k.person!.name}`} note="One theme and one author each" picks={k.picks ?? []} canChange kid
                 onRemove={(p) => void change({ remove: [{ bookId: p.candidate!.book!.id, for: k.person!.id }] }, `${p.candidate!.book!.title} is off this month’s list.`)} />
             ))}
-            <ComposeCard total={plan.total ?? 0} order={composed} empty={!adultCount && !kidCount} onCompose={(list) => void compose(list)} go={go} />
+            <ComposeCard total={plan.total ?? 0} order={composed} current={plan.order ?? null} empty={!adultCount && !kidCount} onCompose={(list) => void compose(list)} go={go} />
             {plan.order && plan.order.status !== 'picked' && (plan.order.lines?.length ?? 0) > 0 && <Bought order={plan.order} busy={tapping} onOwn={(b, t, o) => void own(b, t, o)} />}
             <RecordEntry month={month} monthName={name} orderStatus={plan.order?.status ?? null} onRecorded={() => void load()} />
           </>
@@ -272,7 +274,7 @@ function PickList({ title, note, picks, canChange, kid, onRemove }: { title: str
 
 // ---------------------------------------------------------------------------------------------------------- compose
 
-function ComposeCard({ total, order, empty, onCompose, go }: { total: number; order: Order | null; empty: boolean; onCompose: (list: boolean) => void; go: (to: string) => void }) {
+function ComposeCard({ total, order, current, empty, onCompose, go }: { total: number; order: Order | null; current: Order | null; empty: boolean; onCompose: (list: boolean) => void; go: (to: string) => void }) {
   const id = useId();
   const fmt = useMoney().format;
   const [copied, setCopied] = useState('');
@@ -297,7 +299,7 @@ function ComposeCard({ total, order, empty, onCompose, go }: { total: number; or
           <div className="btn-row">
             <a className="btn btn-primary" href={order.listUrl}>Open in your mail app</a>
             <button type="button" className="btn" onClick={() => void copy()}>Copy the list</button>
-            <button type="button" className="btn" onClick={() => window.print()}>Print the list</button>
+            <button type="button" className="btn" onClick={printList}>Print the list</button>
             <a className="btn" href={`/api/orders/${encodeURIComponent(order.id!)}/list.csv`} download>Download the CSV</a>
             <button type="button" className="btn btn-plain" onClick={() => onCompose(false)}>Compose to the bookshop instead</button>
             <span className="footnote" role="status">{copied}</span>
@@ -308,7 +310,7 @@ function ComposeCard({ total, order, empty, onCompose, go }: { total: number; or
             <label className="field-label" htmlFor={`${id}-t`}>The list’s text</label>
             <textarea className="input textarea mo-text" id={`${id}-t`} readOnly value={`Subject: ${order.listSubject ?? ''}\n\n${order.listText ?? ''}`} />
           </div>
-          <PrintedList order={order} />
+          <PrintedList subject={order.listSubject ?? ''} order={current ?? order} />
         </>
       ) : (
         <>
@@ -330,21 +332,34 @@ function ComposeCard({ total, order, empty, onCompose, go }: { total: number; or
   );
 }
 
-/** The printed page: the books alone (title, authors, ISBN, estimate), shown only when printing (app.css .mo-print). */
-function PrintedList({ order }: { order: Order }) {
+/** Print the list alone: the page is marked while it prints (app.css), so printing any other page prints that page. */
+function printList() {
+  const root = document.documentElement;
+  root.classList.add('print-list');
+  window.addEventListener('afterprint', () => root.classList.remove('print-list'), { once: true });
+  window.print();
+}
+
+/**
+ * The printed page: the books still to buy alone (title, authors, ISBN, estimate), as the order is now (after taps), a
+ * child of <body> so that printing hides everything else without leaving its space (app.css .mo-print).
+ */
+function PrintedList({ subject, order }: { subject: string; order: Order }) {
   const fmt = useMoney().format;
-  return (
+  const lines = (order.lines ?? []).filter((l) => l.state === 'planned' || l.state === 'quoted');
+  return createPortal(
     <section className="mo-print">
-      <h2>{order.listSubject}</h2>
+      <h2>{subject}</h2>
       <ol>
-        {(order.lines ?? []).map((l) => (
+        {lines.map((l) => (
           <li key={l.book!.id}>
             <b>{l.book!.title}</b>{l.book!.authors?.length ? `, ${l.book!.authors.join(', ')}` : ''}
             {l.book!.isbn13 ? ` · ISBN ${l.book!.isbn13}` : ''}{l.estimate != null ? ` · about ${fmt(l.estimate)}` : ''}
           </li>
         ))}
       </ol>
-    </section>
+    </section>,
+    document.body,
   );
 }
 

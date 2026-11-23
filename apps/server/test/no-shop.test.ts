@@ -117,6 +117,7 @@ describe('the order as a plain list (POST /orders, list: true)', () => {
     expect(o.listText).not.toContain('Example Street');
     expect(decodeURIComponent(o.listUrl)).not.toContain('Example Street');
     expect(o.listText).not.toContain(KID_NAME);
+    expect(o.listText).not.toContain('Alex'); // not signed either: the person signs in their own mail app
     expect(o.listText).not.toMatch(/card number|cvc|cvv/i);
     // the printable page's rows: each book with its ISBN and estimate
     expect(o.lines.find((l: { book: { id: string } }) => l.book.id === 'b_tide')).toMatchObject({ book: { isbn13: '9780000000002' }, estimate: 1890, state: 'planned', ownedByTap: false });
@@ -136,7 +137,7 @@ describe('the order as a plain list (POST /orders, list: true)', () => {
   });
 
   it('list must be true or false; nothing else in the body', async () => {
-    for (const body of [{ month: THIS_MONTH, list: 'yes' }, { month: THIS_MONTH, list: 1 }, { month: THIS_MONTH, to: 'x@y.example' }]) {
+    for (const body of [{ month: THIS_MONTH, list: 'yes' }, { month: THIS_MONTH, list: 1 }, { month: THIS_MONTH, list: null }, { month: THIS_MONTH, to: 'x@y.example' }]) {
       const r = await send('POST', '/api/orders', body);
       expect(r.statusCode, JSON.stringify(body)).toBe(400);
     }
@@ -146,6 +147,27 @@ describe('the order as a plain list (POST /orders, list: true)', () => {
   it('nothing picked: 409', async () => {
     db.delete(t.orderLine).run();
     expect((await send('POST', '/api/orders', { month: THIS_MONTH, list: true })).statusCode).toBe(409);
+  });
+});
+
+describe('the list read again once composed (a reload, a tap)', () => {
+  beforeEach(async () => { await built?.app.close(); await world(); });
+  it('the books still to buy, and nothing changes: the order as it was', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    const before = JSON.stringify([db.select().from(t.order).all(), db.select().from(t.orderLine).all(), db.select().from(t.copy).all()]);
+    const o = await makeList();
+    expect(o.status).toBe('drafted');
+    expect(o.listText).not.toContain('The Long Tide of Markets');
+    expect(o.listText).toContain('The Quiet Hedgehog');
+    expect(o.lines.find((l: { book: { id: string } }) => l.book.id === 'b_tide')).toMatchObject({ state: 'delivered', ownedByTap: true });
+    expect(JSON.stringify([db.select().from(t.order).all(), db.select().from(t.orderLine).all(), db.select().from(t.copy).all()])).toBe(before);
+  });
+  it('a quoted order\'s list too (the shop has the mail, the list is for buying elsewhere)', async () => {
+    await makeList();
+    db.update(t.order).set({ status: 'quoted' }).where(eq(t.order.id, 'o_now')).run();
+    expect((await send('POST', '/api/orders', { month: THIS_MONTH, list: true })).statusCode).toBe(201);
+    expect((await send('POST', '/api/orders', { month: THIS_MONTH })).statusCode).toBe(409);
   });
 });
 
@@ -241,6 +263,29 @@ describe('a copy marked owned by a tap (PUT /orders/{id}/lines/{bookId})', () =>
     expect(copiesOf('b_tide')).toHaveLength(1);
   });
 
+  it('a quote after a tap leaves the bought line as it is (delivered, still undoable)', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    recordEntry(db, 'p_alex', { kind: 'quote', month: THIS_MONTH, lines: [{ isbn: '9780000000002', price: 1600 }, { title: 'The Quiet Hedgehog', available: false }] }, new Date(iso));
+    expect(line('b_tide')).toMatchObject({ state: 'delivered', quotedC: null });
+    expect(line('b_tide').copyId).not.toBeNull();
+    expect(line('b_hedgehog').state).toBe('unavailable');
+    expect((await tap('b_tide', false)).statusCode).toBe(200);
+    expect(copiesOf('b_tide')).toHaveLength(0);
+  });
+
+  it('undo puts back the state the tap found, a quote without a price too; ownedByTap only while delivered', async () => {
+    await makeList();
+    db.update(t.orderLine).set({ state: 'quoted', quotedC: null }).where(eq(t.orderLine.bookId, 'b_tide')).run();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    expect((await tap('b_tide', false)).statusCode).toBe(200);
+    expect(line('b_tide').state).toBe('quoted');
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    db.update(t.orderLine).set({ state: 'quoted' }).where(eq(t.orderLine.bookId, 'b_tide')).run(); // state and copy disagree
+    const r = await get('/api/orders/o_now');
+    expect(r.json().lines.find((l: { book: { id: string } }) => l.book.id === 'b_tide').ownedByTap).toBe(false);
+  });
+
   it('undo: the tap\'s copy removed, the line planned again; twice is 409', async () => {
     await makeList();
     expect((await tap('b_tide', true)).statusCode).toBe(200);
@@ -257,7 +302,7 @@ describe('a copy marked owned by a tap (PUT /orders/{id}/lines/{bookId})', () =>
     await makeList();
     expect((await tap('b_tide', true)).statusCode).toBe(200);
     expect((await send('POST', `/api/month/${THIS_MONTH}/picks`, { recompute: true })).statusCode).toBe(409);
-    expect((await send('POST', '/api/orders', { month: THIS_MONTH, list: true })).statusCode).toBe(409);
+    expect((await send('POST', '/api/orders', { month: THIS_MONTH })).statusCode).toBe(409);
     expect((await send('PUT', `/api/month/${THIS_MONTH}/budget`, null)).statusCode).toBe(409);
     expect((await tap('b_tide', false)).statusCode).toBe(200);
     expect((await send('POST', '/api/orders', { month: THIS_MONTH, list: true })).statusCode).toBe(201);

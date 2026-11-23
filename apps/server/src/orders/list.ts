@@ -52,7 +52,7 @@ export function listCsv(rows: ListRow[]): string {
   return `\ufeff${lines.join('\r\n')}\r\n`;
 }
 
-/** The list's mail text: the order's, with no delivery address (the person adds it if a shop needs it). */
-export function listText(o: { month: string; lines: OrderLineText[]; signedBy: string }) {
-  return orderText({ ...o, deliveryAddress: null });
+/** The list's mail text: the order's, with no delivery address and no name (the person adds them if a shop needs them). */
+export function listText(o: { month: string; lines: OrderLineText[] }) {
+  return orderText({ ...o, deliveryAddress: null, signedBy: '' });
 }
