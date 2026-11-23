@@ -491,6 +491,55 @@ test('this month: picks, the budget bar by keyboard, a pick removed, Compose', a
   done();
 });
 
+test('this month: the shop\'s quote typed in, then an invoice imported as a CSV (philobiblos#27)', async () => {
+  const done = noForeignRequests(page, ORIGIN);
+  await page.getByRole('link', { name: 'This month' }).click();
+  const card = page.getByRole('region', { name: 'Record a quote or an invoice' });
+  await expect(card).toBeVisible();
+  // A book of the composed order (the test before composed it): its pick's title.
+  const remove = page.getByRole('button', { name: /^Remove .* from this month$/ }).first();
+  const title = (await remove.getAttribute('aria-label'))!.replace(/^Remove (.*) from this month$/, '$1');
+
+  // The quote: typed, checked (nothing changes), then recorded
+  await card.getByRole('radio', { name: /^The quote for / }).click();
+  await card.getByLabel('Title').fill(title);
+  await card.getByLabel(/^Price \(CHF\)$/).fill('21.50');
+  await card.getByRole('button', { name: 'Check' }).click();
+  await expect(card.getByText('Nothing is recorded yet.')).toBeVisible();
+  await expect(card.getByText(new RegExp(`^Row 1: ${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*, CHF\\s21\\.50$`))).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ has: page.getByText('Composed', { exact: true }) })).toHaveAttribute('aria-current', 'step');
+  await expectAccessible(page, 'this month, a quote checked');
+  // Typing again: the check was of what was entered before, so it is gone
+  await card.getByLabel(/^Price \(CHF\)$/).fill('21.60');
+  await expect(card.getByText('Nothing is recorded yet.')).toHaveCount(0);
+  await card.getByRole('button', { name: 'Record the quote' }).click();
+  await expect(card.getByText('Recorded.')).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ has: page.getByText('Quote', { exact: true }) })).toHaveAttribute('aria-current', 'step');
+
+  // The invoice: a CSV with a column it does not read; the book of the order and a new one
+  await card.getByRole('radio', { name: 'An invoice' }).click();
+  await card.getByRole('radio', { name: 'Import a CSV' }).click();
+  await card.getByLabel('Shop').selectOption({ label: 'Another shop…' });
+  await card.getByLabel('The shop’s name').fill('Corner Books');
+  await card.getByLabel('Invoice number (optional)').fill('E2E-1');
+  await card.getByLabel('Or paste it').fill(`title;qty;price;shelf\n"${title.replace(/"/g, '""')}";1;21,60;a\nPaper Boats of the Commons;2;9.00;b\n`);
+  await card.getByRole('button', { name: 'Check' }).click();
+  await expect(card.getByText(/3 copies for CHF\s39\.60 would be in the library\. Left out: the columns shelf\./)).toBeVisible();
+  await expect(card.getByText(/^Row 2: Paper Boats of the Commons \(a new book\), CHF\s9\.00$/)).toBeVisible();
+  await expectAccessible(page, 'this month, an invoice checked');
+  await card.getByRole('button', { name: 'Record the invoice' }).click();
+  await expect(card.getByText('Recorded.')).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ has: page.getByText('Invoice', { exact: true }) })).toHaveAttribute('aria-current', 'step');
+  // The same shop's number again counts once (in any case)
+  await card.getByLabel('Shop').selectOption({ label: 'Another shop…' });
+  await card.getByLabel('The shop’s name').fill('corner books');
+  await card.getByLabel('Invoice number (optional)').fill('e2e-1');
+  await card.getByLabel('Or paste it').fill('title,qty,price\nPaper Boats of the Commons,1,9.00\n');
+  await card.getByRole('button', { name: 'Record the invoice' }).click();
+  await expect(card.getByText('invoice e2e-1 from corner books is recorded already')).toBeVisible();
+  done();
+});
+
 test('the inbox, share tokens with their QR code, and phone shares (by token, by hand, through the share target)', async () => {
   const done = noForeignRequests(page, ORIGIN);
   // The bookshop's mail as the mail job keeps it (invented): an invoice with lines that matched no book, and a forgery.

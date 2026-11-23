@@ -13,6 +13,7 @@
 import type { Connector } from '@philobiblos/contracts/connector';
 import { alternation, amountFinder, amountTest, contains, literal, startsWith, subjectMatcher } from '../connectors/text';
 import { safeField } from './read';
+import { bookIsbn } from '../books/isbn';
 import { hundredths, isType, list, node, schemaNodes, text, type LdNode, type Markup } from '../schemaorg/jsonld';
 
 /** One version per parser: a row records the one that read it (and an unknown layout is read again under a new one). */
@@ -146,15 +147,14 @@ const PLACED = new Set(['OrderProcessing', 'OrderPaymentDue']);
 /** The statuses of an order an invoice may count for (allowlist: cancelled, returned, a problem, or any other status never). */
 const INVOICED = new Set(['OrderProcessing', 'OrderPaymentDue', 'OrderInTransit', 'OrderPickupAvailable', 'OrderDelivered']);
 
-/** An EAN as kept: 13 digits as they are, an ISBN-10 whose check digit holds as its ISBN-13 (978…); else undefined. */
+/**
+ * An EAN as kept: 13 digits as they are, an ISBN-10 whose check digit holds as its ISBN-13 (978…, books/isbn.ts); else
+ * undefined. (A 13-digit EAN's own check digit is not checked here yet: philobiblos#43.)
+ */
 export function isbn13(s: string): string | undefined {
   if (/^\d{13}$/.test(s)) return s;
   if (!/^\d{9}[\dX]$/i.test(s)) return undefined;
-  const d = [...s.toUpperCase()].map((c) => (c === 'X' ? 10 : Number(c)));
-  if (d.reduce((n, x, i) => n + x * (10 - i), 0) % 11 !== 0) return undefined;
-  const twelve = `978${s.slice(0, 9)}`;
-  const sum = [...twelve].reduce((n, c, i) => n + Number(c) * (i % 2 ? 3 : 1), 0);
-  return twelve + ((10 - (sum % 10)) % 10);
+  return bookIsbn(s) ?? undefined;
 }
 
 /**

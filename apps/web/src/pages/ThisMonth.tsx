@@ -1,12 +1,14 @@
 // This month (spec §4, the design's "This month"): the budget bar is the control (two handles on the bar itself, the
 // fill is the order's total), the order's progress, where your brain grows (the Focus card, the brain in miniature),
-// each adult's picks with their move, the kids' with their theme, and Compose: your own mail app opens with the order.
+// each adult's picks with their move, the kids' with their theme, and Compose: your own mail app opens with the order;
+// then the shop's quote or an invoice, typed in or imported, for a shop whose mail Philobiblos does not read (RecordEntry).
 // Nothing acts on a value change: the handles move a draft, a button applies it (WCAG 3.2.2).
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { components } from '@philobiblos/contracts/openapi';
 import { ApiError, api, message, type Me } from '../api';
 import { Notice, PageHead } from '../ui';
 import { useMoney } from '../money';
+import { RecordEntry } from './RecordEntry';
 
 type Plan = components['schemas']['MonthPlan'];
 type Pick = components['schemas']['Pick'];
@@ -74,6 +76,7 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
                 onRemove={(p) => void change({ remove: [{ bookId: p.candidate!.book!.id, for: k.person!.id }] }, `${p.candidate!.book!.title} is off this month’s list.`)} />
             ))}
             <ComposeCard total={plan.total ?? 0} order={composed} empty={!adultCount && !kidCount} onCompose={() => void compose()} go={go} />
+            <RecordEntry month={month} monthName={name} orderStatus={plan.order?.status ?? null} onRecorded={() => void load()} />
           </>
         )}
       </div>
