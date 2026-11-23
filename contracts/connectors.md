@@ -195,9 +195,11 @@ answers the list of its books still to buy (planned or quoted).
   as text), `title`, `author` (the first), `qty` (1), `price` (empty) and `estimate` (the quote, else the estimate), so the
   same file with the prices paid imports as an invoice (above; `estimate` is named back). An attachment, `no-store`.
   **A formula is never written**: a cell that starts with `=`, `+`, `-`, `@` or their full-width forms (after any spaces,
-  or after a control character turned into a space), or with a tab or a carriage return, is written with a leading `'`
-  (OWASP "CSV Injection"; philobiblos#45); control characters become spaces, so a row is a line. An import reads that one
-  `'` back out (`unguardCell`), so an exported title comes back as it was.
+  or after a control character turned into a space), or with a tab or a carriage return, or whose first visible character
+  is one of the four in any NFKC form (small, super- or subscript) after invisible format characters (zero-width spaces
+  and joiners, a byte order mark), is written with a leading `'` (OWASP "CSV Injection"; philobiblos#45, #47); control
+  characters become spaces, so a row is a line. A cell that starts with `'` gets one more too. An import reads that one
+  `'` back out (`unguardCell`), so an exported title comes back as it was, its own apostrophe included.
 - None of the three holds the delivery address, a person's name or a card number.
 - **Owned by a tap** (`PUT /orders/{id}/lines/{bookId}`, `{ owned: true }`, any adult: the order and its copies are the
   household's): for a composed order's planned or quoted line, one copy (source `manual`, of this order, priced as the shop
