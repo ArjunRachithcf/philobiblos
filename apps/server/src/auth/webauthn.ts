@@ -76,6 +76,15 @@ export function simpleWebAuthn(cfg: Pick<Config, 'origin' | 'rpId'>): WebAuthn {
   };
 }
 
+/** A passkey's label as a person gives it: trimmed, at most 40 characters, 'Passkey' when empty. */
+export const passkeyLabel = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 40) : 'Passkey');
+
+/** The passkey row of a verified enrolment (auth.ts's links, join.ts's join links). */
+export const passkeyRow = (cred: NewCredential, personId: string, label: string, createdAt: string, invitedBy: string | null = null) => ({
+  id: cred.id, personId, publicKey: Buffer.from(cred.publicKey), counter: cred.counter,
+  transportsJson: JSON.stringify(cred.transports), backedUp: cred.backedUp ? 1 : 0, label, createdAt, invitedBy,
+});
+
 export interface Pending {
   challenge: string; kind: 'enrol' | 'sign-in' | 'join'; inviteId?: string; name?: string; expires: number;
   /** 'join' (household/join-links.ts): the link, the presented token's hash (its rate limit) and the person to be. */

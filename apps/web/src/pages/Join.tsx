@@ -2,14 +2,14 @@
 // memory only and removed from the address bar at once (Enrol.tsx takeToken). The page shows nothing of the household:
 // whoever holds a link gives a name and makes a passkey, then waits for an admin. A link that does not open here gets
 // one message, whatever the reason.
-import { useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
-import { api, message, type AuthSession } from '../api';
+import { ApiError, api, message, type AuthSession } from '../api';
 import { Notice, PageHead } from '../ui';
 
 interface Start { challengeId: string; options: object }
 
-export function Join({ token, onSignedIn }: { token: string | null; onSignedIn: (s: AuthSession) => void }) {
+export function Join({ token, member, onSignedIn }: { token: string | null; member: boolean; onSignedIn: (s: AuthSession) => void }) {
   const nameId = useId();
   const labelId = useId();
   const [opens, setOpens] = useState<boolean | null>(token ? null : false);
@@ -18,10 +18,16 @@ export function Join({ token, onSignedIn }: { token: string | null; onSignedIn: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(token ? null : 'This link is incomplete. Open the whole link again.');
 
-  useEffect(() => {
+  // A link that does not open here is final (404); a limit or a hiccup can be tried again, with the token still in memory.
+  const [retry, setRetry] = useState(false);
+  const check = useCallback(() => {
     if (!token) return;
-    api('/join/open', { method: 'POST', body: { token } }).then(() => setOpens(true), (e) => { setOpens(false); setError(message(e)); });
+    setError(null); setRetry(false); setOpens(null);
+    api('/join/open', { method: 'POST', body: { token } }).then(() => setOpens(true), (e) => {
+      setOpens(false); setError(message(e)); setRetry(!(e instanceof ApiError && e.status === 404));
+    });
   }, [token]);
+  useEffect(check, [check]);
 
   const go = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,8 +47,13 @@ export function Join({ token, onSignedIn }: { token: string | null; onSignedIn: 
   return (
     <main className="auth" id="main" aria-busy={opens === null}>
       <PageHead title="Ask to join" sub="Give your name and make a passkey on this device. An admin of the household then lets you in; there is no password." />
-      {opens === false ? (
-        error && <Notice kind="error">{error}</Notice>
+      {member ? (
+        <Notice kind="info" title="You are in the household already.">This link is for someone new: send it to them. To use it yourself, sign out first.</Notice>
+      ) : opens === false ? (
+        <div className="stack">
+          {error && <Notice kind="error">{error}</Notice>}
+          {retry && <button type="button" className="btn btn-block" onClick={check}>Try again</button>}
+        </div>
       ) : (
         <form className="stack" onSubmit={go} noValidate>
           <div className="field">

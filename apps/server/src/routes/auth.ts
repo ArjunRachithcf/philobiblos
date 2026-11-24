@@ -7,9 +7,10 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { findInvite, openRecovery, removeSetupLink, spendInvites, useInvite } from '../auth/invites';
 import { clearSessionCookies, endRequestSessions, requestSession, startSession } from '../auth/cookie';
-import type { Challenges, WebAuthn } from '../auth/webauthn';
+import { passkeyLabel, passkeyRow, type Challenges, type WebAuthn } from '../auth/webauthn';
 import { getPerson, setupNeeded, suggestHandle, view } from '../household/people';
-import { anyPerson, arrive } from '../household/waiting';
+import { anyPerson, arrive, lapseWaiting } from '../household/waiting';
+import { hasLapsed } from '../household/waiting-rows';
 import { resolveIdentity } from '../identity';
 
 const limited = { auth: 'public' as const, rateLimit: { max: 20, timeWindow: '1 minute' } };
@@ -73,7 +74,7 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     // One answer, whoever's passkey it is.
     const taken = () => reply.code(409).send({ error: 'this passkey is already enrolled' });
     if (db.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.id, cred.id)).get()) return taken();
-    const label = typeof req.body?.label === 'string' && req.body.label.trim() ? req.body.label.trim().slice(0, 40) : 'Passkey';
+    const label = passkeyLabel(req.body?.label);
     const now = new Date().toISOString();
     let personId: string | null = null;
     let recovery = false;
@@ -97,11 +98,7 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
         }
       }
       if (!personId) return;
-      tx.insert(t.passkey).values({
-        id: cred.id, personId, publicKey: Buffer.from(cred.publicKey), counter: cred.counter,
-        transportsJson: JSON.stringify(cred.transports), backedUp: cred.backedUp ? 1 : 0, label, createdAt: now,
-        invitedBy: invite.kind === 'admin' ? invite.createdBy : null,
-      }).run();
+      tx.insert(t.passkey).values(passkeyRow(cred, personId, label, now, invite.kind === 'admin' ? invite.createdBy : null)).run();
       spendInvites(tx as unknown as Db, personId);
     }); } catch (e) {
       // Two enrolments of one passkey at once: the primary key decides.
@@ -130,6 +127,8 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     // One answer for every failure: which passkeys exist is nobody's business.
     const refuse = () => reply.code(401).send({ error: 'that passkey did not sign you in' });
     if (!key || !p || p.role === 'kid') return refuse();
+    // A request unanswered for 7 days lapsed: its person goes, and the passkey signs no one in.
+    if (hasLapsed(p)) { lapseWaiting(db); return refuse(); }
     const ok = await webauthn.verifyAuthentication({
       response: req.body?.response, challenge: pending.challenge,
       credential: { id: key.id, publicKey: key.publicKey, counter: key.counter, transports: JSON.parse(key.transportsJson) as string[] },

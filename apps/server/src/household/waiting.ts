@@ -16,7 +16,7 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import type { Identity, Role } from '../identity';
 import { HouseholdError, becameKid, suggestHandle, type Person } from './people';
-import { WAITING, dropWaiting, hasLapsed, lapseIn, lapseWaiting, waitingCount } from './waiting-rows';
+import { WAITING, dropWaiting, hasLapsed, lapseIn, lapseWaiting, waitingNow } from './waiting-rows';
 
 export { WAITING, lapseWaiting };
 
@@ -116,7 +116,7 @@ export function arrive(db: Db, id: Identity & { role: Role }, now = new Date()):
         tx.insert(t.person).values(p).run();
         return { kind: 'member', person: anyPerson(tx, p.id)! };
       }
-      if (waitingCount(tx, now) >= WAITING.max) return { kind: 'waiting', person: null, joined: false };
+      if (waitingNow(tx) >= WAITING.max) return { kind: 'waiting', person: null, joined: false };
       const p = { id: ulid(), externalId: id.externalId, name, role: 'adult' as const, handle: null, state: 'waiting' as const, ceiling: id.role, arrivedAt: now.toISOString(), settingsJson: '{}' };
       tx.insert(t.person).values(p).run();
       return { kind: 'waiting', person: anyPerson(tx, p.id)!, joined: true };
@@ -136,8 +136,11 @@ export function arrive(db: Db, id: Identity & { role: Role }, now = new Date()):
       return { kind: 'waiting', person: anyPerson(tx, existing.id)!, joined: false };
     }
     const role = lockedOut ? 'admin' : capped(existing.role, id.role);
-    if (role !== existing.role || name !== existing.name || existing.ceiling !== id.role || existing.seenAt !== seen) {
-      tx.update(t.person).set({ role, name, ceiling: id.role, seenAt: seen, birthYear: role === 'kid' ? existing.birthYear : null }).where(eq(t.person.id, existing.id)).run();
+    const seenStale = !existing.seenAt || now.getTime() - new Date(existing.seenAt).getTime() >= SEEN_EVERY_MS;
+    // The edge's last sight of them, to the hour (person.seen_at), like the fast path's.
+    if (seenStale) tx.update(t.person).set({ seenAt: seen }).where(eq(t.person.id, existing.id)).run();
+    if (role !== existing.role || name !== existing.name || existing.ceiling !== id.role) {
+      tx.update(t.person).set({ role, name, ceiling: id.role, birthYear: role === 'kid' ? existing.birthYear : null }).where(eq(t.person.id, existing.id)).run();
       // A demotion seen: admin-only pushes (`join`) stop by themselves: they go to the people who are admins when one
       // is sent (push/push.ts joinNotifier), and a device is not tied to a kind. (Under HomersLab there are no invites
       // or join links to take along: those routes answer 404 there.)

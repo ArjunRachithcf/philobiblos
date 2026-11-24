@@ -18,8 +18,9 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { requireAdmin, requireFreshSignIn } from '../auth/hook';
-import { startSession } from '../auth/cookie';
-import type { Challenges, WebAuthn } from '../auth/webauthn';
+import { requestSession, startSession } from '../auth/cookie';
+import { anyPerson } from '../household/waiting';
+import { passkeyLabel, passkeyRow, type Challenges, type WebAuthn } from '../auth/webauthn';
 import { JOIN_LINK, JoinLinkError, checkLink, createJoinLink, listJoinLinks, presentedHash, revokeJoinLink, spendUse } from '../household/join-links';
 import { NETWORKS, homeNetworks, parseCidr, proposeNetwork, setHomeNetworks, type Cidr } from '../net/networks';
 import { view } from '../household/people';
@@ -89,6 +90,9 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (!within(joining, req, hash)) return answer(reply, start, 429, TOO_MANY);
     const name = joinName(req.body?.name);
     if (!name) return answer(reply, start, 400, { error: 'Your name, as the household calls you: 1 to 60 characters.' });
+    // A member signed in on this browser is not asked to join again (their session would give way to a new person's).
+    const s = requestSession(db, req, reply);
+    if (s && anyPerson(db, s.personId)?.state === 'active') return answer(reply, start, 409, { error: 'You are signed in to the household already: this link is for someone new.' });
     lapseWaiting(db);
     const link = checkLink(db, { hash }, address(req));
     if (!link) return answer(reply, start, 404, NOT_HERE);
@@ -101,12 +105,14 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
   app.post<{ Body: { challengeId?: unknown; response?: unknown; label?: unknown } }>('/join/verify', pub, async (req, reply) => {
     const start = performance.now();
     if (!standaloneOnly(reply)) return;
+    // The address first, so a limited request does not spend its one-time step; then its link, once it is known.
+    if (!joining.hit(`a:${address(req) ?? ''}`)) return answer(reply, start, 429, TOO_MANY);
     const pending = challenges.take(req.body?.challengeId, 'join');
-    if (!within(joining, req, pending?.tokenHash ?? presentedHash(undefined))) return answer(reply, start, 429, TOO_MANY);
+    if (pending?.tokenHash && !joining.hit(`l:${pending.tokenHash}`)) return answer(reply, start, 429, TOO_MANY);
     if (!pending?.joinLinkId || !pending.personId || !pending.name) return answer(reply, start, 401, { error: 'this step expired; start again' });
     const cred = await webauthn.verifyRegistration({ response: req.body?.response, challenge: pending.challenge });
     if (!cred) return answer(reply, start, 401, { error: 'the passkey could not be verified' });
-    const label = typeof req.body?.label === 'string' && req.body.label.trim() ? req.body.label.trim().slice(0, 40) : 'Passkey';
+    const label = passkeyLabel(req.body?.label);
     const now = new Date();
     let outcome: 'joined' | 'not-here' | 'taken' = 'not-here';
     try {
@@ -119,17 +125,13 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
         if (tx.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.id, cred.id)).get()) { outcome = 'taken'; return; }
         tx.insert(t.person).values({ id: pending.personId!, name: pending.name!, role: 'adult', state: 'waiting', handle: null, arrivedAt: now.toISOString(), settingsJson: '{}' }).run();
         tx.insert(t.joinRequest).values({ personId: pending.personId!, joinLinkId: link.id, fromHomeNetwork: 1 }).run();
-        tx.insert(t.passkey).values({
-          id: cred.id, personId: pending.personId!, publicKey: Buffer.from(cred.publicKey), counter: cred.counter,
-          transportsJson: JSON.stringify(cred.transports), backedUp: cred.backedUp ? 1 : 0, label, createdAt: now.toISOString(),
-        }).run();
-        // The use counts here and only here, with the passkey: if it cannot (used up in between), nothing is kept.
-        if (!spendUse(tx, link.id, now)) throw new UsedUp();
+        tx.insert(t.passkey).values(passkeyRow(cred, pending.personId!, label, now.toISOString())).run();
+        // The use counts here and only here, with the passkey (checkLink saw room for it in this same transaction).
+        if (!spendUse(tx, link.id, now)) throw new Error('a join link use was not counted');
         outcome = 'joined';
       }, { behavior: 'immediate' });
     } catch (e) {
-      if (e instanceof UsedUp) outcome = 'not-here';
-      else if ((e as { code?: string }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY') outcome = 'taken';
+      if ((e as { code?: string }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY') outcome = 'taken';
       else throw e;
     }
     if (outcome === 'taken') return answer(reply, start, 409, { error: 'this passkey is already enrolled' });
@@ -195,4 +197,3 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
   });
 }
 
-class UsedUp extends Error {}

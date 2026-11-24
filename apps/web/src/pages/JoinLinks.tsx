@@ -8,7 +8,7 @@ import { Notice } from '../ui';
 
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
-export function JoinLinks({ onChanged }: { onChanged: () => Promise<void> }) {
+export function JoinLinks({ changes, onChanged }: { changes: number; onChanged: () => Promise<void> }) {
   const [nets, setNets] = useState<HomeNetworks | null>(null);
   const [links, setLinks] = useState<JoinLink[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -19,10 +19,10 @@ export function JoinLinks({ onChanged }: { onChanged: () => Promise<void> }) {
       setNets(n); setLinks(l);
     } catch (e) { setError(message(e)); }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, changes]);
   const act = async (f: () => Promise<unknown>) => {
     setError(null);
-    try { await f(); await load(); await onChanged(); } catch (e) { setError(message(e)); }
+    try { await f(); await onChanged(); } catch (e) { setError(message(e)); }
   };
   if (!nets || !links) return error ? <Notice kind="error">{error}</Notice> : null;
   const save = (networks: string[]) => act(() => api('/people/home-networks', { method: 'PUT', body: { networks } }));

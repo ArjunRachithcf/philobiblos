@@ -139,7 +139,7 @@ describe('the home network', () => {
     expect(parseCidr('203.0.113.9/32')?.cidr).toBe('203.0.113.9/32');
     expect(parseCidr('fd12:3456:789a:1::5/64')?.cidr).toBe('fd12:3456:789a:1::/64');
     expect(parseCidr('2001:db8::1/32')?.cidr).toBe('2001:db8::/32');
-    for (const bad of ['0.0.0.0/0', '10.0.0.0/7', '::/0', '2001:db8::/31', '192.168.1.0', '192.168.1.0/33', '192.168.1.0/24\n', 'a/24', '', 24, null, 'x'.repeat(80)]) {
+    for (const bad of ['0.0.0.0/0', '10.0.0.0/7', '::ffff:192.168.1.0/120', '::/0', '2001:db8::/31', '192.168.1.0', '192.168.1.0/33', '192.168.1.0/24\n', 'a/24', '', 24, null, 'x'.repeat(80)]) {
       expect(parseCidr(bad), String(bad)).toBeNull();
     }
   });
@@ -149,7 +149,7 @@ describe('the home network', () => {
     expect(proposeNetwork('::ffff:10.4.5.6')).toBe('10.4.5.0/24');
     expect(proposeNetwork('100.70.1.2')).toBe('100.70.1.0/24');
     expect(proposeNetwork('fd12:3456:789a:1::5')).toBe('fd12:3456:789a:1::/64');
-    for (const a of ['127.0.0.1', '203.0.113.5', '2001:db8::1', 'fe80::1', '', undefined]) expect(proposeNetwork(a), String(a)).toBeNull();
+    for (const a of ['127.0.0.1', '172.18.0.1', '172.20.5.9', '192.168.1.1', '203.0.113.5', '2001:db8::1', 'fe80::1', '', undefined]) expect(proposeNetwork(a), String(a)).toBeNull();
     const { app: a, db } = await app();
     const res = await a.inject({ url: '/api/people/home-networks', remoteAddress: '192.168.1.23', headers: { cookie: sessionCookie(db, 'p_alex') } });
     expect(res.json()).toEqual({ networks: [], proposal: '192.168.1.0/24' });
@@ -269,6 +269,63 @@ describe('one answer, and one timing, for every link that does not open', () => 
   it('a name is 1 to 60 characters, no control characters; the same 400 whatever the link', () => {
     expect(joinName('  Jordan ')).toBe('Jordan');
     for (const bad of ['', '   ', 'x'.repeat(61), 'Jo\nrdan', 'Jo ', 42, null]) expect(joinName(bad), JSON.stringify(bad)).toBeNull();
+  });
+});
+
+describe('what the review found', () => {
+  it('a member signed in on this browser is not asked to join (their session stays)', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    const { token } = await makeLink(a, db);
+    const cookie = sessionCookie(db, 'p_sam');
+    const res = await post(a, '/api/join/options', { token, name: 'Jordan' }, { cookie });
+    expect(res.statusCode).toBe(409);
+    expect((await a.inject({ url: '/api/me', headers: { cookie } })).statusCode).toBe(200);
+    expect(waitingPeople(db)).toEqual([]);
+  });
+
+  it('an enrolment refused by the address limit keeps its one-time step', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    const { token } = await makeLink(a, db);
+    const o = await options(a, token, 'Jordan', '127.0.8.1');
+    for (let i = 0; i < JOIN_ENROL.max; i++) await post(a, '/api/join/verify', { challengeId: 'nothing', response: {} }, { remote: '127.0.9.1' });
+    expect((await verify(a, o.json(), 'cred-j', '127.0.9.1')).statusCode).toBe(429);
+    // from an address within its limit, the same step still works
+    expect((await verify(a, o.json(), 'cred-j', '127.0.8.1')).statusCode).toBe(200);
+  });
+
+  it('bogus enrolments never hold back a real link\'s', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    const { token } = await makeLink(a, db);
+    for (let i = 0; i < JOIN_ENROL.max + 2; i++) await post(a, '/api/join/verify', { challengeId: `x${i}`, response: {} }, { remote: `127.0.10.${i + 1}` });
+    const o = await options(a, token, 'Jordan');
+    expect((await verify(a, o.json(), 'cred-j')).statusCode).toBe(200);
+  });
+
+  it('a lapsed person\'s passkey signs no one in, and the request goes', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    const { token } = await makeLink(a, db);
+    const v = await join(a, token, 'Jordan', 'cred-lapsed');
+    const id = v.json().person.id as string;
+    db.update(t.person).set({ arrivedAt: new Date(Date.now() - WAITING.lapseDays * DAY - 60_000).toISOString() }).where(eq(t.person.id, id)).run();
+    const start = (await post(a, '/api/auth/sign-in/options', {})).json();
+    const res = await post(a, '/api/auth/sign-in/verify', { challengeId: start.challengeId, response: { id: 'cred-lapsed', challenge: start.options.challenge } });
+    expect(res.statusCode).toBe(401);
+    expect(db.select().from(t.person).where(eq(t.person.id, id)).all()).toEqual([]);
+  });
+
+  it('HomersLab: an unchanged kid\'s requests write seen_at at most hourly, and touch nothing else', async () => {
+    const { app: a, db } = await app(homerslab());
+    const kid = hlHeaders('hl-kid', 'Kid 1', 'kid');
+    expect((await a.inject({ url: '/api/me', headers: kid })).statusCode).toBe(403);
+    const first = db.select().from(t.person).where(eq(t.person.id, 'p_kid1')).get()!.seenAt;
+    expect(first).toEqual(expect.any(String));
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await a.inject({ url: '/api/me', headers: kid })).statusCode).toBe(403);
+    expect(db.select().from(t.person).where(eq(t.person.id, 'p_kid1')).get()!.seenAt).toBe(first);
   });
 });
 

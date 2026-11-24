@@ -64,6 +64,8 @@ export function parseCidr(input: unknown): Cidr | null {
   }
   if (isIPv6(addr)) {
     if (prefix < NETWORKS.minPrefix6 || prefix > 128) return null;
+    // An IPv4-mapped range (::ffff:0:0/96) never matches: a client's mapped address is checked as its IPv4 one.
+    if ((v6ToBig(addr) >> 32n) === 0xffffn) return null;
     const mask = prefix === 0 ? 0n : ((1n << BigInt(prefix)) - 1n) << BigInt(128 - prefix);
     const network = bigToV6(v6ToBig(addr) & mask);
     return { cidr: `${network}/${prefix}`, family: 'ipv6', network, prefix };
@@ -99,19 +101,21 @@ export function inHomeNetwork(db: Db, address: string | undefined): boolean {
   return family !== null && list.check(a, family);
 }
 
-const PRIVATE4: [string, number][] = [['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16], ['100.64.0.0', 10]];
+// 172.16.0.0/12 is left out: Docker's bridges are there, and behind a published port the admin's address is the bridge's.
+const PRIVATE4: [string, number][] = [['10.0.0.0', 8], ['192.168.0.0', 16], ['100.64.0.0', 10]];
 
 /**
  * The private range an admin is on, for them to confirm (never added by itself): their IPv4 address's /24 when it is
- * a private (RFC 1918) or shared (RFC 6598, a mesh's) address, or the /64 of a unique local IPv6 address. Loopback,
- * link-local and public addresses propose nothing.
+ * in 10/8, 192.168/16 (RFC 1918) or 100.64/10 (RFC 6598, a mesh's), or the /64 of a unique local IPv6 address. A
+ * gateway's address (x.x.x.1: a router, or Docker's bridge behind a published port), 172.16/12 (Docker's bridges),
+ * loopback, link-local and public addresses propose nothing.
  */
 export function proposeNetwork(address: string | undefined): string | null {
   const a = plainAddress(address);
   if (isIPv4(a)) {
     const n = v4ToInt(a);
     const ok = PRIVATE4.some(([net, p]) => Math.floor(n / 2 ** (32 - p)) === Math.floor(v4ToInt(net) / 2 ** (32 - p)));
-    return ok ? parseCidr(`${a}/24`)!.cidr : null;
+    return ok && n % 256 !== 1 ? parseCidr(`${a}/24`)!.cidr : null;
   }
   if (isIPv6(a) && (v6ToBig(a) >> 121n) === 0x7en) return parseCidr(`${a}/64`)!.cidr; // fc00::/7
   return null;

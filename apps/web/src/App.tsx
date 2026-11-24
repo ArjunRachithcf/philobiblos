@@ -59,7 +59,7 @@ export function App() {
   if (!session) return <main className="auth" id="main" aria-busy="true"><p className="sr-only">Loading</p></main>;
   if (route === '/setup' || route === '/enrol') return <Enrol kind={route === '/setup' ? 'setup' : 'enrol'} token={token} onSignedIn={signedIn} />;
   // A household join link (ADR 0011): nothing of the household, then the one waiting page.
-  if (route === '/join') return <Join token={token} onSignedIn={signedIn} />;
+  if (route === '/join') return <Join token={token} member={Boolean(session.signedIn && !session.waiting && session.mode === 'standalone')} onSignedIn={signedIn} />;
   if (!session.signedIn) return <SignIn session={session} onSignedIn={signedIn} />;
   if (session.waiting) return <Waiting session={session} onSignOut={signOut} />;
 

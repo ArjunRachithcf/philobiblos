@@ -8,7 +8,7 @@ import { ulid } from 'ulid';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { hashToken, newToken } from '../auth/tokens';
+import { hashToken, looksLikeToken, newToken } from '../auth/tokens';
 import { homeNetworks, inHomeNetwork } from '../net/networks';
 import { WAITING, dropWaiting, waitingNow } from './waiting-rows';
 
@@ -33,8 +33,8 @@ export function createJoinLink(db: Db, cfg: Pick<Config, 'origin'>, o: { created
   return { id, url: `${cfg.origin}/join#${token}`, token, expiresAt, maxUses: o.uses ?? JOIN_LINK.uses };
 }
 
-/** The hash a presented token is looked up by; anything that is not a string hashes as the empty one (the same work). */
-export const presentedHash = (token: unknown) => hashToken(typeof token === 'string' ? token.slice(0, 64) : '');
+/** The hash a presented token is looked up by; anything that is not a token's shape hashes as the empty one (the same work). */
+export const presentedHash = (token: unknown) => hashToken(looksLikeToken(token) ? token : '');
 
 /**
  * The one check of a presented link, for opening it, joining with it and enrolling: the link, if it is known, unexpired,

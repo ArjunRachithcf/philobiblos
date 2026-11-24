@@ -20,6 +20,9 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
   const editable = isAdmin && me.mode === 'standalone';
   const [error, setError] = useState<string | null>(null);
   const [invite, setInvite] = useState<{ name: string; url: string; expiresAt: string } | null>(null);
+  // Bumped by every decision and every link revoked: the waiting list and the links read again together.
+  const [changes, setChanges] = useState(0);
+  const changed = async () => { setChanges((n) => n + 1); await reload(); };
 
   const act = async (f: () => Promise<unknown>) => {
     setError(null);
@@ -36,7 +39,7 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
         : 'Everyone who uses Philobiblos, and the kids it picks books for. Kids never sign in; adults act for them.'} />
       <div className="stack">
         {error && <Notice kind="error">{error}</Notice>}
-        {isAdmin && <WaitingList mode={me.mode ?? 'standalone'} onDecided={reload} />}
+        {isAdmin && <WaitingList mode={me.mode ?? 'standalone'} changes={changes} onDecided={changed} />}
         <section className="group-block" aria-labelledby="people-h">
           <div className="group-head"><h2 id="people-h">{alone ? 'You' : 'People'}</h2>{!alone && <span>{me.household?.length ?? 0}</span>}</div>
           <ul className="group lead-lg" role="list">
@@ -68,7 +71,7 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
         </section>
         {invite && <InviteLink {...invite} onDone={() => setInvite(null)} />}
         {editable && <AddPerson onAdded={reload} />}
-        {editable && <JoinLinks onChanged={reload} />}
+        {editable && <JoinLinks changes={changes} onChanged={changed} />}
         {me.mode === 'standalone' && <Passkeys name={me.person?.name ?? ''} />}
       </div>
     </>
@@ -76,12 +79,12 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
 }
 
 /** Who waits to join (ADR 0011): what Philobiblos knows of each, and approve (as an adult, or an admin) or decline. */
-function WaitingList({ mode, onDecided }: { mode: NonNullable<Me['mode']>; onDecided: () => Promise<void> }) {
+function WaitingList({ mode, changes, onDecided }: { mode: NonNullable<Me['mode']>; changes: number; onDecided: () => Promise<void> }) {
   const [people, setPeople] = useState<WaitingPerson[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   const load = useCallback(() => api<WaitingPerson[]>('/people/waiting').then(setPeople, (e) => setError(message(e))), []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, changes]);
   // Under HomersLab a decision needs the edge's recent sign-in signal, which it does not send yet (homeward#253).
   const blocked = mode === 'homerslab';
   const decide = async (p: WaitingPerson, what: 'approve' | 'decline', role: 'adult' | 'admin' = 'adult') => {
@@ -90,7 +93,6 @@ function WaitingList({ mode, onDecided }: { mode: NonNullable<Me['mode']>; onDec
     try {
       await api(`/people/waiting/${p.id}/${what}`, { method: 'POST', ...(what === 'approve' ? { body: { role } } : {}) });
       setStatus(what === 'approve' ? `${p.name} is in the household now, as ${role === 'admin' ? 'an admin' : 'an adult'}.` : `${p.name} was declined.`);
-      await load();
       await onDecided();
     } catch (e) { setError(message(e)); }
   };
