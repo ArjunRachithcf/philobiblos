@@ -37,13 +37,13 @@
   /* ---------- type: the system font; Inter where there is no SF ---------- */
   --font: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;   /* plan ids, names, codes: real ids only */
-  --fs-large-title: 34px;  /* a page's h1 and Home's greeting; 28px on a phone */
+  --fs-large-title: 34px;  /* a page's h1 and Home's greeting; 34px on a phone too, as iOS */
   --fs-title: 22px;        /* section, panel and sheet titles */
   --fs-value: 28px;        /* a widget's figure; 22px on a phone */
   --fs-headline: 17px;     /* card titles, choices, the bar's collapsed title */
-  --fs-body: 15px;         /* text, rows, controls */
-  --fs-sub: 13px;          /* sublines, captions, group headers, pills */
-  --fs-foot: 12px;         /* meta, axis labels */
+  --fs-body: 15px;         /* text, rows, controls; 17px on a phone (iOS body) */
+  --fs-sub: 13px;          /* sublines, captions, group headers, pills; 15px on a phone (iOS subheadline) */
+  --fs-foot: 12px;         /* meta, axis labels; 13px on a phone (iOS footnote) */
   --fs-tab: 11px;          /* tab bar labels only */
   --lh-body: 1.4;  --lh-tight: 1.15;  --lh-title: 1.08;
   --tracking-body: -0.01em;  --tracking-title: -0.022em;  --tracking-large: -0.03em;
@@ -112,7 +112,8 @@
   --gutter: 16px;      /* the page's side margin on a phone */
 }
 @media (min-resolution: 2dppx) { :root { --hairline: 0.5px; } }
-@media (max-width: 640px) { :root { --fs-large-title: 28px; --fs-value: 22px; --pad: 16px; } }
+/* a phone reads at iOS's sizes: large title 34, headline and body 17, subheadline 15, footnote 13 (never shrunk) */
+@media (max-width: 640px) { :root { --fs-value: 22px; --fs-body: 17px; --fs-sub: 15px; --fs-foot: 13px; --pad: 16px; } }
 
 /* ============================================================ colour: light */
 :root, [data-theme="light"] {

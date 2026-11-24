@@ -3,7 +3,7 @@
 .auth-sub { color: var(--text-2); font-size: var(--fs-headline); }
 .auth .page-head { padding: 0; }
 .footnote { font-size: var(--fs-sub); color: var(--text-2); }
-code { font-family: var(--mono); font-size: 0.95em; }
+code { font-family: var(--mono); font-size: 0.95em; overflow-wrap: anywhere; }   /* a long address breaks on a phone instead of widening its card */
 h1[tabindex="-1"]:focus { outline: none; }
 .bar { position: sticky; top: 0; z-index: 10; }
 /* What scrolls into view (focus, a click) stays clear of the sticky bar (WCAG 2.4.11). */
@@ -77,6 +77,8 @@ dialog.lib-sheet::backdrop { background: var(--scrim); -webkit-backdrop-filter: 
 .bl-parts li { display: flex; justify-content: space-between; gap: var(--space-4); }
 .bl-parts li.bl-builds { display: block; color: var(--text-2); }
 .bl-budget { font-size: var(--fs-headline); font-weight: var(--weight-semibold); }
+/* a label is a pill: 13px on a phone too, where --fs-sub grows to 15px (iOS's sizes, as the design system's pills) */
+@media (max-width: 640px) { .bl-label { font-size: var(--fs-foot); } }
 @media (max-width: 560px) {
   .bl-row { flex-wrap: wrap; }
   .bl-trail { flex-basis: 100%; flex-direction: row; justify-content: flex-end; align-items: center; }
