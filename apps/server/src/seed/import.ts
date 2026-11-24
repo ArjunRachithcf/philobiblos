@@ -81,7 +81,8 @@ export function importSeed(db: Db, dir: string, now = new Date().toISOString()):
     // People ---------------------------------------------------------------
     const personId = new Map<string, string>();
     for (const h of household) {
-      const existing = tx.select().from(t.person).where(eq(t.person.name, h.name)).get();
+      // Members only: a person waiting for approval (household/waiting.ts) is no one an import may write for.
+      const existing = tx.select().from(t.person).where(and(eq(t.person.name, h.name), eq(t.person.state, 'active'))).get();
       if (existing) { personId.set(h.name, existing.id); continue; }
       const id = ulid();
       const taken = h.handle ? tx.select({ id: t.person.id }).from(t.person).where(eq(t.person.handle, h.handle)).get() : undefined;

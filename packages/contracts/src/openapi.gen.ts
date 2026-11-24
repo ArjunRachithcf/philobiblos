@@ -154,6 +154,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/people/waiting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admins: the people who wait for approval (ADR 0011), newest first; at most 10 wait. A waiting person counts nowhere else and sees nothing. */
+        get: operations["listWaiting"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/waiting/{personId}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admins, both modes: lets a waiting person in, as an adult (the default) or an admin; under HomersLab never above their Homeward role. Needs a fresh sign-in: standalone, one in the last 10 minutes; under HomersLab the edge's recent sign-in signal (ArjunRachithcf/homeward#253), so it is refused there until the edge sends it. 30 decisions in 10 minutes an admin. */
+        post: operations["approvePerson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/waiting/{personId}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admins, both modes: declines a waiting person; their request, passkeys and sessions go in one transaction. The same fresh sign-in and limit as approving. */
+        post: operations["declinePerson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/people/{personId}": {
         parameters: {
             query?: never;
@@ -1052,6 +1107,11 @@ export interface components {
     schemas: {
         Error: {
             error: string;
+            /**
+             * @description the 403 of every route for a person who waits for an admin's approval
+             * @constant
+             */
+            waiting?: true;
         };
         /** @description A bookshop as data (contracts/connectors.md). It allows nothing until an admin enables it, for this version of its file. */
         Connector: {
@@ -1125,6 +1185,22 @@ export interface components {
                 digits: number;
             }[];
         };
+        WaitingPerson: {
+            id: string;
+            /** @description as they gave it (or Homeward sent it): plain text, never a reason to approve by itself */
+            name: string;
+            arrivedAt: string | null;
+            /** @enum {unknown} */
+            via: "homeward" | "join_link";
+            /** @description the join link they used (philobiblos#34 slice 2) */
+            joinLink: null;
+            /** @description whether they came from the household's networks (slice 3) */
+            fromHomeNetwork: null;
+            /** @description the address a rule verified (slices 4a and 4b) */
+            verifiedAddress: null;
+            /** @description under HomersLab, false unless their Homeward role is admin (the ceiling) */
+            mayBeAdmin: boolean;
+        };
         Person: {
             id: string;
             name: string;
@@ -1156,6 +1232,8 @@ export interface components {
             /** @enum {unknown} */
             mode: "homerslab" | "standalone";
             signedIn: boolean;
+            /** @description signed in, and waiting for an admin's approval: every other route answers 403 (ADR 0011) */
+            waiting?: boolean;
             /** @description standalone: no admin has a passkey yet; the setup link is in PHILOBIBLOS_DATA_DIR/setup-link.txt */
             setupNeeded: boolean;
             person?: components["schemas"]["Person"];
@@ -1382,7 +1460,7 @@ export interface components {
         InboxItem: {
             id: string;
             /** @enum {unknown} */
-            kind: "share" | "ai_suggestion" | "unmatched_invoice_line" | "unmatched_quote_line" | "unmatched_shop_line" | "mail_failed" | "mail_waiting" | "mail_unverified" | "maybe_typed_invoice";
+            kind: "share" | "ai_suggestion" | "unmatched_invoice_line" | "unmatched_quote_line" | "unmatched_shop_line" | "mail_failed" | "mail_waiting" | "mail_unverified" | "maybe_typed_invoice" | "people_waiting";
             by?: components["schemas"]["Person"];
             /** @description Philobiblos's own words, or a share's title, or a verified mail's subject (safeField); plain text, never HTML */
             title: string;
@@ -1401,6 +1479,10 @@ export interface components {
                 note?: string | null;
                 /** @description what the AI could not read of it (images without a vision model, or nothing), Philobiblos's words */
                 aiNote?: string | null;
+            };
+            /** @description kind people_waiting (admins only): how many wait for approval; Household lists them */
+            waiting?: {
+                count: number;
             };
             /** @description kind mail_unverified: every unverified mail since the item was last dismissed */
             unverified?: {
@@ -2170,6 +2252,135 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             /** @description The handle is taken, or the household is managed by HomersLab */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listWaiting: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WaitingPerson"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    approvePerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @enum {unknown} */
+                    role?: "adult" | "admin";
+                };
+            };
+        };
+        responses: {
+            /** @description Approved: the person as a member now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No one waits with that id (a member's id gets the same answer) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Above their Homeward role */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many decisions; wait */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    declinePerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Declined */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No one waits with that id (a member's id gets the same answer) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many decisions; wait */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1,7 +1,8 @@
 // The household (spec §2, the design's "Family"): who is in it, their role, kids' age bands. Admins add people,
-// change roles, invite adults to make a passkey, and remove people. Under HomersLab it is read-only here.
+// change roles, invite adults to make a passkey, and remove people. Under HomersLab it is read-only here, but for the
+// people who wait to join (ADR 0011): admins approve or decline them, in both modes. A household of one shows only you.
 import { useCallback, useEffect, useId, useState } from 'react';
-import { api, message, type Me, type Passkey, type Person, type PersonInput } from '../api';
+import { api, message, type Me, type Passkey, type Person, type PersonInput, type WaitingPerson } from '../api';
 import { Notice, PageHead, initials } from '../ui';
 
 const ROLE_TEXT: Record<Person['role'], string> = { admin: 'Admin · sets the budget and the rules', adult: 'Adult · shares posts, adds books, marks orders', kid: 'Kid' };
@@ -23,15 +24,19 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
     try { await f(); await reload(); } catch (e) { setError(message(e)); }
   };
 
+  // A household of one (ADR 0011): no family sections until a second person is there.
+  const alone = (me.household?.length ?? 0) < 2;
   return (
     <>
       <PageHead title="Household" sub={me.mode === 'homerslab'
         ? 'People come from Homeward: add, remove or change them there.'
+        : alone ? 'Just you for now. Add someone, or a kid to pick books for, and Philobiblos shows the family’s parts.'
         : 'Everyone who uses Philobiblos, and the kids it picks books for. Kids never sign in; adults act for them.'} />
       <div className="stack">
         {error && <Notice kind="error">{error}</Notice>}
+        {isAdmin && <WaitingList mode={me.mode ?? 'standalone'} onDecided={reload} />}
         <section className="group-block" aria-labelledby="people-h">
-          <div className="group-head"><h2 id="people-h">People</h2><span>{me.household?.length ?? 0}</span></div>
+          <div className="group-head"><h2 id="people-h">{alone ? 'You' : 'People'}</h2>{!alone && <span>{me.household?.length ?? 0}</span>}</div>
           <ul className="group lead-lg" role="list">
             {(me.household ?? []).map((p) => (
               <li key={p.id} className="row">
@@ -64,6 +69,61 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
         {me.mode === 'standalone' && <Passkeys name={me.person?.name ?? ''} />}
       </div>
     </>
+  );
+}
+
+/** Who waits to join (ADR 0011): what Philobiblos knows of each, and approve (as an adult, or an admin) or decline. */
+function WaitingList({ mode, onDecided }: { mode: NonNullable<Me['mode']>; onDecided: () => Promise<void> }) {
+  const [people, setPeople] = useState<WaitingPerson[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState('');
+  const load = useCallback(() => api<WaitingPerson[]>('/people/waiting').then(setPeople, (e) => setError(message(e))), []);
+  useEffect(() => { void load(); }, [load]);
+  // Under HomersLab a decision needs the edge's recent sign-in signal, which it does not send yet (homeward#253).
+  const blocked = mode === 'homerslab';
+  const decide = async (p: WaitingPerson, what: 'approve' | 'decline', role: 'adult' | 'admin' = 'adult') => {
+    if (what === 'decline' && !confirm(`Decline ${p.name}? Their request goes, with their passkey.`)) return;
+    setError(null);
+    try {
+      await api(`/people/waiting/${p.id}/${what}`, { method: 'POST', ...(what === 'approve' ? { body: { role } } : {}) });
+      setStatus(what === 'approve' ? `${p.name} is in the household now, as ${role === 'admin' ? 'an admin' : 'an adult'}.` : `${p.name} was declined.`);
+      await load();
+      await onDecided();
+    } catch (e) { setError(message(e)); }
+  };
+  if (!people?.length && !error) return <p className="sr-only" role="status">{status}</p>;
+  return (
+    <section className="group-block" aria-labelledby="waiting-h">
+      <div className="group-head"><h2 id="waiting-h">Waiting to join</h2><span>{people?.length ?? 0}</span></div>
+      {error && <Notice kind="error">{error}</Notice>}
+      <ul className="group" role="list">
+        {(people ?? []).map((p) => (
+          <li key={p.id} className="row">
+            <span className={`avatar ${AVATAR.adult}`} aria-hidden="true">{initials(p.name)}</span>
+            <span className="row-main">
+              <span className="row-title">{p.name}</span>
+              <span className="row-sub wrap">
+                {[p.via === 'homeward' ? 'Came from Homeward' : 'Came with a join link',
+                  p.arrivedAt ? new Date(p.arrivedAt).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : null,
+                  p.fromHomeNetwork == null ? null : p.fromHomeNetwork ? 'from the home network' : 'from outside the home network',
+                  p.verifiedAddress ? `verified ${p.verifiedAddress}` : null].filter(Boolean).join(' · ')}
+              </span>
+            </span>
+            <span className="row-trail">
+              <button type="button" className="btn btn-sm btn-primary" disabled={blocked} aria-label={`Approve ${p.name} as an adult`} onClick={() => void decide(p, 'approve')}>Approve</button>
+              {p.mayBeAdmin && <button type="button" className="btn btn-sm" disabled={blocked} aria-label={`Approve ${p.name} as an admin`} onClick={() => void decide(p, 'approve', 'admin')}>As admin</button>}
+              <button type="button" className="btn btn-sm btn-destructive" disabled={blocked} aria-label={`Decline ${p.name}`} onClick={() => void decide(p, 'decline')}>Decline</button>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="group-foot">
+        {blocked
+          ? 'Approving and declining need a recent sign-in, which Homeward does not tell Philobiblos yet: until it does, they wait here.'
+          : 'Anyone with a link can type a family member’s name: check who it is before you approve. Approving or declining needs a sign-in in the last 10 minutes.'}
+      </p>
+      <p className="sr-only" role="status">{status}</p>
+    </section>
   );
 }
 

@@ -87,6 +87,7 @@ const PARAMS: Record<string, Record<string, string>> = {
   getShare: { id: SHARE_ID }, removePushSubscription: { id: 'ps_alex' }, decideFound: { itemId: mailItemId('<inv-1@bookshop.example>'), index: '0' }, dismissInboxItem: { itemId: UNVERIFIED_ID }, answerTypedInvoice: { itemId: mailItemId('<held@bookshop.example>') }, undoOrderEntry: { id: 'e_undo' },
   getLibrary: { personId: 'p_alex' }, setReading: { personId: 'p_alex', bookId: 'b_tide' },
   setConnector: { connectorId: 'quillmere' },
+  approvePerson: { personId: 'p_wait1' }, declinePerson: { personId: 'p_wait2' },
   editPerson: { personId: 'p_sam' }, removePerson: { personId: 'p_del' }, invitePerson: { personId: 'p_sam' }, removePasskey: { id: 'pk2' },
 };
 

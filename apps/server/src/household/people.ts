@@ -6,7 +6,7 @@ import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { purgeTakeawayRuns } from '../library/ai-context';
-import type { Identity, Role } from '../identity';
+import type { Role } from '../identity';
 
 export type Person = typeof t.person.$inferSelect;
 export type PersonView = components['schemas']['Person'];
@@ -32,13 +32,15 @@ export function view(db: Db, p: Person): PersonView {
   };
 }
 
+/** The household's members (a waiting person is not one: household/waiting.ts). */
 export function household(db: Db): Person[] {
-  return db.select().from(t.person).all().sort((a, b) => rank(a.role) - rank(b.role) || a.name.localeCompare(b.name));
+  return db.select().from(t.person).where(eq(t.person.state, 'active')).all().sort((a, b) => rank(a.role) - rank(b.role) || a.name.localeCompare(b.name));
 }
 const rank = (r: Role) => ({ admin: 0, adult: 1, kid: 2 })[r];
 
+/** A member by id; a waiting person is no one here (household/waiting.ts anyPerson finds them). */
 export function getPerson(db: Db, id: string): Person | undefined {
-  return db.select().from(t.person).where(eq(t.person.id, id)).get();
+  return db.select().from(t.person).where(and(eq(t.person.id, id), eq(t.person.state, 'active'))).get();
 }
 
 /**
@@ -107,20 +109,25 @@ export function editPerson(db: Db, id: string, patch: Partial<PersonInput>): Per
       birthYear: role === 'kid' ? (patch.birthYear === undefined ? p.birthYear : patch.birthYear) : null,
     }).where(eq(t.person.id, id)).run();
     // Kids never sign in: becoming one ends every session and removes every passkey and device.
-    if (role === 'kid' && p.role !== 'kid') {
-      tx.delete(t.session).where(eq(t.session.personId, id)).run();
-      tx.delete(t.passkey).where(eq(t.passkey.personId, id)).run();
-      tx.delete(t.invite).where(eq(t.invite.personId, id)).run();
-      // Nor get notifications (push/push.ts checks the role at each send too).
-      tx.delete(t.pushSubscription).where(eq(t.pushSubscription.personId, id)).run();
-    }
+    if (role === 'kid' && p.role !== 'kid') becameKid(tx as unknown as Db, id);
     if (role !== 'admin' && p.role === 'admin') revokeInvitesBy(tx as unknown as Db, id);
   });
   return getPerson(db, id)!;
 }
 
+/**
+ * Kids never sign in: becoming one ends every session and removes every passkey, link and device (here and under
+ * HomersLab, household/waiting.ts). Nor do they get notifications (push/push.ts checks the role at each send too).
+ */
+export function becameKid(db: Db, id: string): void {
+  db.delete(t.session).where(eq(t.session.personId, id)).run();
+  db.delete(t.passkey).where(eq(t.passkey.personId, id)).run();
+  db.delete(t.invite).where(eq(t.invite.personId, id)).run();
+  db.delete(t.pushSubscription).where(eq(t.pushSubscription.personId, id)).run();
+}
+
 /** An admin's open invites, gone when the admin is removed or stops being one. */
-function revokeInvitesBy(db: Db, adminId: string): void {
+export function revokeInvitesBy(db: Db, adminId: string): void {
   db.delete(t.invite).where(and(eq(t.invite.createdBy, adminId), eq(t.invite.kind, 'admin'), isNull(t.invite.usedAt))).run();
 }
 
@@ -138,23 +145,4 @@ export function removePerson(db: Db, id: string, by: string): void {
   } catch {
     throw new HouseholdError(409, 'this person still has shares or orders');
   }
-}
-
-/**
- * Under HomersLab: the person the proxy names, added the first time and kept in step after (name, role). A request
- * without a role is refused by the caller: Philobiblos cannot tell an adult from a kid without it.
- */
-export function syncHomersLabPerson(db: Db, id: Identity & { role: Role }): Person {
-  const existing = db.select().from(t.person).where(eq(t.person.externalId, id.externalId)).get();
-  if (!existing) {
-    const name = id.name ?? 'Someone';
-    const p = { id: ulid(), externalId: id.externalId, name, role: id.role, handle: suggestHandle(db, name), settingsJson: '{}' };
-    db.insert(t.person).values(p).run();
-    return getPerson(db, p.id)!;
-  }
-  if (existing.role !== id.role || (id.name && existing.name !== id.name)) {
-    db.update(t.person).set({ role: id.role, name: id.name ?? existing.name }).where(eq(t.person.id, existing.id)).run();
-    return getPerson(db, existing.id)!;
-  }
-  return existing;
 }

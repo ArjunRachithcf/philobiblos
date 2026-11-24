@@ -41,6 +41,8 @@ beforeAll(async () => {
   db0.insert(t.book).values({ id: 'b_tap', title: 'Paper Boats of the Commons', authorsJson: '[]', audience: 'adult', normKey: 'boats', createdAt: new Date().toISOString() }).run();
   db0.insert(t.order).values({ id: 'o_tap', month: '2026-02', status: 'drafted', createdAt: new Date().toISOString() }).run();
   db0.insert(t.orderLine).values({ orderId: 'o_tap', bookId: 'b_tap', forPerson: 'p_alex', estimateC: 2500 }).run();
+  // Two people who wait for approval (ADR 0011): one to approve, one to decline.
+  db0.insert(t.person).values([1, 2].map((n) => ({ id: `p_wait${n}`, name: `Waiting ${n}`, role: 'adult' as const, state: 'waiting' as const, arrivedAt: new Date().toISOString() }))).run();
   admin = sessionCookie(db0, 'p_alex');
   adult = sessionCookie(db0, 'p_sam');
   kid = sessionCookie(db0, 'p_kid1');
@@ -126,11 +128,16 @@ describe('homerslab mode', () => {
   beforeAll(async () => { hl = await buildApp(homerslab(), household()); await hl.app.ready(); });
   afterAll(() => hl.app.close());
 
-  it('a person from the trusted proxy is added and kept in step', async () => {
-    const me = (await hl.app.inject({ url: '/api/me', headers: { 'x-homerslab-person': 'hl-new', 'x-homerslab-name': 'Jo', 'x-homerslab-role': 'adult' } })).json();
-    expect(me.person).toMatchObject({ name: 'Jo', role: 'adult' });
-    const again = (await hl.app.inject({ url: '/api/me', headers: { 'x-homerslab-person': 'hl-new', 'x-homerslab-name': 'Jo', 'x-homerslab-role': 'admin' } })).json();
-    expect(again.person).toMatchObject({ id: me.person.id, role: 'admin' });
+  it('a person the edge sends for the first time waits, a Homeward admin is one at once, and a promotion raises nothing (ADR 0011)', async () => {
+    const jo = { 'x-homerslab-person': 'hl-new', 'x-homerslab-name': 'Jo', 'x-homerslab-role': 'adult' };
+    const first = await hl.app.inject({ url: '/api/me', headers: jo });
+    expect(first.statusCode).toBe(403);
+    expect(first.json()).toEqual({ error: expect.any(String), waiting: true });
+    expect((await hl.app.inject({ url: '/api/me', headers: { ...jo, 'x-homerslab-role': 'admin' } })).statusCode).toBe(403);
+    const boss = (await hl.app.inject({ url: '/api/me', headers: { 'x-homerslab-person': 'hl-boss', 'x-homerslab-name': 'Lee', 'x-homerslab-role': 'admin' } })).json();
+    expect(boss.person).toMatchObject({ name: 'Lee', role: 'admin' });
+    const sam = (await hl.app.inject({ url: '/api/me', headers: { ...HL_ADULT, 'x-homerslab-name': 'Sam R', 'x-homerslab-role': 'admin' } })).json();
+    expect(sam.person).toMatchObject({ name: 'Sam R', role: 'adult' });
   });
   it('the headers count only from the proxy; a kid or a missing role gets 403', async () => {
     expect((await hl.app.inject({ url: '/api/me', headers: HL_ADULT, remoteAddress: '10.0.0.9' })).statusCode).toBe(401);

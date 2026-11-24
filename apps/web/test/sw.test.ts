@@ -79,4 +79,16 @@ describe('notifications in the service worker', () => {
     expect(went).toEqual(['focus', 'https://philobiblos.test/month']);
     expect(sw.opened).toHaveLength(1);
   });
+  it('join (someone waits to join, for admins): its own words, no name, and a tap opens Household', async () => {
+    const sw = serviceWorker();
+    await sw.push({ kind: 'join', name: 'Mallory', page: 'https://evil.example/' });
+    expect(sw.shown[0]!.options.body).toBe('Someone is waiting to join the household.');
+    expect(sw.shown[0]!.options.data).toEqual({ page: '/household' });
+    expect(JSON.stringify(sw.shown)).not.toMatch(/Mallory|evil/);
+    await sw.click(sw.shown[0]!.options.data);
+    // only Philobiblos's own two pages: a page a message names is never opened
+    await sw.click({ page: 'https://evil.example/' });
+    await sw.click({ page: '/settings' });
+    expect(sw.opened).toEqual(['https://philobiblos.test/household', 'https://philobiblos.test/month', 'https://philobiblos.test/month']);
+  });
 });

@@ -16,6 +16,7 @@ import './pages/Mailbox';
 import { Inbox } from './pages/Inbox';
 import { Share } from './pages/Share';
 import { SignIn } from './pages/SignIn';
+import { Waiting } from './pages/Waiting';
 import { Notice } from './ui';
 import { MoneyContext } from './money';
 
@@ -42,7 +43,7 @@ export function App() {
     api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e)));
   }, []);
   useEffect(() => {
-    if (session?.signedIn) loadMe().catch((e) => setError(message(e)));
+    if (session?.signedIn && !session.waiting) loadMe().catch((e) => setError(message(e)));
   }, [session, loadMe]);
 
   const signedIn = (s: AuthSession) => { setSession(s); go('/household'); };
@@ -57,6 +58,7 @@ export function App() {
   if (!session) return <main className="auth" id="main" aria-busy="true"><p className="sr-only">Loading</p></main>;
   if (route === '/setup' || route === '/enrol') return <Enrol kind={route === '/setup' ? 'setup' : 'enrol'} token={token} onSignedIn={signedIn} />;
   if (!session.signedIn) return <SignIn session={session} onSignedIn={signedIn} />;
+  if (session.waiting) return <Waiting session={session} onSignOut={signOut} />;
 
   return (
     <>
@@ -85,7 +87,7 @@ export function App() {
           : route === '/library' ? <Library me={me} />
           : route === '/backlog' ? <Backlog me={me} />
           : route === '/settings' ? <Settings me={me} reload={loadMe} />
-          : route === '/inbox' ? <Inbox me={me} />
+          : route === '/inbox' ? <Inbox me={me} go={go} />
           : route === '/share' ? <Share go={go} />
           : <Household me={me} reload={loadMe} />}
         </MoneyContext.Provider>

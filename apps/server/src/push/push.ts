@@ -19,6 +19,7 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { household } from '../household/people';
+import { Limiter } from '../shares/tokens';
 import { SealError, isSealed, keyProblem, sealIfAbsent, sealingKey, unseal } from '../household/sealed';
 import type { Outcome } from '../jobs/books';
 import { EgressError, createEgress, type Egress, type EgressOptions, type Rule } from '../net/egress';
@@ -39,7 +40,23 @@ export const pushEgressRules = (hosts: readonly string[] = DEFAULT_PUSH_HOSTS): 
 /** The server's push client: PHILOBIBLOS_PUSH_HOSTS as its whole allowlist, off with PHILOBIBLOS_EGRESS=off. */
 export const pushClient = (cfg: Pick<Config, 'pushHosts' | 'egress'>, o: Partial<EgressOptions> = {}): Egress => createEgress({ ...o, rules: pushEgressRules(cfg.pushHosts), enabled: cfg.egress });
 
-export type PushKind = 'plan' | 'test';
+export type PushKind = 'plan' | 'test' | 'join';
+
+/** `join` pushes (someone waits to join, philobiblos#34): at most 6 an hour for the household, to its admins. */
+export const JOIN_PUSH = { max: 6, windowMs: 3_600_000 } as const;
+
+/**
+ * The household's admins are told that someone waits: the kind alone (no name, nothing else), to whoever is an admin
+ * when it is sent (a demoted admin's devices get no more), within JOIN_PUSH; the Inbox item stays either way.
+ */
+export function joinNotifier(db: Db, cfg: Pick<Config, 'sealingKey'>, egress: Egress): () => void {
+  const limit = new Limiter(JOIN_PUSH.max, JOIN_PUSH.windowMs);
+  return () => {
+    // No admin to tell yet (a new HomersLab household): the hour's budget is kept for when there is one.
+    const admins = household(db).filter((p) => p.role === 'admin').map((p) => p.id);
+    if (admins.length && limit.hit('join')) void notify(db, cfg, egress, 'join', { people: admins }).catch(() => undefined);
+  };
+}
 
 export class PushError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 503, message: string) { super(message); }
