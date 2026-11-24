@@ -162,16 +162,43 @@ describe('a later invoice of the same book takes over the order line (philobiblo
     expect(state(split)).toBe(before);
   });
 
-  it('a copy of no order from before the invoice, or a later one of another order, is another purchase: the line goes back as it was', () => {
+  it('a tap, then the invoice typed at the wrong price, then the right one (typed or mailed), then the wrong one undone: the right one takes the tap\'s place', async () => {
+    for (const how of ['typed', 'mailed'] as const) {
+      const db = world();
+      markOwned(db, 'o_nov', 'b_tide', { owned: true }, NOW);
+      const e = invoice(db, [{ isbn: '9780000000002', qty: 1, price: 1890 }]);
+      if (how === 'typed') invoice(db, [{ isbn: '9780000000002', qty: 1, price: 1990 }], { at: LATER });
+      else await mailTide(db);
+      undoEntry(db, 'p_sam', e.id!, LATER);
+      // As the right one would have done alone (mail/effects.ts deliver): one copy, the order's, at the price paid.
+      expect(db.select().from(t.copy).all().map((c) => [c.source, c.orderId, c.priceC]), how).toEqual([[how === 'typed' ? 'manual' : 'invoice', 'o_nov', 1990]]);
+      expect(line(db, 'b_tide'), how).toMatchObject({ state: 'delivered', copyId: null, tappedFrom: null });
+      expect(order(db), how).toMatchObject({ status: 'invoiced', invoicedC: 1990 });
+    }
+  });
+
+  it('a tap\'s line with a later purchase of another quantity: 409, nothing changed', async () => {
+    const db = world();
+    markOwned(db, 'o_nov', 'b_tide', { owned: true }, NOW);
+    const e = invoice(db, [{ isbn: '9780000000002', qty: 1, price: 1890 }]);
+    await mailTide(db, { qty: 2 });
+    const before = state(db);
+    refused(() => undoEntry(db, 'p_sam', e.id!, LATER), 409, /bought again since/);
+    expect(state(db)).toBe(before);
+  });
+
+  it('a copy of no order from before the invoice, a later one of another order, or a later seeded one, is another purchase: the line goes back as it was', () => {
     const db = world();
     db.insert(t.copy).values({ id: '00000000000000000000000000', bookId: 'b_tide', source: 'invoice', orderId: null, priceC: 1500, acquiredAt: '2026-01-01T00:00:00.000Z' }).run();
     db.insert(t.order).values({ id: 'o_dec', month: '2026-12', status: 'invoiced', invoicedC: 1990, createdAt: NOW.toISOString() }).run();
     db.insert(t.copy).values({ id: '7ZZZZZZZZZZZZZZZZZZZZZZZZZ', bookId: 'b_tide', source: 'invoice', orderId: 'o_dec', priceC: 1990, acquiredAt: '2026-12-01T00:00:00.000Z' }).run();
+    // A copy the seed importer made (the household's books on first start), never an invoice's purchase.
+    db.insert(t.copy).values({ id: '7ZZZZZZZZZZZZZZZZZZZZZZZZY', bookId: 'b_tide', source: 'seed', orderId: null, priceC: 1890, acquiredAt: '2026-12-01T00:00:00.000Z' }).run();
     const e = invoice(db, [{ isbn: '9780000000002', qty: 1, price: 1890 }]);
     undoEntry(db, 'p_sam', e.id!, LATER);
     expect(line(db, 'b_tide').state).toBe('quoted');
     expect(order(db)).toMatchObject({ status: 'quoted', invoicedC: null });
-    expect(db.select().from(t.copy).all().map((c) => c.orderId).sort()).toEqual([null, 'o_dec']);
+    expect(db.select().from(t.copy).all().map((c) => [c.source, c.orderId]).sort()).toEqual([['invoice', null], ['invoice', 'o_dec'], ['seed', null]]);
   });
 });
 

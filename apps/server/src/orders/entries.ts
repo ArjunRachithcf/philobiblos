@@ -397,7 +397,8 @@ function mayUndo(db: Db, me: string, e: { personId: string | null }): boolean {
  * a bookshop's mail counts as it (or waits in the Inbox as maybe it): undoing it would leave that mail uncounted.
  * Otherwise, in one transaction: its copies removed, the tap's copy and its line the tap's again, the order lines it
  * delivered as they were (or, for a book bought again since by an invoice of no order, that purchase's: it takes the line
- * over and the order is invoiced for it; refused, 409, when it is not clear which purchase that is), each order's invoiced total less what it added (with nothing left invoiced, the order as it
+ * over, and the place of a tap's copy the entry took, and the order is invoiced for it; refused, 409, when it is not
+ * clear which purchase that is), each order's invoiced total less what it added (with nothing left invoiced, the order as it
  * was before its first invoice), a price it learnt put back as it was unless another invoice has changed it since,
  * a pile it put a book on left without it unless that book has been touched since, and the entry gone, so its number
  * may be typed again. A book it added stays: it may be known elsewhere by now.
@@ -441,15 +442,17 @@ export function undoEntry(db: Db, me: string, id: string, now = new Date()): voi
     }
     // A line it delivered, of a book bought again since, of no order (an invoice read or typed after it, which found
     // the line delivered already): that purchase takes the line over rather than leave it to buy (philobiblos#45 review).
+    // A line it took from a tap too: the later purchase would have taken the tap's copy had this entry not been typed
+    // (mail/effects.ts deliver), so it takes the tap's place, and the tap's copy goes.
     const handover = new Map<number, string[]>();
     const added = new Map<string, number>();
     const own = new Set(u.lines.flatMap((l) => l.copies));
     for (const [i, l] of u.lines.entries()) {
-      if (!l.line || l.tap) continue;
+      if (!l.line) continue;
       const later = laterCopies(tx, l.bookId, id).filter((c) => !own.has(c.id));
       if (!later.length) continue;
       const purchases = new Set(later.map((c) => `${c.source}|${c.acquiredAt}|${c.priceC}`));
-      if (purchases.size > 1 || later.length !== l.copies.length) {
+      if (purchases.size > 1 || later.length !== l.copies.length + (l.tap ? 1 : 0)) {
         throw new EntryError(409, 'its book was bought again since, and it is not clear which purchase the order line goes to: the invoice stays');
       }
       handover.set(i, later.map((c) => c.id));
@@ -458,8 +461,9 @@ export function undoEntry(db: Db, me: string, id: string, now = new Date()): voi
 
     for (const [i, l] of u.lines.entries()) {
       for (const c of l.copies) tx.delete(t.copy).where(eq(t.copy.id, c)).run();
-      if (l.tap) tx.update(t.copy).set(l.tap.was).where(eq(t.copy.id, l.tap.copyId)).run();
       const later = handover.get(i);
+      if (l.tap && later) tx.delete(t.copy).where(eq(t.copy.id, l.tap.copyId)).run();
+      else if (l.tap) tx.update(t.copy).set(l.tap.was).where(eq(t.copy.id, l.tap.copyId)).run();
       if (later && l.line) tx.update(t.copy).set({ orderId: l.line.orderId }).where(inArray(t.copy.id, later)).run();
       else if (l.line) tx.update(t.orderLine).set(l.line.was as { state: 'planned' }).where(and(eq(t.orderLine.orderId, l.line.orderId), eq(t.orderLine.bookId, l.bookId))).run();
       if (l.reading) {
