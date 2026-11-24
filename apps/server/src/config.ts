@@ -8,6 +8,8 @@ import { validTimeZone } from './jobs/zone';
 import { validCurrency } from './household/currency';
 import { parseLocale } from './household/locale';
 import type { MailboxPlace, Secret } from './net/imap';
+import type { Cidr } from './net/networks';
+import { parseTrustedProxy } from './net/proxy';
 
 export type Mode = 'homerslab' | 'standalone';
 
@@ -49,8 +51,11 @@ export interface Config {
    * filter's common words. null: English.
    */
   locale: string | null;
-  /** homerslab: the only address whose X-HomersLab-Person header is trusted. */
-  trustedProxy: string | null;
+   * PHILOBIBLOS_TRUSTED_PROXY (net/proxy.ts): the proxy's addresses or ranges, checked at start. Under HomersLab the only
+   * sender whose X-HomersLab-* headers are trusted; in both modes the only one whose X-Forwarded-For names the client
+   * (net/proxy.ts clientAddress). null: none, every client is the connection's address.
+   */
+  trustedProxy: Cidr[] | null;
   webDir: string | null;
   /** The address people open (scheme, host, port): WebAuthn's origin and relying party, and the Origin requests must carry. */
   origin: string;
@@ -130,7 +135,7 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
     timezone: parseTimeZone(env.PHILOBIBLOS_TZ),
     currency: parseCurrency(env.PHILOBIBLOS_CURRENCY),
     locale: parseLocaleEnv(env.PHILOBIBLOS_LOCALE),
-    trustedProxy: env.PHILOBIBLOS_TRUSTED_PROXY || null,
+    trustedProxy: parseTrustedProxy(env.PHILOBIBLOS_TRUSTED_PROXY),
     webDir: env.PHILOBIBLOS_WEB_DIR ?? null,
     origin: origin.origin,
     rpId: origin.hostname,

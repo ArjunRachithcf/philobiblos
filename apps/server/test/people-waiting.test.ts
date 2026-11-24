@@ -190,7 +190,7 @@ describe('approve and decline: an admin, with a fresh sign-in', () => {
     // The list is the admins' only.
     expect((await a.inject({ url: '/api/people/waiting', headers: { cookie: sessionCookie(db, 'p_sam') } })).statusCode).toBe(403);
     expect((await a.inject({ url: '/api/people/waiting', headers: { cookie } })).json()).toEqual([
-      { id: 'p_wait', name: 'Someone p_wait', arrivedAt: expect.any(String), via: 'join_link', joinLink: null, fromHomeNetwork: null, verifiedAddress: null, mayBeAdmin: true },
+      { id: 'p_wait', name: 'Someone p_wait', arrivedAt: expect.any(String), via: 'join_link', joinLink: null, fromHomeNetwork: null, matchesRules: null, verifiedAddress: null, mayBeAdmin: true },
     ]);
   });
 

@@ -180,7 +180,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Standalone: enrols the passkey; in the same transaction the link's use counts and the person is stored, waiting for an admin (signed in, to the one waiting page). The link is checked again; the same 404 if it no longer opens here. */
+        /** Standalone: enrols the passkey; in the same transaction the link's use counts and the person is stored, waiting for an admin (signed in, to the one waiting page), or, when they match every rule of a link that accepts automatically, as an adult member at once (never an admin; `waiting` false). The link and its rules are checked again; the same 404 if it no longer opens here. */
         post: operations["joinVerify"];
         delete?: never;
         options?: never;
@@ -250,7 +250,7 @@ export interface paths {
         /** Admins, standalone: the household's join links, open ones and closed ones someone who came with them still waits for. Never a token. Under HomersLab, 404. */
         get: operations["listJoinLinks"];
         put?: never;
-        /** Admins, standalone: a household join link (7 days and 5 uses by default; 1 to 14 days, 1 to 10 uses); the link is in this response only. Needs a sign-in in the last 10 minutes (403), and a home network listed (409). */
+        /** Admins, standalone: a household join link (7 days and 5 uses by default; 1 to 14 days, 1 to 10 uses) and its rules, which only narrow the household's (ADR 0011): it always opens only from the home network; `networks` narrows that to ranges inside it; `accept: automatic` lets in at once, as an adult (never an admin), whoever matches every rule; `nonMatches: refuse` refuses whoever does not, instead of letting them wait. The link is in this response only. Needs a sign-in in the last 10 minutes (403), and a home network listed (409). */
         post: operations["createJoinLink"];
         delete?: never;
         options?: never;
@@ -1307,14 +1307,23 @@ export interface components {
             } | null;
             /** @description whether they came from the household's networks (null: from Homeward) */
             fromHomeNetwork: boolean | null;
+            /** @description whether they matched every rule of their link (on a link that waits for approval, or outside its own ranges); null: from Homeward. Never a reason to approve by itself */
+            matchesRules: boolean | null;
             /** @description the address a rule verified (slices 4a and 4b) */
             verifiedAddress: null;
             /** @description under HomersLab, false unless their Homeward role is admin (the ceiling) */
             mayBeAdmin: boolean;
         };
         HomeNetworks: {
-            /** @description the admin comes through loopback or the container's own networks (a proxy, a published port), or the container's surroundings could not be read: no join link opens for anyone until the forwarded address is read from PHILOBIBLOS_TRUSTED_PROXY (philobiblos#34 slice 3) */
+            /** @description Philobiblos sees the admin as a hop (loopback or the container's own networks: a proxy that is not PHILOBIBLOS_TRUSTED_PROXY, a published port), the trusted proxy forwarded no address it can read, or the container's surroundings could not be read: no join link opens for anyone that way */
             behindProxy: boolean;
+            /** @description PHILOBIBLOS_TRUSTED_PROXY is set: its X-Forwarded-For (right-most untrusted entry) names the client */
+            trustedProxy: boolean;
+            /**
+             * @description in a container, whether its networks and routes could be read; no-ipv6-route: the host booted with ipv6.disable=1, so no join link opens there
+             * @enum {unknown}
+             */
+            surroundings: "known" | "no-ipv6-route" | "unreadable";
             networks: {
                 cidr: string;
                 addedAt: string;
@@ -1334,6 +1343,12 @@ export interface components {
             waiting: number;
             /** @description unexpired and not used up */
             open: boolean;
+            /** @enum {unknown} */
+            accept: "approval" | "automatic";
+            /** @enum {unknown} */
+            nonMatches: "wait" | "refuse";
+            /** @description its own ranges inside the household's networks; null: all of them */
+            networks: string[] | null;
         };
         Person: {
             id: string;
@@ -2472,7 +2487,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Waiting (signed in) */
+            /** @description Waiting, or let in by the link's rules (signed in) */
             200: {
                 headers: {
                     /** @description philobiblos_session; HttpOnly; Secure; SameSite=Strict; Path=/ */
@@ -2708,6 +2723,18 @@ export interface operations {
                 "application/json": {
                     days?: number;
                     uses?: number;
+                    /**
+                     * @default approval
+                     * @enum {unknown}
+                     */
+                    accept?: "approval" | "automatic";
+                    /**
+                     * @default wait
+                     * @enum {unknown}
+                     */
+                    nonMatches?: "wait" | "refuse";
+                    /** @description CIDRs, each inside one of the household's networks (400 otherwise); left out: all of them */
+                    networks?: string[];
                 };
             };
         };
@@ -2724,6 +2751,11 @@ export interface operations {
                         url: string;
                         expiresAt: string;
                         maxUses: number;
+                        /** @enum {unknown} */
+                        accept: "approval" | "automatic";
+                        /** @enum {unknown} */
+                        nonMatches: "wait" | "refuse";
+                        networks: string[] | null;
                     };
                 };
             };

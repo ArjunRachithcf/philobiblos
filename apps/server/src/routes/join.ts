@@ -10,6 +10,12 @@
 // Opening, and joining (options and verify), are limited per client address and per link (429 past it); the limits
 // are counted before the link is looked at, so a link that works and one that does not are limited alike.
 //
+// The client address is the connection's, or the forwarded one only from PHILOBIBLOS_TRUSTED_PROXY (net/proxy.ts
+// clientAddress): a forged X-Forwarded-For from anywhere else is ignored, and a trusted proxy that sends none Philobiblos
+// can read gives no address (in no household network; limited as the proxy). A link's rules (household/join-links.ts):
+// whoever matches every rule of a link that accepts automatically is an adult at once, never an admin; whatever the
+// body says, nothing here sets a role but RULE_ROLE.
+//
 // Admins (both with a fresh sign-in, as any change that lets people in or out): the home networks, and join links.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
@@ -21,9 +27,10 @@ import { requireAdmin, requireFreshSignIn } from '../auth/hook';
 import { requestSession, startSession } from '../auth/cookie';
 import { anyPerson } from '../household/waiting';
 import { passkeyLabel, passkeyRow, type Challenges, type WebAuthn } from '../auth/webauthn';
-import { JOIN_LINK, JoinLinkError, checkLink, createJoinLink, listJoinLinks, presentedHash, revokeJoinLink, spendUse } from '../household/join-links';
-import { NETWORKS, NO_SURROUNDINGS, homeNetworks, isHop, parseCidr, plainAddress, proposeNetwork, rangeProblem, setHomeNetworks, type Cidr, type Surroundings } from '../net/networks';
-import { view } from '../household/people';
+import { JOIN_LINK, JoinLinkError, NO_RULES, RULE_ROLE, checkLink, createJoinLink, linkNetworks, listJoinLinks, presentedHash, revokeJoinLink, rulesView, spendUse, type LinkRules } from '../household/join-links';
+import { NETWORKS, NO_SURROUNDINGS, homeNetworks, isHop, parseCidr, plainAddress, proposeNetwork, rangeProblem, setHomeNetworks, surroundingsWarning, type Cidr, type Surroundings } from '../net/networks';
+import { clientAddress } from '../net/proxy';
+import { suggestHandle, view } from '../household/people';
 import { lapseIn, lapseWaiting } from '../household/waiting-rows';
 import { Limiter } from '../shares/tokens';
 
@@ -57,7 +64,7 @@ export const JOIN_LINK_KEYS = 10_000;
  * The key an address is limited by: an IPv6 address by its /64 (one household's, or one attacker's, whole block), an
  * IPv4 one (a mapped one too) as it is.
  */
-export function addressKey(address: string | undefined): string {
+export function addressKey(address: string | null | undefined): string {
   const a = plainAddress(address);
   if (!a.includes(':')) return `a:${a}`;
   const c = parseCidr(`${a}/64`);
@@ -67,6 +74,9 @@ export function addressKey(address: string | undefined): string {
 export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, webauthn: WebAuthn, challenges: Challenges, o: JoinOptions = {}) {
   const floor = o.floorMs ?? JOIN_FLOOR_MS;
   const where = o.surroundings ?? NO_SURROUNDINGS;
+  // Surroundings that fail closed are said once at start (and on People): no join link opens here.
+  const warning = cfg.mode === 'standalone' ? surroundingsWarning(where) : null;
+  if (warning) app.log.warn(warning);
   // Per address and per link in limiters of their own: a flood of addresses never evicts a link's count, and a link's
   // limiter refuses a new key when it is full rather than forget one (net effect: a flood of made-up links is refused).
   const opening = { byAddress: new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs), byLink: new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs, o.linkKeys ?? JOIN_LINK_KEYS, 'refuse') };
@@ -76,10 +86,13 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     void reply.code(404).send({ error: 'not found' });
     return false;
   };
-  const address = (req: FastifyRequest) => req.socket.remoteAddress;
+  /** The client's address (null: the trusted proxy forwarded none it can read). */
+  const address = (req: FastifyRequest) => clientAddress(cfg.trustedProxy, req.socket.remoteAddress, req.headers['x-forwarded-for']);
+  /** The key a client is limited by; one the trusted proxy names no one for counts as the proxy. */
+  const limitKey = (req: FastifyRequest) => addressKey(address(req) ?? `${req.socket.remoteAddress ?? ''}`);
   /** Both limits counted, whatever the first says. */
   const within = (l: typeof opening, req: FastifyRequest, hash: string) => {
-    const byAddress = l.byAddress.hit(addressKey(address(req)));
+    const byAddress = l.byAddress.hit(limitKey(req));
     const byLink = l.byLink.hit(hash);
     return byAddress && byLink;
   };
@@ -97,6 +110,7 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     const hash = presentedHash(req.body?.token);
     if (!within(opening, req, hash)) return answer(reply, start, 429, TOO_MANY);
     lapseWaiting(db);
+    // The same 204 whether the person would wait or be let in at once: they learn which at the enrolment.
     const link = checkLink(db, { hash }, address(req), new Date(), where);
     return link ? answer(reply, start, 204) : answer(reply, start, 404, NOT_HERE);
   });
@@ -112,8 +126,9 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     const s = requestSession(db, req, reply);
     if (s && anyPerson(db, s.personId)?.state === 'active') return answer(reply, start, 409, { error: 'You are signed in to the household already: this link is for someone new.' });
     lapseWaiting(db);
-    const link = checkLink(db, { hash }, address(req), new Date(), where);
-    if (!link) return answer(reply, start, 404, NOT_HERE);
+    const admission = checkLink(db, { hash }, address(req), new Date(), where);
+    if (!admission) return answer(reply, start, 404, NOT_HERE);
+    const link = admission.link;
     // The person to be: their id is the passkey's user handle. Nothing is stored until the passkey is enrolled.
     const personId = ulid();
     const { challenge, options } = await webauthn.registrationOptions({ userId: personId, userName: name, exclude: [] });
@@ -125,7 +140,7 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (!standaloneOnly(reply)) return;
     // Both limits before the one-time step is taken, so a 429 does not spend it; the link's is known from the step.
     const peeked = challenges.peek(req.body?.challengeId, 'join');
-    const byAddress = joining.byAddress.hit(addressKey(address(req)));
+    const byAddress = joining.byAddress.hit(limitKey(req));
     const byLink = peeked?.tokenHash ? joining.byLink.hit(peeked.tokenHash) : true;
     if (!byAddress || !byLink) return answer(reply, start, 429, TOO_MANY);
     const pending = challenges.take(req.body?.challengeId, 'join');
@@ -134,21 +149,28 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (!cred) return answer(reply, start, 401, { error: 'the passkey could not be verified' });
     const label = passkeyLabel(req.body?.label);
     const now = new Date();
-    let outcome: 'joined' | 'not-here' | 'taken' = 'not-here';
+    let outcome: 'joined' | 'accepted' | 'not-here' | 'taken' = 'not-here';
     try {
       db.transaction((tx0) => {
         const tx = tx0 as unknown as Db;
         // The link is checked again here: revoked, expired, used up, the address or a full list since the options.
         lapseIn(tx, now);
-        const link = checkLink(tx, { id: pending.joinLinkId! }, address(req), now, where);
-        if (!link) return;
+        // The rules are judged here, at the enrolment, not at the options.
+        const admission = checkLink(tx, { id: pending.joinLinkId! }, address(req), now, where);
+        if (!admission) return;
+        const { link } = admission;
         if (tx.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.id, cred.id)).get()) { outcome = 'taken'; return; }
-        tx.insert(t.person).values({ id: pending.personId!, name: pending.name!, role: 'adult', state: 'waiting', handle: null, arrivedAt: now.toISOString(), settingsJson: '{}' }).run();
-        tx.insert(t.joinRequest).values({ personId: pending.personId!, joinLinkId: link.id, fromHomeNetwork: 1 }).run();
+        if (admission.outcome === 'accept') {
+          // A rule match: a member at once, and always RULE_ROLE (an adult), whatever anyone sent.
+          tx.insert(t.person).values({ id: pending.personId!, name: pending.name!, role: RULE_ROLE, state: 'active', handle: suggestHandle(tx, pending.name!), arrivedAt: now.toISOString(), settingsJson: '{}' }).run();
+        } else {
+          tx.insert(t.person).values({ id: pending.personId!, name: pending.name!, role: 'adult', state: 'waiting', handle: null, arrivedAt: now.toISOString(), settingsJson: '{}' }).run();
+          tx.insert(t.joinRequest).values({ personId: pending.personId!, joinLinkId: link.id, fromHomeNetwork: 1, matchesRules: admission.matches ? 1 : 0 }).run();
+        }
         tx.insert(t.passkey).values(passkeyRow(cred, pending.personId!, label, now.toISOString())).run();
         // The use counts here and only here, with the passkey (checkLink saw room for it in this same transaction).
         if (!spendUse(tx, link.id, now)) throw new Error('a join link use was not counted');
-        outcome = 'joined';
+        outcome = admission.outcome === 'accept' ? 'accepted' : 'joined';
       }, { behavior: 'immediate' });
     } catch (e) {
       if ((e as { code?: string }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY') outcome = 'taken';
@@ -157,16 +179,25 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (outcome === 'taken') return answer(reply, start, 409, { error: 'this passkey is already enrolled' });
     if (outcome === 'not-here') return answer(reply, start, 404, NOT_HERE);
     startSession(db, req, reply, pending.personId, cred.id);
-    o.joined?.();
+    // Someone waits: the admins are told. A rule match leaves nothing to decide (People lists them).
+    if (outcome === 'joined') o.joined?.();
     const p = db.select().from(t.person).where(eq(t.person.id, pending.personId)).get()!;
-    return answer(reply, start, 200, { mode: cfg.mode, signedIn: true, setupNeeded: false, waiting: true, person: view(db, p) });
+    return answer(reply, start, 200, { mode: cfg.mode, signedIn: true, setupNeeded: false, waiting: outcome === 'joined', person: view(db, p) });
   });
 
   // Admins ------------------------------------------------------------------
   const admin = (req: FastifyRequest, reply: FastifyReply) => standaloneOnly(reply) && requireAdmin(req, reply);
-  // behindProxy: the admin comes through a hop (loopback, the container's gateway), so every visitor does: no link
-  // opens until slice 3 reads the forwarded address from PHILOBIBLOS_TRUSTED_PROXY.
-  const networksView = (req: FastifyRequest) => ({ networks: homeNetworks(db), proposal: proposeNetwork(address(req), where), behindProxy: isHop(where, address(req)) });
+  // behindProxy: Philobiblos sees the admin as a hop (loopback, the container's own networks: a proxy that is not
+  // PHILOBIBLOS_TRUSTED_PROXY, a published port), or the trusted proxy forwarded no address it can read, so every visitor
+  // is: no link opens. trustedProxy: whether one is set (what the notice tells the admin to do). surroundings: why a
+  // container fails closed, if it does (ipv6.disable=1 leaves no /proc/net/ipv6_route).
+  const networksView = (req: FastifyRequest) => {
+    const a = address(req);
+    return {
+      networks: homeNetworks(db), proposal: proposeNetwork(a, where), behindProxy: a === null || isHop(where, a),
+      trustedProxy: cfg.trustedProxy !== null, surroundings: where.known ? 'known' as const : where.unknown ?? 'unreadable' as const,
+    };
+  };
 
   app.get('/people/home-networks', async (req, reply) => {
     if (!admin(req, reply)) return;
@@ -196,16 +227,22 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     return listJoinLinks(db);
   });
 
-  app.post<{ Body: { days?: unknown; uses?: unknown } }>('/people/join-links', async (req, reply) => {
+  const LINK_KEYS = new Set(['days', 'uses', 'accept', 'nonMatches', 'networks']);
+  app.post<{ Body: Record<string, unknown> }>('/people/join-links', async (req, reply) => {
     if (!admin(req, reply) || !requireFreshSignIn(req, reply)) return;
     const b = (req.body ?? {}) as Record<string, unknown>;
     const int = (v: unknown, max: number) => v === undefined || (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= max);
-    if (typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'days' && k !== 'uses') || !int(b.days, JOIN_LINK.maxDays) || !int(b.uses, JOIN_LINK.maxUses)) {
-      return reply.code(400).send({ error: `days: 1 to ${JOIN_LINK.maxDays} (${JOIN_LINK.days} by default); uses: 1 to ${JOIN_LINK.maxUses} (${JOIN_LINK.uses} by default)` });
+    if (typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => !LINK_KEYS.has(k)) || !int(b.days, JOIN_LINK.maxDays) || !int(b.uses, JOIN_LINK.maxUses)
+      || (b.accept !== undefined && b.accept !== 'approval' && b.accept !== 'automatic') || (b.nonMatches !== undefined && b.nonMatches !== 'wait' && b.nonMatches !== 'refuse')) {
+      return reply.code(400).send({ error: `days: 1 to ${JOIN_LINK.maxDays} (${JOIN_LINK.days} by default); uses: 1 to ${JOIN_LINK.maxUses} (${JOIN_LINK.uses} by default); accept: approval (the default) or automatic; nonMatches: wait (the default) or refuse; networks: ranges inside the home network` });
     }
     try {
-      const l = createJoinLink(db, cfg, { createdBy: req.caller!.personId, days: b.days as number | undefined, uses: b.uses as number | undefined });
-      return reply.code(201).send({ id: l.id, url: l.url, expiresAt: l.expiresAt.toISOString(), maxUses: l.maxUses });
+      const rules: LinkRules = {
+        ...NO_RULES, automatic: b.accept === 'automatic', refuseNonMatches: b.nonMatches === 'refuse',
+        networks: b.networks === undefined ? null : linkNetworks(db, b.networks, where),
+      };
+      const l = createJoinLink(db, cfg, { createdBy: req.caller!.personId, days: b.days as number | undefined, uses: b.uses as number | undefined, rules });
+      return reply.code(201).send({ id: l.id, url: l.url, expiresAt: l.expiresAt.toISOString(), maxUses: l.maxUses, ...rulesView(rules) });
     } catch (e) {
       if (e instanceof JoinLinkError) return reply.code(e.status).send({ error: e.message });
       throw e;

@@ -71,13 +71,18 @@ CREATE TABLE join_link (                   -- a household join link; its waiting
   expires_at  TEXT NOT NULL,
   max_uses    INTEGER NOT NULL DEFAULT 5,
   uses        INTEGER NOT NULL DEFAULT 0,  -- counted at a passkey's enrolment, in the same transaction
+  -- its rules (slice 3), which only narrow the household's
+  automatic          INTEGER NOT NULL DEFAULT 0, -- 1: whoever matches every rule is let in at once, as an adult (never an admin)
+  refuse_non_matches INTEGER NOT NULL DEFAULT 0, -- 1: whoever does not match is refused instead of waiting
+  networks_json      TEXT,                 -- JSON array of CIDRs inside the household's networks; NULL: all of them
   CHECK (max_uses BETWEEN 1 AND 10 AND uses BETWEEN 0 AND max_uses)
 );
 
 CREATE TABLE join_request (                -- a waiting person's request: what the admin who decides sees
   person_id         TEXT PRIMARY KEY NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   join_link_id      TEXT REFERENCES join_link(id) ON DELETE SET NULL,
-  from_home_network INTEGER NOT NULL
+  from_home_network INTEGER NOT NULL,
+  matches_rules     INTEGER NOT NULL DEFAULT 0 -- whether they matched every rule of the link (slice 3)
 );
 
 CREATE TABLE household_settings (

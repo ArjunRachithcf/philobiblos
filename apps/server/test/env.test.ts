@@ -20,7 +20,7 @@ describe('SHELF_* (until 0.2.0)', () => {
 
   it('homerslab mode starts on the old names as it did', () => {
     const cfg = loadConfig({ SHELF_MODE: 'homerslab', SHELF_ORIGIN: 'https://books.example.org', SHELF_EDGE_IDENTITY: 'homerslab-v1', SHELF_TRUSTED_PROXY: '10.0.0.2', SHELF_DATA_DIR: '/data' });
-    expect(cfg).toMatchObject({ mode: 'homerslab', trustedProxy: '10.0.0.2' });
+    expect(cfg).toMatchObject({ mode: 'homerslab', trustedProxy: [{ cidr: '10.0.0.2/32' }] });
   });
 
   it('the new name wins when both are set', () => {

@@ -111,6 +111,7 @@ function WaitingList({ mode, changes, onDecided }: { mode: NonNullable<Me['mode'
                 {[p.via === 'homeward' ? 'Came from Homeward' : p.joinLink?.createdBy ? `Came with ${p.joinLink.createdBy}’s join link` : 'Came with a join link',
                   p.arrivedAt ? new Date(p.arrivedAt).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : null,
                   p.fromHomeNetwork == null ? null : p.fromHomeNetwork ? 'from the home network' : 'from outside the home network',
+                  p.matchesRules == null ? null : p.matchesRules ? 'matched the link’s rules' : 'did not match the link’s rules',
                   p.verifiedAddress ? `verified ${p.verifiedAddress}` : null].filter(Boolean).join(' · ')}
               </span>
             </span>
