@@ -1,7 +1,7 @@
 // People with a state (ADR 0011, philobiblos#34 slice 1): waiting for an admin's approval, or a member; approving and
 // declining with a fresh sign-in in both modes (refused under HomersLab until ArjunRachithcf/homeward#253); Homeward's
 // role as the ceiling. Every name and id is invented.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { buildApp, type BuiltApp } from '../src/app';
 import { WAITING_ANSWER } from '../src/auth/hook';
@@ -296,6 +296,34 @@ describe('Homeward\'s role is the ceiling', () => {
     expect(arrive(db, { externalId: 'hl-w', name: 'Someone p_w', role: 'admin', via: 'homerslab' })).toMatchObject({ kind: 'member', person: { role: 'admin', state: 'active' } });
   });
 
+  it('no admin left: only a Homeward admin is raised; a Homeward adult, new, waiting (renamed) or a member, stays as they are', () => {
+    const db = household();
+    db.update(t.person).set({ role: 'adult' }).where(eq(t.person.id, 'p_alex')).run(); // no active admin now
+    waiter(db, 'p_w', { externalId: 'hl-w', ceiling: 'adult' });
+    const hl = (externalId: string, name: string, role: 'admin' | 'adult') => arrive(db, { externalId, name, role, via: 'homerslab' });
+    expect(hl('hl-w', 'Renamed W', 'adult')).toMatchObject({ kind: 'waiting', person: { name: 'Renamed W', state: 'waiting' } }); // past the fast path
+    expect(hl('hl-w', 'Renamed W', 'adult')).toMatchObject({ kind: 'waiting' }); // the fast path
+    expect(hl('hl-brand-new', 'New', 'adult')).toMatchObject({ kind: 'waiting', joined: true });
+    expect(hl('hl-sam', 'Sam', 'adult')).toMatchObject({ kind: 'member', person: { role: 'adult' } }); // fast path
+    expect(hl('hl-sam', 'Sam R', 'adult')).toMatchObject({ kind: 'member', person: { role: 'adult' } }); // past it
+    expect(members(db).filter((p) => p.role === 'admin')).toEqual([]);
+    // and an unchanged adult, waiting or a member, is answered by a read: no write lock, even with no admin left
+    const tx = vi.spyOn(db, 'transaction');
+    hl('hl-w', 'Renamed W', 'adult');
+    hl('hl-sam', 'Sam R', 'adult');
+    expect(tx).not.toHaveBeenCalled();
+    tx.mockRestore();
+  });
+
+  it('two Homeward admins arriving at once while no admin is left: one is raised, the other stays adult, no one else', async () => {
+    const db = household();
+    db.update(t.person).set({ role: 'adult' }).where(eq(t.person.id, 'p_alex')).run();
+    const { app: a } = await app(homerslab(), db);
+    const [x, y] = await Promise.all([a.inject({ url: '/api/me', headers: HL_ALEX }), a.inject({ url: '/api/me', headers: hlHeaders('hl-sam', 'Sam', 'admin') })]);
+    expect([x.json().person.role, y.json().person.role].sort()).toEqual(['admin', 'adult']);
+    expect(members(db).filter((p) => p.role === 'admin')).toHaveLength(1);
+  });
+
   it('a kid never arrives by themselves, and a waiting person Homeward makes a kid is gone', () => {
     const db = household();
     expect(arrive(db, { externalId: 'hl-tot', name: 'Tot', role: 'kid', via: 'homerslab' })).toEqual({ kind: 'refused' });
@@ -312,6 +340,10 @@ describe('Homeward\'s role is the ceiling', () => {
     expect(late.statusCode).toBe(403);
     expect(late.json()).toEqual(WAITING_ANSWER);
     expect(waitingPeople(db)).toHaveLength(WAITING.max);
+    expect(db.select().from(t.person).where(eq(t.person.externalId, 'hl-late')).all()).toEqual([]);
+    // the web app's first call says the same: waiting, and no person (nothing is stored for them)
+    const s = await a.inject({ url: '/api/auth/session', headers: hlHeaders('hl-late', 'Late', 'adult') });
+    expect(s.json()).toEqual({ mode: 'homerslab', setupNeeded: false, signedIn: true, waiting: true });
     expect(db.select().from(t.person).where(eq(t.person.externalId, 'hl-late')).all()).toEqual([]);
     // once one is decided, there is room
     decline(db, waitingPeople(db)[0]!.id);

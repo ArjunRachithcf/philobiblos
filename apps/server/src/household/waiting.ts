@@ -14,7 +14,7 @@ import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import type { Identity, Role } from '../identity';
-import { HouseholdError, becameKid, revokeInvitesBy, suggestHandle, type Person } from './people';
+import { HouseholdError, becameKid, suggestHandle, type Person } from './people';
 
 export const WAITING = { max: 10 } as const;
 
@@ -123,9 +123,9 @@ export function arrive(db: Db, id: Identity & { role: Role }, now = new Date()):
     const role = lockedOut ? 'admin' : capped(existing.role, id.role);
     if (role !== existing.role || name !== existing.name || existing.ceiling !== id.role) {
       tx.update(t.person).set({ role, name, ceiling: id.role, birthYear: role === 'kid' ? existing.birthYear : null }).where(eq(t.person.id, existing.id)).run();
-      // A demotion seen: their admin-only links go. Admin-only pushes (`join`) stop by themselves: they go to the people
-      // who are admins when one is sent (push/push.ts notifyAdmins), and a device is not tied to a kind.
-      if (existing.role === 'admin' && role !== 'admin') revokeInvitesBy(tx, existing.id);
+      // A demotion seen: admin-only pushes (`join`) stop by themselves: they go to the people who are admins when one
+      // is sent (push/push.ts joinNotifier), and a device is not tied to a kind. (Under HomersLab there are no invites
+      // or join links to take along: those routes answer 404 there.)
       if (role === 'kid') becameKid(tx, existing.id);
     }
     const person = anyPerson(tx, existing.id)!;
