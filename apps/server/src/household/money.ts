@@ -89,6 +89,8 @@ export function checkMoney(body: unknown, others: { name: string; currency: stri
         const problem = o[k] === undefined ? 'both parts, or null to follow the unknown price' : amountProblem(o[k], currency);
         if (problem) throw new MoneyError(400, `money.priceLimits.${k}: ${problem}`);
       }
+      // 0 would make every book with a price dear (and, as max, leave every adult's out): no limit is null, not 0.
+      if (o.high === 0) throw new MoneyError(400, 'money.priceLimits.high: above 0 (null follows the unknown price)');
       if ((o.high as number) > (o.max as number)) throw new MoneyError(400, 'money.priceLimits: the "dear" limit is above the one that leaves a book out');
       Object.assign(set, { priceHighC: o.high as number, priceMaxC: o.max as number });
     }

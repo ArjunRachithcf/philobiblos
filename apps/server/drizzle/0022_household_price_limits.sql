@@ -21,7 +21,7 @@ CREATE TABLE `__new_household_settings` (
 	CONSTRAINT "household_settings_ai_provider" CHECK("__new_household_settings"."ai_provider" IN ('claude','ollama','none')),
 	CONSTRAINT "household_settings_currency" CHECK("__new_household_settings"."currency" IS NULL OR (length("__new_household_settings"."currency") = 3 AND "__new_household_settings"."currency" GLOB '[A-Z][A-Z][A-Z]')),
 	CONSTRAINT "household_settings_unknown_price" CHECK("__new_household_settings"."unknown_price_c" BETWEEN 0 AND 1000000000000),
-	CONSTRAINT "household_settings_price_limits" CHECK(("__new_household_settings"."price_high_c" IS NULL AND "__new_household_settings"."price_max_c" IS NULL) OR ("__new_household_settings"."price_high_c" IS NOT NULL AND "__new_household_settings"."price_max_c" IS NOT NULL AND "__new_household_settings"."price_high_c" BETWEEN 0 AND "__new_household_settings"."price_max_c" AND "__new_household_settings"."price_max_c" <= 1000000000000))
+	CONSTRAINT "household_settings_price_limits" CHECK(("__new_household_settings"."price_high_c" IS NULL AND "__new_household_settings"."price_max_c" IS NULL) OR ("__new_household_settings"."price_high_c" IS NOT NULL AND "__new_household_settings"."price_max_c" IS NOT NULL AND "__new_household_settings"."price_high_c" BETWEEN 1 AND "__new_household_settings"."price_max_c" AND "__new_household_settings"."price_max_c" <= 1000000000000))
 );
 --> statement-breakpoint
 -- philobiblos#40: every household before it scored with limits of 40 and 60 of its currency, whatever its unknown price.

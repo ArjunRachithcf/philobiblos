@@ -1254,7 +1254,7 @@
         },
         "household_settings_price_limits": {
           "name": "household_settings_price_limits",
-          "value": "(\"household_settings\".\"price_high_c\" IS NULL AND \"household_settings\".\"price_max_c\" IS NULL) OR (\"household_settings\".\"price_high_c\" IS NOT NULL AND \"household_settings\".\"price_max_c\" IS NOT NULL AND \"household_settings\".\"price_high_c\" BETWEEN 0 AND \"household_settings\".\"price_max_c\" AND \"household_settings\".\"price_max_c\" <= 1000000000000)"
+          "value": "(\"household_settings\".\"price_high_c\" IS NULL AND \"household_settings\".\"price_max_c\" IS NULL) OR (\"household_settings\".\"price_high_c\" IS NOT NULL AND \"household_settings\".\"price_max_c\" IS NOT NULL AND \"household_settings\".\"price_high_c\" BETWEEN 1 AND \"household_settings\".\"price_max_c\" AND \"household_settings\".\"price_max_c\" <= 1000000000000)"
         }
       }
     },

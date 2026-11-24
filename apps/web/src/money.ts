@@ -37,17 +37,19 @@ export function asTyped(c: number, currency: Currency): string {
 }
 
 /**
- * The budget bar's step and its end, in hundredths: a fifth of the household's unknown price and at least 16 of it, so
- * a bar looks and moves the same in any currency (25 → steps of 5, to 400). Without an unknown price the budget sets
- * the size. A step is whole units of the currency.
+ * The budget bar's step and its end, in hundredths, sized by the household's own amounts so a bar looks and moves the
+ * same in any currency: a step is a fifth of the unknown price or a sixtieth of the budget's top, whichever is larger
+ * (25 and 150 → steps of 5), the end at least 16 unknown prices (400). Without an unknown price the budget sets both. Both are
+ * whole units of the currency.
  */
 export function budgetBar(b: { min: number; max: number }, total: number, unknownC: number, currency: Currency): { step: number; scale: number } {
   const unit = 10 ** (2 - fractionDigits(currency));
-  let ref = unknownC > 0 ? unknownC : Math.max(b.max, total) / 6;
-  if (!(ref > 0)) ref = 5 * unit;
-  const step = Math.max(unit, Math.round(ref / 5 / unit) * unit);
+  const whole = (c: number) => Math.max(unit, Math.round(c / unit) * unit);
+  const top = Math.max(b.max, total);
+  const ref = whole(unknownC > 0 ? unknownC : top / 6 || 5 * unit);
+  const step = whole(Math.max(ref / 5, top / 60));
   const round = 4 * ref;
-  return { step, scale: Math.max(16 * ref, Math.ceil((Math.max(b.max, total) * 1.5) / round) * round) };
+  return { step, scale: Math.max(16 * ref, Math.ceil((top * 1.5) / round) * round) };
 }
 
 /** The currency as a field's label says it ("At least (…)"); "amount" before the household has one. */

@@ -24,13 +24,13 @@ export function wholeIn(c: number, currency: string | null | undefined): boolean
 }
 
 /**
- * An amount as a person types it, in hundredths: digits, then a point or a comma and at most the currency's decimals
- * (none in a currency without them). No sign, symbol or grouping: what cannot be placed is refused, never guessed.
+ * An amount as a person types it, in hundredths: digits, then a point or a comma and at most two decimals, an amount the
+ * currency can write (`1500` or `1500.00` in one without decimals, never `1500.50`). No sign, symbol or grouping: what
+ * cannot be placed is refused, never guessed.
  */
 export function parseAmount(s: string, currency: string | null | undefined): number | null {
-  const d = fractionDigits(currency);
-  const m = (d ? new RegExp(`^(\\d{1,11})(?:[.,](\\d{1,${d}}))?$`) : /^(\d{1,11})$/).exec(s.trim());
+  const m = /^(\d{1,11})(?:[.,](\d{1,2}))?$/.exec(s.trim());
   if (!m) return null;
   const c = Number(m[1]) * 100 + Number((m[2] ?? '0').padEnd(2, '0'));
-  return c <= AMOUNT_CEILING_C ? c : null;
+  return c <= AMOUNT_CEILING_C && wholeIn(c, currency) ? c : null;
 }

@@ -28,7 +28,8 @@ describe('an amount as a person types it', () => {
     expect(parseAmount(' 25 ', 'CHF')).toBe(2500);
     expect(parseAmount('1500', 'JPY')).toBe(150000);
     expect(parseAmount('1500.5', 'JPY')).toBeNull();
-    expect(parseAmount('1500.00', 'JPY')).toBeNull();
+    expect(parseAmount('1500.00', 'JPY')).toBe(150000); // a spreadsheet's padding, as schema.org's
+    expect(parseAmount('1500,0', 'JPY')).toBe(150000);
     expect(parseAmount('18.905', 'CHF')).toBeNull();
   });
 

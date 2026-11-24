@@ -38,7 +38,8 @@ export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }
     e.preventDefault();
     setError(null); setOk('');
     const next = { min: typed(min, null), max: typed(max, null) };
-    if (!/^\d+$/.test(min) || !/^\d+$/.test(max) || next.min === null || next.max === null) return setError('Enter whole amounts, for example 100.');
+    if (!/^\d+$/.test(min) || !/^\d+$/.test(max)) return setError('Enter whole amounts, for example 100.');
+    if (next.min === null || next.max === null) return setError('Enter at most 10,000,000,000.');
     if (next.min > next.max) return setError('The lower end is above the upper end.');
     try {
       await api('/settings', { method: 'PATCH', body: { budget: next } });

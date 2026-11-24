@@ -80,7 +80,7 @@ export const householdSettings = sqliteTable('household_settings', {
   check('household_settings_currency', sql`${t.currency} IS NULL OR (length(${t.currency}) = 3 AND ${t.currency} GLOB '[A-Z][A-Z][A-Z]')`),
   // AMOUNT_CEILING_C (packages/contracts money.ts): no currency's amounts are capped at one currency's size.
   check('household_settings_unknown_price', sql`${t.unknownPriceC} BETWEEN 0 AND 1000000000000`),
-  check('household_settings_price_limits', sql`(${t.priceHighC} IS NULL AND ${t.priceMaxC} IS NULL) OR (${t.priceHighC} IS NOT NULL AND ${t.priceMaxC} IS NOT NULL AND ${t.priceHighC} BETWEEN 0 AND ${t.priceMaxC} AND ${t.priceMaxC} <= 1000000000000)`),
+  check('household_settings_price_limits', sql`(${t.priceHighC} IS NULL AND ${t.priceMaxC} IS NULL) OR (${t.priceHighC} IS NOT NULL AND ${t.priceMaxC} IS NOT NULL AND ${t.priceHighC} BETWEEN 1 AND ${t.priceMaxC} AND ${t.priceMaxC} <= 1000000000000)`),
 ]);
 
 export const monthOverride = sqliteTable('month_override', {

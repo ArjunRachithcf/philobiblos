@@ -68,7 +68,7 @@ CREATE TABLE household_settings (
   unknown_price_c   INTEGER NOT NULL DEFAULT 2500 CHECK (unknown_price_c BETWEEN 0 AND 1000000000000), -- what a price nobody knows counts as (ADR 0008), in hundredths of the currency
   price_high_c      INTEGER,                    -- the household's own price limits (philobiblos#40), hundredths: above high a book is dear,
   price_max_c       INTEGER,                    -- above max an adult's candidate is left out; both null = they follow the unknown price
-  CHECK ((price_high_c IS NULL AND price_max_c IS NULL) OR (price_high_c IS NOT NULL AND price_max_c IS NOT NULL AND price_high_c BETWEEN 0 AND price_max_c AND price_max_c <= 1000000000000))
+  CHECK ((price_high_c IS NULL AND price_max_c IS NULL) OR (price_high_c IS NOT NULL AND price_max_c IS NOT NULL AND price_high_c BETWEEN 1 AND price_max_c AND price_max_c <= 1000000000000))
 );
 
 CREATE TABLE month_override (             -- "just this month" budget changes

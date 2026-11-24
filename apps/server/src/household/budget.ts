@@ -21,8 +21,10 @@ export function setBudget(db: Db, body: unknown): Budget {
   for (const k of Object.keys(b)) if (k !== 'min' && k !== 'max') throw new BudgetError(`budget: unknown field ${k}`);
   const cur = getBudget(db);
   const next = { min: b.min ?? cur.min, max: b.max ?? cur.max };
-  for (const [k, v] of Object.entries(next)) {
-    const problem = amountProblem(v, getMoney(db).currency);
+  // Only the ends given are checked: one kept from before a change of currency (nothing is converted) stays as it was.
+  const { currency } = getMoney(db);
+  for (const k of ['min', 'max'] as const) {
+    const problem = b[k] === undefined ? null : amountProblem(b[k], currency);
     if (problem) throw new BudgetError(`budget.${k}: ${problem}`);
   }
   if ((next.min as number) > (next.max as number)) throw new BudgetError('budget: the minimum is above the maximum');

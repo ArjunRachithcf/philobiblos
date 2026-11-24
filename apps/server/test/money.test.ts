@@ -204,7 +204,10 @@ describe('price limits in the household\'s currency (philobiblos#40)', () => {
       expect(r.statusCode, JSON.stringify(bad)).toBe(400);
       expect(r.json().error).toMatch(/priceLimits/);
     }
-    expect((await a.patch('p_alex', { money: { priceLimits: { high: 0, max: 0 } } })).statusCode).toBe(200);
+    // 0 is no limit's value: every book with a price would be dear, or left out (null follows the unknown price).
+    for (const zero of [{ high: 0, max: 0 }, { high: 0, max: 5000 }]) expect((await a.patch('p_alex', { money: { priceLimits: zero } })).statusCode).toBe(400);
+    expect(() => db.update(t.householdSettings).set({ priceHighC: 0, priceMaxC: 5000 }).run()).toThrow(/CHECK/);
+    expect((await a.patch('p_alex', { money: { priceLimits: { high: 1, max: 1 } } })).statusCode).toBe(200);
     expect(() => db.update(t.householdSettings).set({ priceHighC: 1000, priceMaxC: null }).run()).toThrow(/CHECK/);
     expect(() => db.update(t.householdSettings).set({ priceHighC: 2000, priceMaxC: 1000 }).run()).toThrow(/CHECK/);
     await a.built.app.close();
@@ -226,6 +229,9 @@ describe('price limits in the household\'s currency (philobiblos#40)', () => {
     const put = (b: unknown) => a.built.app.inject({ method: 'PUT', url: `/api/month/${month}/budget`, headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN, 'content-type': 'application/json' }, payload: JSON.stringify(b) });
     expect((await put({ min: 1000050, max: 2000000 })).statusCode).toBe(400);
     expect((await put({ min: 1000000, max: 2000000 })).statusCode).toBe(200);
+    // Nothing is converted: an end kept from the old currency stays, and the other end alone still changes.
+    db.update(t.householdSettings).set({ budgetMinC: 1000050 }).run();
+    expect((await a.patch('p_alex', { budget: { max: 3000000 } })).statusCode).toBe(200);
     await a.built.app.close();
   });
 

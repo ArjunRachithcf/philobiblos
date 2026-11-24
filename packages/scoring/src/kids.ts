@@ -59,7 +59,7 @@ export function scoreKid(f: KidCandidateFacts, s: KidSettings = DEFAULT_KID_SETT
     { label: 'On the To buy list', value: f.toBuy ? w.toBuy : 0, kind: 'source' },
     { label: 'From a share', value: f.fromShare ? w.share : 0, kind: 'source' },
     { label: 'Waiting', value: Math.min(Math.max(0, f.waitingDays), w.waitingCapDays) / w.waitingDivisor, kind: 'waiting' },
-    { label: 'Price', value: w.priceHighC ? -(w.pricePointsAtHigh * price) / w.priceHighC : 0, kind: 'price' },
+    { label: 'Price', value: w.priceHighC != null && w.priceHighC > 0 ? -(w.pricePointsAtHigh * price) / w.priceHighC : 0, kind: 'price' },
   ];
   return { score: parts.reduce((t, p) => t + p.value, 0), parts: parts.filter((p) => p.value !== 0) };
 }

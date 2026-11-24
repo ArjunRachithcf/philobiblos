@@ -58,7 +58,10 @@ describe('a currency\'s own decimals (philobiblos#40)', () => {
     expect(chf).toEqual({ step: 500, scale: 40000 });
     expect(budgetBar({ min: 1000000, max: 1500000 }, 0, 250000, 'JPY')).toEqual({ step: 50000, scale: 4000000 });
     expect(budgetBar({ min: 100000000, max: 150000000 }, 0, 25000000, 'IDR')).toEqual({ step: 5000000, scale: 400000000 });
-    expect(budgetBar({ min: 10000, max: 60000 }, 0, 2500, 'CHF').scale).toBe(90000);
+    expect(budgetBar({ min: 10000, max: 60000 }, 0, 2500, 'CHF')).toEqual({ step: 1000, scale: 90000 });
+    // A small unknown price next to a large budget: steps from the budget, never a tiny one.
+    expect(budgetBar({ min: 10000, max: 15000 }, 0, 100, 'CHF').step).toBe(250);
+    expect(budgetBar({ min: 0, max: 15050 }, 0, 0, 'JPY').scale % 100).toBe(0);
     // No unknown price to follow: the budget itself sets the size; a step is never less than one unit.
     expect(budgetBar({ min: 10000, max: 15000 }, 0, 0, 'CHF')).toEqual({ step: 500, scale: 40000 });
     expect(budgetBar({ min: 0, max: 0 }, 0, 0, 'JPY').step).toBe(100);
