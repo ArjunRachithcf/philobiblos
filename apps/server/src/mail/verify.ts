@@ -15,8 +15,8 @@
 // so a genuine bookshop mail to someone else cannot be replayed into Philobiblos.
 // Anything else is kept as "not verified" and changes nothing.
 import { authenticate } from 'mailauth';
-import { getAlignment } from 'mailauth/lib/tools.js';
 import { dkimKeyResolver, type TxtResolver } from '../net/dns';
+import { relaxedAligned } from '../net/domains';
 
 /** An enabled connector's mail domains (connectors/enabled.ts), exact: the From's, and the signing ones. */
 export interface ShopMail { id: string; domains: string[]; dkimDomains: string[] }
@@ -37,14 +37,6 @@ export interface MailAuth {
 
 /** Exactly one of these hosts (a connector lists every domain that counts; a subdomain is another host). */
 const isOneOf = (d: string | null | undefined, hosts: string[]) => !!d && hosts.includes(d.toLowerCase());
-/**
- * Relaxed alignment (RFC 7489 section 3.1.1): the two domains have the same organizational domain (the public suffix
- * list's, as mailauth reads it). A signing domain counts for a From only so: a connector may list `mail.shop.example`
- * as a signer of `shop.example`, never another organization's domain (a shared sending service's would let any of
- * its customers sign as the shop). The DKIM check and the ARC check use it alike, and connectors/load.ts refuses a
- * signing domain that is aligned with none of its connector's mail domains.
- */
-export const relaxedAligned = (a: string, b: string) => Boolean(a && b && getAlignment(a.toLowerCase(), [b.toLowerCase()]));
 /** A provider's ARC seal: its own domain or one under it (the household names the provider, e.g. its mail domain). */
 const inDomain = (d: string | null | undefined, domain: string) => !!d && (d.toLowerCase() === domain || d.toLowerCase().endsWith(`.${domain}`));
 
