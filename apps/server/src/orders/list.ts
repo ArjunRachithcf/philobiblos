@@ -11,6 +11,7 @@
 // (zero-width spaces, joiners, a byte order mark), and a cell that starts with `'` itself, so the importer, which leaves
 // that one quote out again (`unguardCell`), gives back what was written (philobiblos#47). Pure: no database, no clock.
 import { orderText, type OrderLineText } from '../month/order-mail';
+import type { Letter } from '../household/locale';
 
 /** A cell a spreadsheet would read as a formula: one of = + - @ (or their full-width forms), after any spaces, or a tab or CR first. */
 const FORMULA = /^(?:[\t\r]|\s*[=+\-@\uff1d\uff0b\uff0d\uff20])/;
@@ -64,6 +65,6 @@ export function listCsv(rows: ListRow[]): string {
 }
 
 /** The list's mail text: the order's, with no delivery address and no name (the person adds them if a shop needs them). */
-export function listText(o: { month: string; lines: OrderLineText[] }) {
-  return orderText({ ...o, deliveryAddress: null, signedBy: '' });
+export function listText(o: { month: string; lines: OrderLineText[] }, letter?: Letter) {
+  return orderText({ ...o, deliveryAddress: null, signedBy: '' }, letter);
 }

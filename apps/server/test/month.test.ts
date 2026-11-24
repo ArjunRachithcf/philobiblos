@@ -9,7 +9,7 @@ import { loadConfig } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { SealError, seal, unseal } from '../src/household/sealed';
-import { EMAIL, MAILTO_MAX, mailto, monthName, orderText } from '../src/month/order-mail';
+import { EMAIL, MAILTO_MAX, mailto, orderSubject, orderText } from '../src/month/order-mail';
 import { broadenMonth, currentMonth, nextMonth } from '../src/month/plan';
 import { importSeed } from '../src/seed/import';
 import { ORIGIN, TEST_SEALING_KEY, THIS_MONTH, sessionCookie } from './helpers';
@@ -143,7 +143,7 @@ describe('Compose (ADR 0007)', () => {
     const o = r.json();
     expect(o.status).toBe('drafted');
     expect(o.composeTo).toBe('orders@bookshop.example');
-    expect(o.composeUrl.startsWith(`mailto:orders@bookshop.example?subject=${encodeURIComponent(`Book order, ${monthName(MONTH)}`)}&body=`)).toBe(true);
+    expect(o.composeUrl.startsWith(`mailto:orders@bookshop.example?subject=${encodeURIComponent(orderSubject(MONTH))}&body=`)).toBe(true);
     expect(o.composeText).toContain('Example Street 1');
     expect(o.composeText).toContain('prices and delivery times');
     expect(o.composeText).not.toMatch(/\b(?:\d[ -]?){13,19}\b/); // nothing shaped like a card number

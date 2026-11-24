@@ -91,4 +91,4 @@ export function fakeBox(msgs: { uid: number; raw: Buffer }[], uidValidity = 7): 
   return box;
 }
 export const IMAP = { host: 'imap.example.org', user: 'shelf', password: { value: 'not-a-real-password' }, folder: 'INBOX' };
-export const CFG: MailJobConfig = { imap: IMAP, arcSealers: SEALERS, mailRecipients: HOUSEHOLD, sealingKey: null, connectors: CONNECTORS };
+export const CFG: MailJobConfig = { imap: IMAP, arcSealers: SEALERS, mailRecipients: HOUSEHOLD, sealingKey: null, locale: null, connectors: CONNECTORS };

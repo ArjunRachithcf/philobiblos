@@ -1,0 +1,13 @@
+{
+  "language": "de",
+  "months": ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"],
+  "subject": "Buchbestellung, {month} {year}",
+  "greeting": "Guten Tag,",
+  "one": "Ich möchte dieses Buch bestellen:",
+  "many": "Ich möchte diese {count} Bücher bestellen:",
+  "isbn": "ISBN {isbn}",
+  "sendTo": "Bitte liefern Sie an:",
+  "quote": "Könnten Sie mir vor dem Versand die Preise und Lieferzeiten mitteilen? Die Zahlungsangaben mache ich selbst.",
+  "thanks": "Vielen Dank,",
+  "tooLong": "(Bitte fügen Sie hier die Bestellung aus Philobiblos ein: Sie ist für diesen Link zu lang.)"
+}

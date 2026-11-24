@@ -1,6 +1,6 @@
 // What Philobiblos keeps of a verified bookshop mail (ADR 0007): never its text. A mail's free text always carries something
 // of the household's (the delivery address, a name, a card number typed into a request the bookshop quotes back), in
-// more spellings than any filter can find (Zürich and Zurich, Str. and strasse, soft hyphens, split PDF cells, unusual
+// more spellings than any filter can find (diacritics or not, a street word abbreviated, soft hyphens, split PDF cells, unusual
 // separators), so the store holds structured fields only. This slice keeps the headers that tie a mail to an order
 // (Message-ID, In-Reply-To, the date and the day it names), its subject through `safeField`, how many PDFs it has,
 // and where it is in the mailbox (UIDVALIDITY and UID). The parsers of M3 (d) read the mail again from the mailbox (which Philobiblos never
@@ -11,6 +11,7 @@
 // a mail that cannot be read safely is known now; and what the parser took for its headers must be what was signed.
 import PostalMime from 'postal-mime';
 import { textOf } from '../books/prices';
+import { SAME_WORDS, commonAddressWords } from '../household/locale';
 import type { TxtResolver } from '../net/dns';
 import { headerBlock, verifyBookshopMail, type MailAuth, type ShopMail } from './verify';
 import { ldBlocks, type Markup } from '../schemaorg/jsonld';
@@ -39,24 +40,31 @@ export class MailUnreadable extends Error {
 }
 
 const fold = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').normalize('NFKC').replace(/\p{Cf}/gu, '');
+// The spellings compared as one word (locales/address.json `same`, every locale's): as a word's ending after two
+// letters (an abbreviated compound), and as a whole word with or without its full stop. Built from lower-case ASCII
+// words only (household/locale.ts checks them).
+const SAME = SAME_WORDS.flatMap((g) => [
+  ...(g.endings.length ? [[new RegExp(`(\\p{L}{2})(?:${g.endings.join('|')})\\b\\.?`, 'gu'), `$1${g.as}`] as const] : []),
+  [new RegExp(`\\b(?:${g.words.join('|')})\\b\\.?`, 'g'), ` ${g.as} `] as const,
+]);
 /** A string as compared: NFKC, without format characters (soft hyphens, zero-width spaces), diacritics folded (and
- * their transliterations: ue, oe, ae), lowercase, street/Str./strasse (also as a word's ending: Bahnhofstr.) as one
- * word, every other non-letter-or-digit run as one space. */
-export const normal = (s: string) => fold(s).toLowerCase().replace(/ß/g, 'ss').replace(/ae/g, 'a').replace(/oe/g, 'o').replace(/ue/g, 'u')
-  .replace(/(\p{L}{2})str\b\.?/gu, '$1strasse').replace(/\b(?:street|str|strasse)\b\.?/g, ' strasse ')
+ * their transliterations: ue, oe, ae), lowercase, the spellings of a street word (locales/address.json, also as a
+ * word's ending) as one word, every other non-letter-or-digit run as one space. */
+export const normal = (s: string) => SAME.reduce((v, [re, to]) => v.replace(re, to), fold(s).toLowerCase().replace(/ß/g, 'ss').replace(/ae/g, 'a').replace(/oe/g, 'o').replace(/ue/g, 'u'))
   .replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
-
-/** Words of an address too common to drop a field for on their own. */
-const COMMON = new Set(['strasse', 'street', 'road', 'avenue', 'platz', 'gasse', 'schweiz', 'switzerland', 'suisse', 'svizzera']);
 
 /**
  * The pieces of the household's delivery address worth finding again: its lines and comma parts of 5+ letters or
- * digits, and each word of 5+ letters on its own (a surname alone, or the name reversed), common street words aside.
+ * digits, and each word of 5+ letters on its own (a surname alone, or the name reversed), aside from the words too
+ * common in the household's locale to drop a field for alone (household/locale.ts commonAddressWords; English's when
+ * none is set). A common word only stops a word alone from being a piece: the line or part that holds it still is one.
  */
-export function addressParts(address: string | null): string[] {
+export function addressParts(address: string | null, locale: string | null = null): string[] {
   if (!address) return [];
+  // Compared as the address is: through normal() (a data word written with ue or a diacritic is respelled there).
+  const common = new Set([...commonAddressWords(locale)].map(normal));
   const parts = address.split(/[\n,;]+/).map(normal);
-  const words = parts.flatMap((p) => p.split(' ')).filter((w) => /^\p{L}{5,}$/u.test(w) && !COMMON.has(w));
+  const words = parts.flatMap((p) => p.split(' ')).filter((w) => /^\p{L}{5,}$/u.test(w) && !common.has(w));
   return [...new Set([...parts.filter((p) => p.replace(/ /g, '').length >= 5), ...words])];
 }
 

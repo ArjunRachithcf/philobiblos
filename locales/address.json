@@ -1,0 +1,12 @@
+{
+  "same": [
+    { "as": "strasse", "words": ["street", "str", "strasse"], "endings": ["str"] }
+  ],
+  "common": {
+    "en": ["street", "road", "avenue"],
+    "de": ["platz", "gasse"]
+  },
+  "regions": {
+    "CH": ["schweiz", "switzerland", "suisse", "svizzera"]
+  }
+}

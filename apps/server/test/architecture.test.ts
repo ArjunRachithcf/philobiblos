@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CONNECTORS } from './mailkit';
 import { allows } from '../src/connectors/enabled';
+import ADDRESS from '../../../locales/address.json';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const CORE = ['apps/server/src', 'apps/worker/src', 'apps/web/src', 'packages/ai/src', 'packages/contracts/src', 'packages/scoring/src'];
@@ -86,8 +87,8 @@ describe('no core module names a bookshop or a mail provider', () => {
   it('no core module holds the words of a language\'s mail: reply markers, shop words and month names are a connector\'s', () => {
     // The parsers' words are each connector's (`mail.reply`, `summary`, `unavailable`, its layouts), so no list of them
     // lives in the core: neither the shops' (every shipped connector's reply separators) nor these, in the languages
-    // shops write in. The order letter Compose writes is the household's, in the app's language (English): its month
-    // names are the one list of words of a language the core has, so English month names are not looked for.
+    // shops write in. The order letter Compose writes is data too (locales/, philobiblos#60), in the shop's language or
+    // the household's; English month names are not looked for, as the app's own screens write dates in English.
     const LANGUAGES = ['de', 'fr', 'it', 'es', 'nl', 'pt', 'sv', 'da', 'nb', 'pl'];
     const monthsIn = (l: string) => Array.from({ length: 12 }, (_, m) => new Intl.DateTimeFormat(l, { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, m, 15))).toLowerCase());
     const english = new Set(monthsIn('en'));
@@ -101,6 +102,17 @@ describe('no core module names a bookshop or a mail provider', () => {
     const texts = core().map((f) => [relative(ROOT, f), readFileSync(f, 'utf8')] as const);
     // Shop words also as a word's start, for the compounds a shop writes (Gesamtbetrag, Versandkosten).
     expect([...mailWordHits(words, texts), ...mailWordHits(SHOP_WORDS, texts, true)]).toEqual([]);
+  });
+
+  it('no core module holds the words of an address: street words and country names are the locales\' (philobiblos#60)', () => {
+    // The delivery-address filter's words (locales/address.json): every one but the English street words, which are
+    // ordinary words a comment uses. Never in the core, so no household's country or language is built in.
+    const english = new Set(ADDRESS.common.en);
+    const words = [...ADDRESS.same.flatMap((g) => [g.as, ...g.words]), ...Object.values(ADDRESS.common).flat(), ...Object.values(ADDRESS.regions).flat()]
+      .filter((w) => !english.has(w) && w.length > 3);
+    expect(words).toEqual(expect.arrayContaining(['strasse', 'schweiz']));
+    const texts = core().map((f) => [relative(ROOT, f), readFileSync(f, 'utf8')] as const);
+    expect(mailWordHits([...new Set(words)], texts)).toEqual([]);
   });
 
   it('a shop word counts as the start of a word too: a compound holding one is caught', () => {

@@ -87,7 +87,7 @@ describe.skipIf(!IMAPS)('IMAP against a real server (GreenMail)', () => {
     await deliver(await mail('job1'));
     await deliver(await mail('job2', { sign: false }));
     const db = household();
-    const c = { imap: cfg(), arcSealers: ['forwarder.example'], mailRecipients: [], sealingKey: null, connectors: CONNECTORS };
+    const c = { imap: cfg(), arcSealers: ['forwarder.example'], mailRecipients: [], sealingKey: null, locale: null, connectors: CONNECTORS };
     expect((await refreshMail(db, c, { resolver })).status).toBe('done');
     const rows = db.select().from(t.mailSeen).all();
     expect(rows.find((r) => r.messageId === '<job1@quillmere.example>')).toMatchObject({ accepted: 1 });
