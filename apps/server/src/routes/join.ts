@@ -28,7 +28,7 @@ import { requestSession, startSession } from '../auth/cookie';
 import { anyPerson } from '../household/waiting';
 import { passkeyLabel, passkeyRow, type Challenges, type WebAuthn } from '../auth/webauthn';
 import { JOIN_LINK, JoinLinkError, RULE_ROLE, checkLink, createJoinLink, linkNetworks, listJoinLinks, presentedHash, revokeJoinLink, rulesView, spendUse, type LinkRules } from '../household/join-links';
-import { NETWORKS, NO_SURROUNDINGS, homeNetworks, isHop, parseCidr, plainAddress, proposeNetwork, rangeProblem, setHomeNetworks, surroundingsWarning, type Cidr, type Surroundings } from '../net/networks';
+import { NETWORKS, NO_SURROUNDINGS, homeNetworks, isHop, parseCidr, proposeNetwork, rangeProblem, setHomeNetworks, surroundingsWarning, type Cidr, type Surroundings } from '../net/networks';
 import { addressKey, clientAddress } from '../net/proxy';
 
 export { addressKey };
