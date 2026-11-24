@@ -26,6 +26,8 @@ export const person = sqliteTable('person', {
   // the admin goes (plain ids, no keys), so an admin can find whom a link let in. Null for everyone else.
   admittedLink: text('admitted_link'),
   admittedBy: text('admitted_by'),
+  // The mail domain that matched a link's mail-domain rule (slice 4a): never the address itself.
+  admittedDomain: text('admitted_domain'),
 }, (t) => [
   check('person_role', sql`${t.role} IN ('admin','adult','kid')`), uniqueIndex('person_handle').on(t.handle),
   check('person_state', sql`${t.state} IN ('waiting','active') AND (${t.state} = 'active' OR (${t.role} = 'adult' AND ${t.handle} IS NULL))`),
@@ -90,6 +92,8 @@ export const joinLink = sqliteTable('join_link', {
   automatic: integer('automatic').notNull().default(0),
   refuseNonMatches: integer('refuse_non_matches').notNull().default(0),
   networksJson: text('networks_json'),
+  // Slice 4a: an address at this domain, verified by a 6-digit code (household/join-code.ts); null: no mail rule.
+  mailDomain: text('mail_domain'),
 }, (t) => [check('join_link_uses', sql`${t.maxUses} BETWEEN 1 AND 10 AND ${t.uses} BETWEEN 0 AND ${t.maxUses}`)]);
 
 // What a waiting person's request says, for the admin who decides (the waiting list): the link they used and whether
@@ -100,7 +104,33 @@ export const joinRequest = sqliteTable('join_request', {
   joinLinkId: text('join_link_id').references(() => joinLink.id, { onDelete: 'set null' }),
   fromHomeNetwork: integer('from_home_network').notNull(),
   matchesRules: integer('matches_rules'),
+  // Slice 4a: the address a code verified, for the admin who decides; gone with the request.
+  verifiedAddress: text('verified_address'),
 });
+
+// A code asked for on a join page, before the passkey (slice 4a, household/join-code.ts): bound to the request token
+// only that page holds (its SHA-256 here) and to its link; the code kept only as an HMAC whose key is derived from the
+// sealing key. A row for a request that sent nothing has no address and no code, so it answers like any other. Gone
+// at the enrolment, or 30 minutes after it was made.
+export const joinCode = sqliteTable('join_code', {
+  id: text('id').primaryKey(),
+  requestHash: text('request_hash').notNull().unique(),
+  joinLinkId: text('join_link_id').references(() => joinLink.id, { onDelete: 'cascade' }),
+  address: text('address'),
+  mac: blob('mac', { mode: 'buffer' }),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  tries: integer('tries').notNull().default(0),
+  verifiedAt: text('verified_at'),
+}, (t) => [check('join_code_tries', sql`${t.tries} BETWEEN 0 AND 5`), index('join_code_address').on(t.address)]);
+
+// The codes sent in the last day (slice 4a): what the send limits count. An HMAC of the address, never the address.
+export const joinCodeSent = sqliteTable('join_code_sent', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  sentAt: text('sent_at').notNull(),
+  joinLinkId: text('join_link_id').notNull(),
+  addressMac: text('address_mac').notNull(),
+}, (t) => [index('join_code_sent_at').on(t.sentAt)]);
 
 export const householdSettings = sqliteTable('household_settings', {
   id: integer('id').primaryKey(),

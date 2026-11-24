@@ -2,7 +2,9 @@
 // from the household's networks, so until one is listed no link can be made; the page proposes the private range the
 // admin is on, for them to confirm. A new link is shown once (its token is never kept); revoking one declines the
 // people who wait after using it. A link's rules (slice 3) only narrow the household's: ranges inside the home network,
-// letting in at once (as an adult) whoever matches, and refusing whoever does not instead of letting them wait.
+// letting in at once (as an adult) whoever matches, and refusing whoever does not instead of letting them wait. With
+// SMTP set (slice 4a), a mail domain: an address there, verified by a code that goes out through the SMTP server the
+// form names (what leaves); never a public mail provider's.
 import { useCallback, useEffect, useId, useState } from 'react';
 import { api, message, type HomeNetworks, type JoinLink } from '../api';
 import { Notice } from '../ui';
@@ -45,6 +47,7 @@ export function JoinLinks({ changes, onChanged }: { changes: number; onChanged: 
                   <span className="row-sub wrap">
                     {[l.networks ? `only from ${l.networks.join(', ')}` : 'from the home network',
                       l.accept === 'automatic' ? 'lets in at once whoever matches' : 'you approve everyone',
+                      l.mailDomain ? `an address at ${l.mailDomain}, by a code` : null,
                       l.nonMatches === 'refuse' ? 'refuses the rest' : null].filter(Boolean).join(' · ')}
                   </span>
                 </span>
@@ -59,7 +62,7 @@ export function JoinLinks({ changes, onChanged }: { changes: number; onChanged: 
           </ul>
         )}
         {made && <MadeLink {...made} onDone={() => setMade(null)} />}
-        <NewLink disabled={!nets.networks.length} home={nets.networks.map((n) => n.cidr)} onMake={(body) => act(async () => setMade(await api('/people/join-links', { method: 'POST', body })))} />
+        <NewLink disabled={!nets.networks.length} home={nets.networks.map((n) => n.cidr)} smtpHost={nets.mailCodes?.host ?? null} onMake={(body) => act(async () => setMade(await api('/people/join-links', { method: 'POST', body })))} />
         <p className="group-foot">
           {nets.networks.length
             ? 'A join link opens only from the home network. Whoever opens it gives a name and makes a passkey, then waits here for you, unless the link lets in at once whoever matches its rules (always as an adult, never an admin). A link’s rules only narrow the home network. Making or revoking a link needs a sign-in in the last 10 minutes.'
@@ -145,17 +148,19 @@ function Surroundings({ nets }: { nets: HomeNetworks }) {
   );
 }
 
-interface NewLinkBody { days: number; uses: number; accept: 'approval' | 'automatic'; nonMatches: 'wait' | 'refuse'; networks?: string[] }
+interface NewLinkBody { days: number; uses: number; accept: 'approval' | 'automatic'; nonMatches: 'wait' | 'refuse'; networks?: string[]; mailDomain?: string }
 
-function NewLink({ disabled, home, onMake }: { disabled: boolean; home: string[]; onMake: (body: NewLinkBody) => Promise<void> }) {
+function NewLink({ disabled, home, smtpHost, onMake }: { disabled: boolean; home: string[]; smtpHost: string | null; onMake: (body: NewLinkBody) => Promise<void> }) {
   const id = useId();
   const [days, setDays] = useState('7');
   const [uses, setUses] = useState('5');
   const [accept, setAccept] = useState<NewLinkBody['accept']>('approval');
   const [nonMatches, setNonMatches] = useState<NewLinkBody['nonMatches']>('wait');
   const [only, setOnly] = useState('');
+  const [domain, setDomain] = useState('');
   const ranges = only.split(/[\s,]+/).filter(Boolean);
-  const body = (): NewLinkBody => ({ days: Number(days), uses: Number(uses), accept, nonMatches, ...(ranges.length ? { networks: ranges } : {}) });
+  const mailDomain = smtpHost ? domain.trim().replace(/^@/, '') : '';
+  const body = (): NewLinkBody => ({ days: Number(days), uses: Number(uses), accept, nonMatches, ...(ranges.length ? { networks: ranges } : {}), ...(mailDomain ? { mailDomain } : {}) });
   return (
     <form className="fields fields-2" onSubmit={(e) => { e.preventDefault(); void onMake(body()); }} noValidate aria-label="A new join link">
       <div className="field">
@@ -186,8 +191,20 @@ function NewLink({ disabled, home, onMake }: { disabled: boolean; home: string[]
           autoComplete="off" disabled={disabled} aria-describedby={`${id}-only-hint`} />
         <span className="hint" id={`${id}-only-hint`}>Ranges inside the home network, to narrow it; left empty, all of it. Outside the home network a link never opens.</span>
       </div>
+      {smtpHost && (
+        <div className="field">
+          <label className="field-label" htmlFor={`${id}-mail`}>Mail domain (optional)</label>
+          <input className="input mono" id={`${id}-mail`} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="example.org" maxLength={253}
+            autoComplete="off" disabled={disabled} aria-describedby={`${id}-mail-hint`} />
+          <span className="hint" id={`${id}-mail-hint`}>
+            Only someone who proves an address there, with a 6-digit code, matches. The address and the code leave Philobiblos
+            for {smtpHost}, the SMTP server it sends through. Anyone with an address at that domain counts (a school’s or an
+            employer’s too); a public mail provider’s cannot be used.
+          </span>
+        </div>
+      )}
       {accept === 'automatic' && (
-        <p className="hint wrap">Anyone with this link{ranges.length ? `, on ${ranges.join(' or ')},` : ', on the home network,'} becomes an adult of the household at once, without you seeing them first. A guest on the same Wi-Fi counts too.</p>
+        <p className="hint wrap">Anyone with this link{ranges.length ? `, on ${ranges.join(' or ')},` : ', on the home network,'}{mailDomain ? ` and an address at ${mailDomain},` : ''} becomes an adult of the household at once, without you seeing them first. A guest on the same Wi-Fi counts too.</p>
       )}
       <div className="btn-row"><button type="submit" className="btn btn-primary" disabled={disabled || !days || !uses}>Make a join link</button></div>
     </form>

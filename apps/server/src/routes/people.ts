@@ -102,8 +102,8 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
       // Whether they matched their link's own rules (slice 3); null when it has none beyond the household's (or from
       // Homeward). Never a reason to approve by itself.
       matchesRules: r && r.r.matchesRules !== null ? r.r.matchesRules === 1 : null,
-      // Slices 4a and 4b of philobiblos#34 fill this: a verified address.
-      verifiedAddress: null,
+      // The address a code verified (slice 4a; 4b: the edge's), kept on the request alone until it is decided or lapses.
+      verifiedAddress: r?.r.verifiedAddress ?? null,
       // Under HomersLab, the most they may be: their Homeward role.
       mayBeAdmin: !p.ceiling || p.ceiling === 'admin',
       };

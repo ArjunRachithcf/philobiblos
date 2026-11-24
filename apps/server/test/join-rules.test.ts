@@ -548,15 +548,15 @@ describe('the independent review', () => {
     const jordan = v.json().person.id as string;
     expect(personNamed(db, 'Jordan')[0]).toMatchObject({ admittedLink: id, admittedBy: 'p_sam' });
     const seen = async () => ((await a.inject({ url: '/api/me', headers: { cookie: sessionCookie(db, 'p_alex') } })).json().household as { id: string; letInByLink: unknown }[]).find((p) => p.id === jordan)!.letInByLink;
-    expect(await seen()).toEqual({ linkId: id, by: 'Sam', at: expect.any(String) });
+    expect(await seen()).toEqual({ linkId: id, by: 'Sam', at: expect.any(String), domain: null });
     // the link revoked: still known
     expect((await a.inject({ method: 'DELETE', url: `/api/people/join-links/${id}`, headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN } })).statusCode).toBe(204);
-    expect(await seen()).toEqual({ linkId: id, by: 'Sam', at: expect.any(String) });
+    expect(await seen()).toEqual({ linkId: id, by: 'Sam', at: expect.any(String), domain: null });
     // the admin removed: the link's id stays, the name goes
     db.delete(t.session).where(eq(t.session.personId, 'p_sam')).run();
     db.update(t.joinLink).set({ createdBy: 'p_alex' }).run();
     db.delete(t.person).where(eq(t.person.id, 'p_sam')).run();
-    expect(await seen()).toEqual({ linkId: id, by: null, at: expect.any(String) });
+    expect(await seen()).toEqual({ linkId: id, by: null, at: expect.any(String), domain: null });
     // someone an admin approved, or who was there before, has none
     const others = ((await a.inject({ url: '/api/me', headers: { cookie: sessionCookie(db, 'p_alex') } })).json().household as { id: string; letInByLink: unknown }[]).filter((p) => p.id !== jordan);
     expect(others.every((p) => p.letInByLink === null)).toBe(true);
@@ -581,7 +581,7 @@ describe('round 2: who a link let in is an admin\'s to see', () => {
       }
     }
     const admin = (await a.inject({ url: '/api/me', headers: { cookie: sessionCookie(db, 'p_alex') } })).json();
-    expect(admin.household.find((p: { id: string }) => p.id === jordan).letInByLink).toEqual({ linkId: id, by: 'Alex', at: expect.any(String) });
+    expect(admin.household.find((p: { id: string }) => p.id === jordan).letInByLink).toEqual({ linkId: id, by: 'Alex', at: expect.any(String), domain: null });
     expect(admin.person.letInByLink).toBeUndefined();
   });
 });

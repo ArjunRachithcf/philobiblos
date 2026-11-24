@@ -93,7 +93,7 @@ describe('contracts/openapi.yaml', () => {
 describe('deny by default (securitySchemes)', () => {
   it('only /health, the sign-in steps and the join steps are open; every other operation declares 401 and 403', () => {
     const open = ops.filter(isPublic).map((o) => o.op.operationId).sort();
-    expect(open).toEqual(['authSession', 'enrolOptions', 'enrolVerify', 'health', 'joinOpen', 'joinOptions', 'joinVerify', 'signInOptions', 'signInVerify', 'signOut']);
+    expect(open).toEqual(['authSession', 'enrolOptions', 'enrolVerify', 'health', 'joinCode', 'joinCodeCheck', 'joinOpen', 'joinOptions', 'joinVerify', 'signInOptions', 'signInVerify', 'signOut']);
     for (const o of ops.filter((x) => !isPublic(x))) expect(Object.keys(o.op.responses), o.op.operationId).toEqual(expect.arrayContaining(['401', '403']));
   });
 

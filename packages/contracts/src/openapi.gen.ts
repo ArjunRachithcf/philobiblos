@@ -146,8 +146,42 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Standalone: whether a household join link opens here (ADR 0011, philobiblos#34 slice 2). An unknown, expired, revoked, used-up or out-of-network link, and a full waiting list, all get the same 404, no sooner than any other answer. Nothing of the household in any answer. 20 in 10 minutes per client address and per link (429). Under HomersLab, 404. */
+        /** Standalone: whether a household join link opens here (ADR 0011, philobiblos#34 slice 2). An unknown, expired, revoked, used-up or out-of-network link, and a full waiting list, all get the same 404, no sooner than any other answer. Nothing of the household in any answer. 20 in 10 minutes per client address and per link (429). Under HomersLab, 404. A link with the mail-domain rule (slice 4a, only while SMTP is set) answers 200 with `askAddress` (never its domain): it opens for whoever would match once an address is verified. */
         post: operations["joinOpen"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/join/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Standalone, only while SMTP is set (404 otherwise; ADR 0011, philobiblos#34 slice 4a): asks for a 6-digit code at an address, for a link's mail-domain rule. The answer is the same request token whether a mail went out or not (a link that does not open, another domain, a public provider's, a member's address, a full list, a send limit reached), no sooner than any other answer, and the mail is sent after it. A code goes only to one plain address at the link's domain, the only recipient, as fixed text holding the code alone; it works 10 minutes, 5 tries, for this request alone, and a new one ends the one before at that address. At most 3 codes an hour and 10 a day per address, 10 a day per link, 30 a day per household. 10 requests in 10 minutes per client address and per link (429). */
+        post: operations["joinCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/join/code/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Standalone, only while SMTP is set (404 otherwise; slice 4a): tries a code for a request, compared in constant time. Every try counts (5 a request); the right one is spent. A wrong, expired, used-up or never-sent code all get the same 400. 10 in 10 minutes per client address and per link (429). */
+        post: operations["joinCodeCheck"];
         delete?: never;
         options?: never;
         head?: never;
@@ -250,7 +284,7 @@ export interface paths {
         /** Admins, standalone: the household's join links, open ones and closed ones someone who came with them still waits for. Never a token. Under HomersLab, 404. */
         get: operations["listJoinLinks"];
         put?: never;
-        /** Admins, standalone: a household join link (7 days and 5 uses by default; 1 to 14 days, 1 to 10 uses) and its rules, which only narrow the household's (ADR 0011): it always opens only from the home network; `networks` narrows that to ranges inside it; `accept: automatic` lets in at once, as an adult (never an admin), whoever matches every rule; `nonMatches: refuse` refuses whoever does not, instead of letting them wait. The link is in this response only. Needs a sign-in in the last 10 minutes (403), and a home network listed (409). */
+        /** Admins, standalone: a household join link (7 days and 5 uses by default; 1 to 14 days, 1 to 10 uses) and its rules, which only narrow the household's (ADR 0011): it always opens only from the home network; `networks` narrows that to ranges inside it; `accept: automatic` lets in at once, as an adult (never an admin), whoever matches every rule; `nonMatches: refuse` refuses whoever does not, instead of letting them wait; `mailDomain` (slice 4a, only while SMTP is set: 400 otherwise) asks for an address at that domain, verified by a code, and never a public mail provider's (400). The link is in this response only. Needs a sign-in in the last 10 minutes (403), and a home network listed (409). */
         post: operations["createJoinLink"];
         delete?: never;
         options?: never;
@@ -1309,12 +1343,16 @@ export interface components {
             fromHomeNetwork: boolean | null;
             /** @description whether they matched their link's own rules (its ranges inside the home network); null: the link has none beyond the household's, or from Homeward. Never a reason to approve by itself */
             matchesRules: boolean | null;
-            /** @description the address a rule verified (slices 4a and 4b) */
-            verifiedAddress: null;
+            /** @description the address a code verified for their link's mail-domain rule (slice 4a; 4b: the edge's); kept on the request alone, gone once they are decided or lapse */
+            verifiedAddress: string | null;
             /** @description under HomersLab, false unless their Homeward role is admin (the ceiling) */
             mayBeAdmin: boolean;
         };
         HomeNetworks: {
+            /** @description slice 4a, what leaves: the SMTP server a mail-domain rule's codes go through (the address and a 6-digit code); null: SMTP unset, the rule is not offered */
+            mailCodes: {
+                host: string;
+            } | null;
             /** @description Philobiblos sees the admin as a hop (loopback or the container's own networks: a proxy that is not PHILOBIBLOS_TRUSTED_PROXY, a published port), the trusted proxy forwarded no address it can read, or the container's surroundings could not be read: no join link opens for anyone that way */
             behindProxy: boolean;
             /** @description PHILOBIBLOS_TRUSTED_PROXY is set: its X-Forwarded-For (right-most untrusted entry) names the client */
@@ -1349,6 +1387,8 @@ export interface components {
             nonMatches: "wait" | "refuse";
             /** @description its own ranges inside the household's networks; null: all of them */
             networks: string[] | null;
+            /** @description slice 4a: an address at this domain, verified by a code; null: no mail rule */
+            mailDomain: string | null;
         };
         Person: {
             id: string;
@@ -1368,6 +1408,8 @@ export interface components {
                 /** @description the admin who made the link; null once they are gone */
                 by: string | null;
                 at: string | null;
+                /** @description slice 4a: the mail domain that matched (never the address); null: none */
+                domain: string | null;
             } | null;
         };
         PersonInput: {
@@ -2389,6 +2431,18 @@ export interface operations {
             };
         };
         responses: {
+            /** @description The link opens here and asks for an address its mail-domain rule verifies with a code */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        askAddress: true;
+                    };
+                };
+            };
             /** @description The link opens here */
             204: {
                 headers: {
@@ -2398,6 +2452,118 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             /** @description The link does not open here (whatever the reason), or under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many tries */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    joinCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                    /** @description one plain address (no display name, line break, comma or space) */
+                    address: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The request (whether or not a mail went out) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description kept by this page only: /join/code/check and /join/options carry it */
+                        request: string;
+                    };
+                };
+            };
+            /** @description Not one plain address */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description SMTP is not set, or under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many tries */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    joinCodeCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    request: string;
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The code was right: the request carries a verified address */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not the code (whatever the reason) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description SMTP is not set, or under HomersLab */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2429,6 +2595,8 @@ export interface operations {
                 "application/json": {
                     token: string;
                     name: string;
+                    /** @description slice 4a: the request token of /join/code whose code was right; its address counts for the mail-domain rule at the enrolment */
+                    request?: string;
                 };
             };
         };
@@ -2742,6 +2910,8 @@ export interface operations {
                     nonMatches?: "wait" | "refuse";
                     /** @description CIDRs, each inside one of the household's networks (400 otherwise); left out: all of them */
                     networks?: string[];
+                    /** @description an address at this domain, verified by a code (slice 4a); left out: no mail rule */
+                    mailDomain?: string | null;
                 };
             };
         };
@@ -2763,6 +2933,7 @@ export interface operations {
                         /** @enum {unknown} */
                         nonMatches: "wait" | "refuse";
                         networks: string[] | null;
+                        mailDomain: string | null;
                     };
                 };
             };
