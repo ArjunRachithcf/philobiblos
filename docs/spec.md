@@ -96,6 +96,8 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
 4. The order total must be ≤ max; if it is < min, add the next best kids' book that fits.
    Each month starts at the set budget (or its one-month override): unspent money does not roll over.
 5. A push notification goes to adults. They adjust, then **Compose**: their own mail app opens with the order filled in.
+   Or, for any shop or none, **Make a plain list** (philobiblos#27): the books alone as mail text to no recipient, a
+   printed page or a CSV, and each book bought is marked owned by a tap (undone by another).
 6. Philobiblos reads the bookshop's reply (quote with prices and delivery), updates the total and marks missing books;
    they roll over to next month's order. The invoice turns order lines into copies. A shop Philobiblos reads no mail
    from, or none: the quote or the invoice is typed in or imported as a CSV on This month (philobiblos#27), with the
@@ -164,7 +166,7 @@ with IMAP. Mail (the bookshop's mail forwarded to a Philobiblos-only mailbox, re
 drafts), price lookup (an enabled connector's search page, read-only, best effort), metadata (Open Library,
 cached; ISBNs and titles only, listed under what leaves, an admin can turn it off), phone share, manual add, imports
 (Goodreads, StoryGraph, generic CSV, pasted), and an order's quote or an invoice typed in or imported as a CSV (any shop,
-or none). Optional outgoing SMTP, off by default, sends one thing only: a join
+or none), the order as a plain list (mail text, printed, CSV) with its books marked owned by a tap. Optional outgoing SMTP, off by default, sends one thing only: a join
 rule's 6-digit code (ADR 0011). A book can be ordered from the bookshop by email, so web availability never blocks a
 pick.
 

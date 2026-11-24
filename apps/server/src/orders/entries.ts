@@ -27,6 +27,7 @@ import { invoiceOrders, keys, matchBook, orderBooks, quoteOrder, receive, type B
 import { safeField } from '../mail/read';
 import { norm } from '../seed/import';
 import { CsvError, parseCsv } from './csv';
+import { unguardCell } from './list';
 
 /** At most 100 lines (a parser's books a mail), 20 copies a line (the Inbox's), a price at most the budget's ceiling. */
 export const ENTRY_LIMITS = { lines: 100, qty: 20, price: BUDGET_CEILING_C, number: 40, shop: 80, title: 300, author: 200 } as const;
@@ -170,7 +171,8 @@ function csvLines(kind: EntryKind, text: unknown): { lines: unknown[]; ignored: 
   }
   if (!seen.has('title') && !seen.has('isbn')) return bad('csv: a title or isbn column names the books');
   if (rows.length > ENTRY_LIMITS.lines) return bad(`csv: at most ${ENTRY_LIMITS.lines} rows`);
-  return { lines: rows.map((r) => Object.fromEntries(fields.flatMap((f, i) => (f && r[i] !== undefined && r[i] !== '' ? [[f, r[i]]] : [])))), ignored };
+  // A cell Philobiblos's own list wrote with the formula guard (orders/list.ts) reads as it was.
+  return { lines: rows.map((r) => Object.fromEntries(fields.flatMap((f, i) => (f && r[i] !== undefined && r[i] !== '' ? [[f, unguardCell(r[i])]] : [])))), ignored };
 }
 
 /** Today in UTC, plus a day: an invoice dated in the household's tomorrow is still today somewhere. */

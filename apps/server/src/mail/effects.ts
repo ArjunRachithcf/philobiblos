@@ -11,7 +11,7 @@
 // signed In-Reply-To (a bookshop mail already tied to it), or the one of the month its signed Subject names as Compose
 // wrote it ("Book order, November 2026"); only the bookshop's signed mail ties anything (Compose copies the request to
 // no one). With no order, every line is unmatched.
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -118,8 +118,9 @@ export const orderBooks = (tx: Tx, orderId: string): string[] =>
 export function quoteOrder(tx: Tx, order: { id: string }, lines: { bookId: string | null; available: boolean; priceC: number | null; delivery: string | null }[], now: string, threadRef: string | null): void {
   for (const l of lines) {
     if (!l.bookId) continue;
+    // A line already delivered (a book bought from the plain list, a tap) stays as it is: the household owns it.
     tx.update(t.orderLine).set({ state: l.available ? 'quoted' : 'unavailable', quotedC: l.available ? l.priceC : null, delivery: l.delivery })
-      .where(and(eq(t.orderLine.orderId, order.id), eq(t.orderLine.bookId, l.bookId))).run();
+      .where(and(eq(t.orderLine.orderId, order.id), eq(t.orderLine.bookId, l.bookId), ne(t.orderLine.state, 'delivered'))).run();
     if (l.available && l.priceC != null) {
       const v = { priceC: l.priceC, availability: l.delivery, seenAt: now };
       tx.insert(t.bookOffer).values({ bookId: l.bookId, source: 'quote', ...v }).onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: v }).run();

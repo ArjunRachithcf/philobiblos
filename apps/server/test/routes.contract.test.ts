@@ -23,6 +23,11 @@ beforeAll(async () => {
   db0 = household();
   inboxItems(db0);
   seal(db0, Buffer.from(TEST_SEALING_KEY, 'base64'), 'bookshop_email', 'orders@bookshop.example');
+  // A plain list made in February (no-shop mode), a book of it still to buy, for PUT /orders/{id}/lines/{bookId}.
+  // (Its own book: one in a composed order is no candidate for this month's picks, which POST /orders needs.)
+  db0.insert(t.book).values({ id: 'b_tap', title: 'Paper Boats of the Commons', authorsJson: '[]', audience: 'adult', normKey: 'boats', createdAt: new Date().toISOString() }).run();
+  db0.insert(t.order).values({ id: 'o_tap', month: '2026-02', status: 'drafted', createdAt: new Date().toISOString() }).run();
+  db0.insert(t.orderLine).values({ orderId: 'o_tap', bookId: 'b_tap', forPerson: 'p_alex', estimateC: 2500 }).run();
   admin = sessionCookie(db0, 'p_alex');
   adult = sessionCookie(db0, 'p_sam');
   kid = sessionCookie(db0, 'p_kid1');
@@ -52,7 +57,10 @@ describe('contracts/openapi.yaml', () => {
     const cookie = o.op.operationId === 'signOutEverywhere' ? outsider() : admin;
     const res = await built.app.inject({ ...req, headers: { ...req.headers, ...(isPublic(o) ? {} : { cookie }) } });
     if (!isPublic(o)) expect(res.statusCode, res.body).toBeLessThan(300);
-    expectValid(o, res.statusCode, res.body ? res.json() : undefined);
+    // A JSON answer validates against its schema; the list's CSV is text (its own tests: no-shop.test.ts).
+    const json = String(res.headers['content-type'] ?? '').startsWith('application/json');
+    if (!json) expect(o.op.responses[String(res.statusCode)]?.content?.['application/json'], `${o.op.operationId}: ${res.headers['content-type']}`).toBeUndefined();
+    expectValid(o, res.statusCode, res.body && json ? res.json() : undefined);
     if (o.op.operationId === 'listBacklog') expect(res.json().queryErrors).toEqual(['unknown qualifier "nonsense:"']);
   });
 });
