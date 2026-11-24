@@ -300,7 +300,6 @@ describe('the mail boundary (architecture)', () => {
     expect(src.filter((x) => /from ['"]imapflow['"]/.test(x.s)).map((x) => x.f)).toEqual(['net/imap.ts']);
     expect(src.filter((x) => /from ['"]mailauth['"]/.test(x.s)).map((x) => x.f)).toEqual(['mail/verify.ts']);
     expect(src.filter((x) => /from ['"]mailauth\//.test(x.s)).map((x) => x.f)).toEqual(['net/domains.ts']);
-    expect(src.find((x) => x.f === 'net/domains.ts')!.s).toMatch(/from 'mailauth\/lib\/tools\.js'/);
     expect(src.filter((x) => /from ['"]node:dns/.test(x.s)).map((x) => x.f).sort()).toEqual(['net/dns.ts', 'net/egress.ts']);
   });
   it('the IMAP connection reads and never changes: no flag, move, copy, delete, expunge or append', () => {

@@ -152,11 +152,17 @@ describe('a connector is data, read strictly', () => {
   });
 
   it('the loader does not load the mail verifier: domain alignment is a shared module (philobiblos#38)', () => {
-    const source = readFileSync(new URL('../src/connectors/load.ts', import.meta.url), 'utf8');
-    // A type-only import would be erased; a value import from mail/ loads the verifier (and mailauth's) with the loader.
-    expect(source).not.toMatch(/^import (?!type )[^;]*from '\.\.\/mail\//m);
+    // A type-only import is erased; any other reference to mail/ (an import, an export from, a dynamic import, in any
+    // quotes) loads the verifier with the loader. Checked in the loader and in the module it now takes alignment from.
+    for (const f of ['../src/connectors/load.ts', '../src/net/domains.ts']) {
+      const source = readFileSync(new URL(f, import.meta.url), 'utf8').replace(/^import type [^;]*;$/gm, '');
+      expect(source, f).not.toMatch(/['"`](?:\.\.?\/)+mail\//);
+    }
     expect(relaxedAligned('mail.quillmere.example', 'quillmere.example')).toBe(true);
+    expect(relaxedAligned('Mail.Quillmere.Example', 'quillmere.example')).toBe(true);
     expect(relaxedAligned('quillmere.example.evil.example', 'quillmere.example')).toBe(false);
+    // The public suffix list's private domains count: two customers of one hosting service are two organizations.
+    expect(relaxedAligned('evil.github.io', 'shop.github.io')).toBe(false);
     expect(relaxedAligned('', 'quillmere.example')).toBe(false);
   });
 });
