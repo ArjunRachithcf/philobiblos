@@ -296,9 +296,11 @@ describe('the mail boundary (architecture)', () => {
   const root = fileURLToPath(new URL('../src/', import.meta.url));
   const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => { const p = join(dir, f); return statSync(p).isDirectory() ? files(p) : /\.ts$/.test(f) ? [p] : []; });
   const src = files(root).map((f) => ({ f: relative(root, f), s: readFileSync(f, 'utf8') }));
-  it('imapflow only in net/imap.ts; mailauth only in mail/verify.ts; DNS only in net/', () => {
+  it('imapflow only in net/imap.ts; mailauth only in mail/verify.ts, its alignment only in net/domains.ts; DNS only in net/', () => {
     expect(src.filter((x) => /from ['"]imapflow['"]/.test(x.s)).map((x) => x.f)).toEqual(['net/imap.ts']);
-    expect(src.filter((x) => /from ['"]mailauth/.test(x.s)).map((x) => x.f)).toEqual(['mail/verify.ts']);
+    expect(src.filter((x) => /from ['"]mailauth['"]/.test(x.s)).map((x) => x.f)).toEqual(['mail/verify.ts']);
+    expect(src.filter((x) => /from ['"]mailauth\//.test(x.s)).map((x) => x.f)).toEqual(['net/domains.ts']);
+    expect(src.find((x) => x.f === 'net/domains.ts')!.s).toMatch(/from 'mailauth\/lib\/tools\.js'/);
     expect(src.filter((x) => /from ['"]node:dns/.test(x.s)).map((x) => x.f).sort()).toEqual(['net/dns.ts', 'net/egress.ts']);
   });
   it('the IMAP connection reads and never changes: no flag, move, copy, delete, expunge or append', () => {

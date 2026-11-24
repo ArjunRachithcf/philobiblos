@@ -17,7 +17,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdir
 import { join } from 'node:path';
 import { parseDocument } from 'yaml';
 import { checkConnectorShape, priceAsks, priceUrlShape, type Connector } from '@philobiblos/contracts/connector';
-import { relaxedAligned } from '../mail/verify';
+import { relaxedAligned } from '../net/domains';
 import { fold } from './text';
 import { validCurrency } from '../household/currency';
 

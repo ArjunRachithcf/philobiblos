@@ -16,6 +16,7 @@ import { openDb } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { refreshMail } from '../src/mail/job';
 import { mailRules, classify } from '../src/mail/parse';
+import { relaxedAligned } from '../src/net/domains';
 import { createEgress, egressRules, EgressError } from '../src/net/egress';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
 import { CFG, CONNECTORS, HOUSEHOLD, SEALERS, evil, fakeBox, message, resolver, sealed, signed } from './mailkit';
@@ -69,6 +70,9 @@ describe('a connector is data, read strictly', () => {
     ['a right-to-left override in its name', () => edited('name: Quillmere Books', 'name: "Quillmere \\u202Eskoob"'), /schema/],
     ['a zero-width space in a phrase', () => edited('confirm_phrases: [we have now ordered]', 'confirm_phrases: ["we have\\u200Bnow ordered"]'), /schema/],
     ['a soft hyphen in a word', () => edited('by: von', 'by: "v\\u00ADon"'), /schema/],
+    ['a zero-width joiner in a summary word', () => edited('rechnungsbetrag,', '"rechnungs\\u200Dbetrag",'), /schema/],
+    ['a word joiner in a money symbol', () => edited('before: [CHF, Fr.]', 'before: [CHF, "Fr\\u2060."]'), /schema/],
+    ['a left-to-right mark in a subject template', () => edited("subjects: ['Ihre Quillmere-Rechnung Nr. {number}',", 'subjects: ["Ihre Quillmere-Rechnung\\u200E Nr. {number}",'), /schema/],
     // A signing domain must be aligned with one of its mail domains (relaxed: the same organizational domain), or its
     // signature could never count for the shop's From: a shared sending service's domain would let its customers forge it.
     ['a signing domain not aligned with any of its mail domains', () => edited('  domains: [quillmere.example]', '  domains: [quillmere.example]\n  dkim_domains: [quillmere.example, mailer.example]'), /signing domain mailer\.example is not aligned/],
@@ -146,10 +150,20 @@ describe('a connector is data, read strictly', () => {
     const reg = loadConnectors({ builtin: null, local }, { lstat });
     expect(reg.all.map((c) => [c.id, c.problem])).toEqual([['gone', expect.stringMatching(/cannot be read/)], ['lindenhof', null]]);
   });
+
+  it('the loader does not load the mail verifier: domain alignment is a shared module (philobiblos#38)', () => {
+    const source = readFileSync(new URL('../src/connectors/load.ts', import.meta.url), 'utf8');
+    // A type-only import would be erased; a value import from mail/ loads the verifier (and mailauth's) with the loader.
+    expect(source).not.toMatch(/^import (?!type )[^;]*from '\.\.\/mail\//m);
+    expect(relaxedAligned('mail.quillmere.example', 'quillmere.example')).toBe(true);
+    expect(relaxedAligned('quillmere.example.evil.example', 'quillmere.example')).toBe(false);
+    expect(relaxedAligned('', 'quillmere.example')).toBe(false);
+  });
 });
 
 describe('a connector\'s words are matched in linear time', () => {
   const HUGE = 1 << 20;
+  const LINEAR_BOUND_MS = 3000;
   // Words chosen to make a backtracking pattern slow, were they patterns: they are literals here.
   const nasty = ['(a+)+$', 'a'.repeat(59) + 'b', '.*.*.*=.*', 'a?'.repeat(20) + 'a'.repeat(20)];
   it.each([
@@ -158,10 +172,13 @@ describe('a connector\'s words are matched in linear time', () => {
     ['a subject template', () => { const f = subjectMatcher(`${'a'.repeat(50)} {number} ${'a'.repeat(50)}`); return () => f(`${'a'.repeat(50)} ${'1 '.repeat(HUGE / 2)}x`); }],
     ['amounts', () => { const f = amountFinder({ before: ['CHF', 'a.a'], after: ['CHF'] }); return () => f('1.1'.repeat(HUGE / 3) + 'a.a 1'); }],
   ])('%s, on a megabyte of hostile text', (_n, make) => {
+    // A linear match takes some 70 ms here on 16 cores; a backtracking one on a megabyte takes minutes (even a quadratic
+    // one is ~10^12 steps). So the bound is loose, 3 s, for a slow and loaded 2-core runner with a GC pause
+    // (philobiblos#38): it still tells the two apart, and never fails a linear match.
     const run = make();
-    const t0 = Date.now();
+    const t0 = performance.now();
     run();
-    expect(Date.now() - t0).toBeLessThan(500);
+    expect(performance.now() - t0).toBeLessThan(LINEAR_BOUND_MS);
   });
 
   it('a word is a literal: its pattern characters match only themselves', () => {
