@@ -114,14 +114,14 @@ export function pickOffer(tiles: Tile[], title: string, authors: string[], r: Ti
   return { externalId: best.externalId, priceC: price ? parsePriceC(price[1]) : null, availability: r.availability.exec(best.text)?.[1]?.trim() ?? null };
 }
 
-/**
- * The search URL for a book, in the one place the template leaves: its title and first author, form-encoded (spaces as
- * +), or for `{isbn}` its ISBN-13 alone (null without one: nothing is asked).
- */
-function searchUrl(template: string, b: { title: string; authors: string[]; isbn13?: string | null }): string | null {
-  if (priceAsks(template) === 'isbn') return b.isbn13 && /^97[89]\d{10}$/.test(b.isbn13) ? template.replace('{isbn}', b.isbn13) : null;
+/** The search URL for a book: its title and first author, form-encoded (spaces as +), in the one place the template leaves. */
+function titleUrl(template: string, b: { title: string; authors: string[] }): string {
   const q = [b.title, b.authors[0] ?? ''].join(' ').replace(/\s+/g, ' ').trim().slice(0, 200);
   return template.replace('{query}', new URLSearchParams([['q', q]]).toString().slice(2));
+}
+/** The lookup URL by ISBN: the book's ISBN-13 alone, or null without a valid one (nothing is asked). */
+function isbnUrl(template: string, isbn13: string | null | undefined): string | null {
+  return isbn13 && bookIsbn(isbn13) === isbn13 ? template.replace('{isbn}', isbn13) : null;
 }
 
 /** A connector's price lookup: its search page, asked with the title and first author, through the one egress client. */
@@ -130,7 +130,7 @@ export function searchTiles(id: string, c: Pick<Connector, 'money'> & { prices: 
   return {
     id,
     async find(b) {
-      const page = await egress.get(searchUrl(c.prices.url, b)!, 'html');
+      const page = await egress.get(titleUrl(c.prices.url, b), 'html');
       return pickOffer(parseTiles(page.body.toString('utf8'), r), b.title, b.authors, r);
     },
   };
@@ -156,20 +156,19 @@ const idOf = (p: LdNode): string | null => {
  * The offer for this book among a page's schema.org markup: Books and Products (on their own, in an ItemList's
  * ListItems, or in @graph) whose normalised name is the title and, when an author is known, whose author holds the
  * first author's surname, never an e-book or an audiobook (`bookFormat`); their offers (an Offer, a list of them, or an AggregateOffer's lowPrice) in this currency only;
- * the cheapest of those. With `isbn13` (a lookup by ISBN, null for a book without one), the product that carries that
- * ISBN instead, whatever its name. A price it cannot read is no price. Nothing of the page but these fields is kept.
+ * the cheapest of those. With `by.isbn13` (a lookup by ISBN), the product that carries that ISBN instead, whatever its name. A price it cannot read is no price. Nothing of the page but these fields is kept.
  */
-export function pickProduct(nodes: LdNode[], title: string, authors: string[], currency: string, isbn13?: string | null): Offer | null {
+export function pickProduct(nodes: LdNode[], title: string, authors: string[], currency: string, by?: { isbn13: string }): Offer | null {
   const want = norm(title);
   const surname = authors[0] ? norm(authors[0].split(/\s+/).at(-1) ?? '') : '';
   const products = nodes.flatMap((n) => (isType(n, 'ItemList') ? list(n.itemListElement, 100).map((e) => node(e)).map((e) => (e && isType(e, 'ListItem') ? node(e.item) : e)) : [n]))
     .filter((p): p is LdNode => isType(p, 'Book', 'Product'));
   let best: (Offer & { at: number }) | null = null;
   for (const p of products.slice(0, 100)) {
-    if (isbn13 !== undefined) {
+    if (by) {
       // Asked by ISBN: the product that carries the book's ISBN (its GTIN-13 or ISBN, an ISBN-10 read as its ISBN-13),
       // whatever its name; one with another ISBN or none is never the book.
-      if (!isbn13 || ![p.gtin13, p.isbn].some((v) => { const s = text(v); return s != null && bookIsbn(s) === isbn13; })) continue;
+      if (![p.gtin13, p.isbn].some((v) => { const s = text(v); return s != null && bookIsbn(s) === by.isbn13; })) continue;
     } else {
       if (norm(text(p.name) ?? '') !== want) continue;
       // The author as the tiles' lookup takes it: the surname anywhere in the name ("Okafor, Mira" too).
@@ -189,9 +188,9 @@ export function pickProduct(nodes: LdNode[], title: string, authors: string[], c
 }
 
 /** The offer for this book on a search page (pickProduct), or none when the page holds more markup than is read. */
-export function pageOffer(html: string, title: string, authors: string[], currency: string, isbn13?: string | null): Offer | null {
+export function pageOffer(html: string, title: string, authors: string[], currency: string, by?: { isbn13: string }): Offer | null {
   const { nodes, overflow } = schemaNodes(ldBlocks(html.slice(0, PAGE_MAX), html.length > PAGE_MAX));
-  return overflow ? null : pickProduct(nodes, title, authors, currency, isbn13);
+  return overflow ? null : pickProduct(nodes, title, authors, currency, by);
 }
 
 /** A connector's price lookup through its search page's Product markup (`prices.kind: jsonld`), in its currency. */
@@ -201,10 +200,14 @@ export function markupPrices(id: string, c: Pick<Connector, 'locale'> & { prices
     id,
     asks,
     async find(b) {
-      const url = searchUrl(c.prices.url, b);
+      if (asks === 'title') {
+        const page = await egress.get(titleUrl(c.prices.url, b), 'html');
+        return pageOffer(page.body.toString('utf8'), b.title, b.authors, c.locale.currency);
+      }
+      const url = isbnUrl(c.prices.url, b.isbn13);
       if (url === null) return null;
       const page = await egress.get(url, 'html');
-      return pageOffer(page.body.toString('utf8'), b.title, b.authors, c.locale.currency, asks === 'isbn' ? b.isbn13 : undefined);
+      return pageOffer(page.body.toString('utf8'), b.title, b.authors, c.locale.currency, { isbn13: b.isbn13! });
     },
   };
 }

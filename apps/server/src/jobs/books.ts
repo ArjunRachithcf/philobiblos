@@ -33,7 +33,8 @@ export function booksNeedingPrices(db: Db, source: string, now: Date, asks: Pric
   const fresh = new Set(db.select({ id: t.bookOffer.bookId, seen: t.bookOffer.seenAt }).from(t.bookOffer)
     .where(and(eq(t.bookOffer.source, source), inArray(t.bookOffer.bookId, ids))).all().filter((o) => o.seen >= cutoff).map((o) => o.id));
   // A source that asks by ISBN has nothing to ask about a book without one.
-  return db.select().from(t.book).where(inArray(t.book.id, ids.filter((id) => !fresh.has(id)))).all().filter((b) => asks !== 'isbn' || b.isbn13)
+  const wanted = inArray(t.book.id, ids.filter((id) => !fresh.has(id)));
+  return db.select().from(t.book).where(asks === 'isbn' ? and(wanted, isNotNull(t.book.isbn13)) : wanted).all()
     .sort((a, b) => a.id.localeCompare(b.id)).slice(0, PER_RUN.prices);
 }
 

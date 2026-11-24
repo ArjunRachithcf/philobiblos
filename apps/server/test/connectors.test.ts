@@ -95,7 +95,9 @@ describe('a connector is data, read strictly', () => {
       if (Array.isArray(s)) { s.forEach((x, i) => walk(x, `${at}/${i}`)); return; }
       if (typeof s !== 'object' || s === null) return;
       const o = s as Record<string, unknown>;
-      if ((o.type === 'object' || 'properties' in o || 'required' in o) && o.additionalProperties !== false) open.push(at || '/');
+      const object = o.type === 'object' || (Array.isArray(o.type) && o.type.includes('object'));
+      if ((object || 'properties' in o || 'required' in o || 'dependentRequired' in o) && o.additionalProperties !== false) open.push(at || '/');
+      // A schema with no type that only points elsewhere ($ref, allOf/oneOf/anyOf) is checked where it points (walked too).
       for (const k of ['patternProperties', 'unevaluatedProperties', 'propertyNames']) if (k in o) open.push(`${at}/${k}`);
       for (const [k, v] of Object.entries(o)) {
         if (k === 'properties' || k === '$defs') for (const [name, sub] of Object.entries(v as Record<string, unknown>)) walk(sub, `${at}/${k}/${name}`);

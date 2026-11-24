@@ -10,6 +10,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
+import { priceAsks } from '@philobiblos/contracts/connector';
 import { describe, expect, it } from 'vitest';
 import { parseTiles, pickOffer, pickProduct, tileRules } from '../src/books/prices';
 import { classify, mailRules, ownLines, parseInvoice, parseMarkup, parseQuote, parseShop } from '../src/mail/parse';
@@ -20,7 +21,7 @@ import { createEgress, egressRules } from '../src/net/egress';
 import { CONNECTORS, HOUSEHOLD, evil, message, resolver, shop, signed } from './mailkit';
 
 const DIR = fileURLToPath(new URL('../../../connectors', import.meta.url));
-interface Fixture { from?: string; subject?: string; text?: string; html?: string; rows?: string[][]; title?: string; authors?: string[]; page?: string; expect: unknown }
+interface Fixture { from?: string; subject?: string; text?: string; html?: string; rows?: string[][]; title?: string; authors?: string[]; isbn13?: string; page?: string; expect: unknown }
 const fixtures = (id: string): [string, Fixture][] => {
   let names: string[] = [];
   try { names = readdirSync(join(DIR, id, 'fixtures')).filter((n) => n.endsWith('.yaml')).sort(); } catch { /* none */ }
@@ -94,7 +95,13 @@ describe.each(shipped.map((c) => [c.id, c] as const))('connector %s', (id, loade
 
   it.each(fixtures(id).filter(([, f]) => f.page))('%s: the price lookup picks the expected offer', (_n, f) => {
     const p = c.prices!;
-    if (p.kind === 'jsonld') { expect(pickProduct(schemaNodes(ldBlocks(f.page!)).nodes, f.title!, f.authors ?? [], c.locale.currency)).toEqual(f.expect); return; }
+    // A lookup by ISBN reads as it runs: the product carrying the fixture's ISBN (`isbn13`, which it then needs).
+    if (p.kind === 'jsonld') {
+      const by = priceAsks(p.url) === 'isbn' ? { isbn13: f.isbn13! } : undefined;
+      if (by) expect(f.isbn13).toMatch(/^97[89]\d{10}$/);
+      expect(pickProduct(schemaNodes(ldBlocks(f.page!)).nodes, f.title!, f.authors ?? [], c.locale.currency, by)).toEqual(f.expect);
+      return;
+    }
     const rules = tileRules({ money: c.money, prices: p });
     expect(pickOffer(parseTiles(f.page!, rules), f.title!, f.authors ?? [], rules)).toEqual(f.expect);
   });

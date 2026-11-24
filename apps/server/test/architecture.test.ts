@@ -58,13 +58,17 @@ describe('no core module names a bookshop or a mail provider', () => {
     // signs a currency is written with.
     const codes = new Set(Intl.supportedValuesOf('currency').map((c) => c.toLowerCase()));
     const signs = /[€£¥₹₩₽₺₪]|\bFr\.|\bUS\$/;
-    // Codes that are also ordinary words or names (a JPEG's start of scan, SQL's ALL, TRY, a token's `aud`, a CSS `btn`):
-    // never taken for money.
-    const notMoney = new Set(['all', 'aud', 'bob', 'btn', 'cup', 'gel', 'mad', 'mop', 'pen', 'sos', 'top', 'try']);
-    const parts = (name: string) => name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').split(/[\s_$]+/).map((p) => p.toLowerCase());
+    // Codes that are also ordinary words (a JPEG's start of scan, SQL's ALL, TRY): never taken for money, as a part of
+    // a name or as a word. Two more only as the whole name, in lower case: a token's `aud` claim and a CSS class `btn`
+    // (`priceAud`, `AUD_LIMIT` and `AUD` are still money).
+    const notMoney = new Set(['all', 'bob', 'cup', 'gel', 'mad', 'mop', 'pen', 'sos', 'top', 'try']);
+    const asName = new Set(['aud', 'btn']);
+    const parts = (name: string) => name.replace(/([a-z])([A-Z0-9])/g, '$1 $2').replace(/([0-9])([A-Za-z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').split(/[\s_$]+/).map((p) => p.toLowerCase());
+    const named = (id: string) => (asName.has(id) ? undefined : parts(id).find((p) => codes.has(p) && !notMoney.has(p)));
+    // And the codes that are never a word, anywhere in a name or a string, whatever surrounds them (`pricechf`, `usd2eur`).
+    const anywhere = /chf|usd|gbp|jpy/i;
     const hits = core().flatMap((f) => readFileSync(f, 'utf8').split('\n').flatMap((line, i) => {
-      const named = (line.match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []).flatMap(parts).find((p) => codes.has(p) && !notMoney.has(p));
-      const m = named ?? signs.exec(line)?.[0];
+      const m = (line.match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []).map(named).find(Boolean) ?? signs.exec(line)?.[0] ?? anywhere.exec(line)?.[0];
       return m ? [`${relative(ROOT, f)}:${i + 1}: ${m}`] : [];
     }));
     expect(hits).toEqual([]);
