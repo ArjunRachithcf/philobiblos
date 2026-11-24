@@ -562,3 +562,26 @@ describe('the independent review', () => {
     expect(others.every((p) => p.letInByLink === null)).toBe(true);
   });
 });
+
+describe('round 2: who a link let in is an admin\'s to see', () => {
+  it('only an admin\'s /me household list carries letInByLink; no other answer, the adult\'s or the newcomer\'s, does', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    const { id, token } = await makeLink(a, db, { accept: 'automatic' });
+    const v = await join(a, token, 'Jordan');
+    expect(v.body).not.toContain('letInByLink');
+    expect(v.body).not.toContain(id);
+    const jordan = v.json().person.id as string;
+    for (const cookie of [sessionCookie(db, 'p_sam'), cookieOf(v)]) {
+      for (const url of ['/api/me', '/api/month', '/api/backlog', '/api/inbox', `/api/people/${jordan}/library`, '/api/people/p_sam/library', '/api/auth/session']) {
+        const res = await a.inject({ url, headers: { cookie } });
+        expect(res.statusCode, url).toBe(200);
+        expect(res.body, url).not.toContain('letInByLink');
+        expect(res.body, url).not.toContain(id);
+      }
+    }
+    const admin = (await a.inject({ url: '/api/me', headers: { cookie: sessionCookie(db, 'p_alex') } })).json();
+    expect(admin.household.find((p: { id: string }) => p.id === jordan).letInByLink).toEqual({ linkId: id, by: 'Alex', at: expect.any(String) });
+    expect(admin.person.letInByLink).toBeUndefined();
+  });
+});

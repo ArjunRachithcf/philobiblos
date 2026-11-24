@@ -13,7 +13,7 @@ import { getMoney } from '../household/money';
 import { createInvite } from '../auth/invites';
 import { clearSessionCookies } from '../auth/cookie';
 import { endAllSessions, isFresh } from '../auth/sessions';
-import { HouseholdError, addPerson, editPerson, getPerson, household, removePerson, view, type PersonInput } from '../household/people';
+import { HouseholdError, addPerson, adminView, editPerson, getPerson, household, removePerson, view, type PersonInput } from '../household/people';
 import { approve, decline, waitingPeople } from '../household/waiting';
 import { Limiter } from '../shares/tokens';
 
@@ -126,7 +126,8 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
 
   app.get('/me', async (req) => ({
     person: view(db, getPerson(db, req.caller!.personId)!),
-    household: household(db).map((p) => view(db, p)),
+    // Admin-only fields (adminView) in an admin's list only; every other person view is view()'s.
+    household: household(db).map((p) => (req.caller!.role === 'admin' ? adminView : view)(db, p)),
     mode: cfg.mode,
     // The household's currency and unknown price: every screen writes amounts in it (household/money.ts).
     money: getMoney(db),
