@@ -22,7 +22,9 @@
 // An invoice that may be one a bookshop's mail brought and counted already (mail/effects.ts maybeMailed; philobiblos#58)
 // is asked about before it counts: 409 with the mail ("Is this the invoice that came by mail on …?"), and the person
 // sends it again with the answer (`mailed`). The same: it is kept as that mail's duplicate (duplicate_of) and counts
-// nothing; another purchase: it counts. A dry run names the question and asks nothing.
+// nothing; another purchase: it counts. A dry run names the question and asks nothing. One holding the mail's books and
+// more, or part of them, is asked alike (philobiblos#64): the same counts only what it holds beyond the mail, never a
+// book twice; one holding two mails' books is refused, to be recorded apart.
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
@@ -41,8 +43,14 @@ import { unguardCell } from './list';
 /** At most 100 lines (a parser's books a mail), 20 copies a line (the Inbox's), a price at most any amount's ceiling. */
 export const ENTRY_LIMITS = { lines: 100, qty: 20, price: AMOUNT_CEILING_C, number: 40, shop: 80, title: 300, author: 200 } as const;
 
-/** The bookshop's mail an invoice may be (philobiblos#58): its Inbox item id, the day it names, its number, its books' total. */
-export interface MaybeMailed { mail: string; cameOn: string; number: string | null; total: number }
+/** The bookshop's mail an invoice may be (philobiblos#58), or holds or is part of (philobiblos#64): its Inbox item id, the day it names, its number, its books' total. */
+export interface MaybeMailed {
+  mail: string; cameOn: string; number: string | null; total: number;
+  /** The entry holds the mail's copies and this many more (philobiblos#64): the same counts only these. */
+  more?: number;
+  /** The entry is part of the mail (philobiblos#64): the same counts nothing. */
+  part?: true;
+}
 
 export class EntryError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string, readonly maybeMailed?: MaybeMailed) { super(message); }
@@ -303,24 +311,30 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
           if (mailed) throw new EntryError(409, `invoice ${number} came in the bookshop's mail already, and counts from there`);
         }
         const books = keys(tx);
-        // The bookshop's mail it may be (philobiblos#58): only when every row names a book Philobiblos has already.
+        // The bookshop's mail it may be (philobiblos#58), or one it holds or is part of (philobiblos#64).
         const ids = given.map((g) => matchBook(books, { ean: g.isbn, title: g.title, author: g.author }));
-        const fit = ids.every((x) => x !== null) ? maybeMailed(tx, { number, lines: given.map((g, i) => ({ bookId: ids[i]!, qty: g.qty })), total: invoiceTotal }, iso) : null;
-        const asked = fit && askedOf(fit, invoiceTotal);
+        const parts = given.map((g, i) => ({ bookId: ids[i] ?? null, qty: g.qty, totalC: g.price! * g.qty }));
+        const fit = maybeMailed(tx, { number, lines: parts }, iso);
+        const asked = fit && askedOf(fit);
+        // What it holds beyond the mail may be another mail's books: one question could count them twice, so it is
+        // refused and recorded apart, each part asked about on its own.
+        const also = fit?.overlap.rest.length ? maybeMailed(tx, { number, lines: fit.overlap.rest }, iso, [fit.key]) : null;
+        if (asked && also) throw new EntryError(409, `this invoice holds the books of two invoices that came by mail (on ${longDay(asked.cameOn)} and ${longDay(askedOf(also).cameOn)}): record each apart`);
         // An answer about this mail answers it; none, or one about another mail, asks (a dry run only names it).
         const answered = asked && answer?.mail === asked.mail ? answer.answer : null;
-        if (asked && !answered && !dryRun) throw new EntryError(409, `Is this the invoice that came by mail on ${longDay(asked.cameOn)}?`, asked);
+        if (asked && !answered && !dryRun) throw new EntryError(409, question(asked), asked);
         if (!asked && answer?.answer === 'same') throw new EntryError(409, 'no mail fits this invoice now: record it as it is, or check it again');
         if (asked && !answered) maybe = asked;
-        if (asked && answered === 'same') {
-          // The same invoice as the mail: nothing new counted; kept as the mail's duplicate.
-          same = { key: fit.key, asked };
-          for (const [i, g] of given.entries()) out.push(lineView(g, books.find((b) => b.id === ids[i])!, false));
-        }
+        // The same purchase as the mail: kept as its duplicate, and only what it holds beyond the mail counts.
+        if (asked && answered === 'same') same = { key: fit!.key, asked };
+        const counted = new Map(same ? fit!.overlap.rest.map((r) => [r.index, r.qty]) : given.map((g, i) => [i, g.qty]));
         const invoiced = new Map<string, number>();
         // What it does, kept to undo it (undoEntry): the values each row had before it, and the ones it left.
         const priced = new Map<string, OfferRow | null>();
-        for (const [i, g] of (same ? [] : given).entries()) {
+        for (const [i, g] of given.entries()) {
+          const qty = counted.get(i) ?? 0;
+          // A row the mail counted already: as it is, nothing more.
+          if (!qty) { out.push(lineView(g, books.find((b) => b.id === ids[i])!, false)); continue; }
           const person = g.for ? target.get(g.for)! : null;
           // A row of a book an earlier row of this entry added names it now.
           let id = ids[i] ?? matchBook(books, { ean: g.isbn, title: g.title, author: g.author });
@@ -336,8 +350,8 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
           }
           if (!priced.has(id)) priced.set(id, offerOf(tx, id));
           const trace: Delivered = { copies: [], tap: null, line: null };
-          const ordered = receive(tx, { bookId: id, qty: g.qty, unitC: g.price!, acquiredAt, source: 'manual' }, iso, trace);
-          if (ordered) invoiced.set(ordered, (invoiced.get(ordered) ?? 0) + g.price! * g.qty);
+          const ordered = receive(tx, { bookId: id, qty, unitC: g.price!, acquiredAt, source: 'manual' }, iso, trace);
+          if (ordered) invoiced.set(ordered, (invoiced.get(ordered) ?? 0) + g.price! * qty);
           const piled = !!person && tx.insert(t.reading).values({ personId: person.id, bookId: id, status: 'to_read', updatedAt: iso }).onConflictDoNothing().run().changes > 0;
           undo.lines.push({ ...trace, bookId: id, orderId: ordered, priceC: g.price!, acquiredAt, reading: piled ? person!.id : null });
           out.push(lineView(g, books.find((b) => b.id === id)!, isNew));
@@ -400,11 +414,23 @@ function answerOf(v: unknown): { mail: string; answer: 'same' | 'another' } {
   return { mail: v.mail, answer: v.answer };
 }
 
-/** The question's mail: its Inbox item id, the day it names (its Date header's, else the day it was read), number and total. */
-function askedOf(m: MailedInvoice, total: number): MaybeMailed {
+/**
+ * The question's mail: its Inbox item id, the day it names (its Date header's, else the day it was read), number, its
+ * books' total, and how the entry overlaps it (philobiblos#64): `more` copies beyond the mail's, or `part` of it.
+ */
+function askedOf(m: MailedInvoice): MaybeMailed {
   const at = m.date ? Date.parse(m.date) : Number.NaN;
   const cameOn = m.day && DAY.test(m.day) ? m.day : `${(Number.isNaN(at) ? m.seenAt : new Date(at).toISOString()).slice(0, 10)}T00:00:00.000Z`;
-  return { mail: mailItemId(m.key), cameOn, number: m.number, total };
+  const more = m.overlap.rest.reduce((n, l) => n + l.qty, 0);
+  return { mail: mailItemId(m.key), cameOn, number: m.number, total: m.totalC, ...(more ? { more } : {}), ...(m.overlap.holds === 'part' ? { part: true as const } : {}) };
+}
+
+/** "Is this the invoice that came by mail on 16 November 2026?", as the entry overlaps the mail. */
+function question(a: MaybeMailed): string {
+  const day = longDay(a.cameOn);
+  if (a.more) return `Does this invoice hold the one that came by mail on ${day}? Its ${a.more} other ${a.more === 1 ? 'copy counts' : 'copies count'} either way.`;
+  if (a.part) return `Is this invoice part of the one that came by mail on ${day}?`;
+  return `Is this the invoice that came by mail on ${day}?`;
 }
 
 /** An invoice's price learnt for a book (book_offer, source invoice), or none. */
@@ -545,6 +571,9 @@ export function undoEntry(db: Db, me: string, id: string, now = new Date()): voi
   }, { behavior: 'immediate' });
 }
 
+/** The copies an invoice entry made, by its undo record (a tap's copy it took counts as one). */
+const copiesMade = (undoJson: string | null) => (undoJson ? (JSON.parse(undoJson) as Undo).lines.reduce((n, l) => n + l.copies.length + (l.tap ? 1 : 0), 0) : 0);
+
 /** GET /orders/entries: the invoices typed in or imported in the last UNDO_DAYS days, newest first (at most 50). */
 export function recentEntries(db: Db, me: string, now = new Date()) {
   const since = new Date(now.getTime() - UNDO_DAYS * DAY_MS).toISOString();
@@ -553,8 +582,8 @@ export function recentEntries(db: Db, me: string, now = new Date()) {
       const by = e.personId ? getPerson(db, e.personId) : null;
       return {
         id: e.id, createdAt: e.createdAt, source: e.source, number: e.number, shop: e.shop || null, total: e.totalC,
-        // One answered the same as a mail made no copies: the mail did.
-        copies: e.duplicateOf ? 0 : (JSON.parse(e.linesJson) as { qty: number | null }[]).reduce((n, l) => n + (l.qty ?? 0), 0),
+        // One answered the same as a mail made only the copies beyond the mail's (philobiblos#64): its undo record's.
+        copies: e.duplicateOf ? copiesMade(e.undoJson) : (JSON.parse(e.linesJson) as { qty: number | null }[]).reduce((n, l) => n + (l.qty ?? 0), 0),
         sameAsMail: e.duplicateOf != null,
         ...(by ? { by: view(db, by) } : {}),
         // Who and when only: whether nothing has changed since is answered by the undo itself.

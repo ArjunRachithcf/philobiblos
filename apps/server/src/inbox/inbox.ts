@@ -18,7 +18,7 @@ import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
-import { invoiceLines, invoiceOrders, mailItemId, matchBook, receive } from '../mail/effects';
+import { entryParts, invoiceLines, invoiceOrders, mailItemId, mailParts, matchBook, overlap, receive, type Overlap } from '../mail/effects';
 import { MONTHS } from '../month/order-mail';
 import { norm } from '../seed/import';
 import { foundBooks, keptFiles, ownShare, shareAiNote, type ShareRow } from '../shares/shares';
@@ -386,6 +386,8 @@ function maybeTypedItem(db: Db, r: MailRow, p: Record<string, unknown>, entryId:
   const e = db.select().from(t.orderEntry).where(eq(t.orderEntry.id, entryId)).get();
   const by = e?.personId ? getPerson(db, e.personId) : null;
   const lines = Array.isArray(p.lines) ? (p.lines as Line[]) : [];
+  const o = e ? heldOverlap(e.linesJson, lines) : null;
+  const more = o?.rest.reduce((n, l) => n + l.qty, 0) ?? 0;
   const found = lines.flatMap((l, index): Found[] => (l && typeof l === 'object' ? [{
     index, title: str(l.title), author: str(l.author, 200), ean: str(l.ean, 13), decided: null,
     ...(typeof l.qty === 'number' ? { qty: l.qty } : {}), priceC: typeof l.totalC === 'number' ? l.totalC : null,
@@ -393,14 +395,27 @@ function maybeTypedItem(db: Db, r: MailRow, p: Record<string, unknown>, entryId:
   return {
     id: mailItemId(r.messageId), kind: 'maybe_typed_invoice', createdAt: r.seenAt, mail, found,
     title: e ? `Maybe the invoice typed on ${longDay(e.createdAt)}` : 'Maybe an invoice typed in already',
-    ...(e ? { typed: { entryId: e.id, createdAt: e.createdAt, number: e.number, shop: e.shop || null, totalC: e.totalC, ...(by ? { by: view(db, by) } : {}) } } : {}),
+    ...(e ? { typed: { entryId: e.id, createdAt: e.createdAt, number: e.number, shop: e.shop || null, totalC: e.totalC, ...(by ? { by: view(db, by) } : {}), ...(more ? { more } : {}), ...(o?.holds === 'part' ? { part: true as const } : {}) } } : {}),
   };
+}
+
+/**
+ * Where an answer to a held mail is kept (inbox_decision.idx): who answered, and how. Not -1, the whole item dismissed:
+ * a line of the mail Philobiblos could not place still waits for a person after it (philobiblos#64), as any such line.
+ */
+const ANSWERED = -2;
+
+/** How a held mail's lines overlap the typed invoice it may be (mail/effects.ts overlap; philobiblos#64). */
+function heldOverlap(linesJson: string, lines: unknown[]): Overlap | null {
+  const mail = mailParts(lines);
+  return mail ? overlap(entryParts(linesJson), mail) : null;
 }
 
 /**
  * POST /inbox/{itemId}/typed: the answer to a mailed invoice that may be one typed in (philobiblos#45), by any adult
  * (the bookshop's mail is the household's). `same`: the mail counts as the typed one (duplicateOf the entry, as a typed
- * invoice of the connector's number makes it) and nothing else changes; `another`: another purchase, so the mail's
+ * invoice of the connector's number makes it) and nothing else changes but the copies it holds beyond the typed ones
+ * (philobiblos#64), which have a mail's effect (a line it could not place stays for the Inbox, as any); `another`: another purchase, so the mail's
  * effect now, as when it was read (its copies owned at the price paid, the price learnt, its order lines delivered
  * and invoiced). Once: the item is gone, and a second answer is 409.
  */
@@ -418,13 +433,18 @@ export function answerTyped(db: Db, me: string, id: string, body: unknown, now =
     const p = json(row.parsedJson);
     const entry = p.maybeTyped as string;
     delete p.maybeTyped;
-    if (b.answer === 'same') p.duplicateOf = `entry:${entry}`;
-    else {
-      const lines = (Array.isArray(p.lines) ? (p.lines as Line[]) : []).flatMap((l) => (l && typeof l.bookId === 'string' && typeof l.qty === 'number' && l.qty > 0 && typeof l.totalC === 'number' ? [{ bookId: l.bookId, qty: l.qty, totalC: l.totalC }] : []));
-      invoiceLines(tx, lines, { date: str(p.date, 40), day: DAY.test(str(p.day, 24) ?? '') ? str(p.day, 24) : null, readAt: row.seenAt }, iso);
+    const all = Array.isArray(p.lines) ? (p.lines as Line[]) : [];
+    let lines = all.flatMap((l) => (l && typeof l.bookId === 'string' && typeof l.qty === 'number' && l.qty > 0 && typeof l.totalC === 'number' ? [{ bookId: l.bookId, qty: l.qty, totalC: l.totalC }] : []));
+    if (b.answer === 'same') {
+      p.duplicateOf = `entry:${entry}`;
+      // Only what it holds beyond the typed one counts; with nothing beyond it (the same, or part of it), nothing.
+      const e = tx.select().from(t.orderEntry).where(eq(t.orderEntry.id, entry)).get();
+      const o = e ? heldOverlap(e.linesJson, all) : null;
+      lines = (o?.rest ?? []).flatMap((l) => (l.bookId ? [{ bookId: l.bookId, qty: l.qty, totalC: l.totalC }] : []));
     }
+    invoiceLines(tx, lines, { date: str(p.date, 40), day: DAY.test(str(p.day, 24) ?? '') ? str(p.day, 24) : null, readAt: row.seenAt }, iso);
     tx.update(t.mailSeen).set({ parsedJson: JSON.stringify(p) }).where(eq(t.mailSeen.messageId, row.messageId)).run();
-    tx.insert(t.inboxDecision).values({ item: id, idx: -1, decision: b.answer === 'same' ? 'skipped' : 'added', personId: me, bookId: null, decidedAt: iso }).run();
+    tx.insert(t.inboxDecision).values({ item: id, idx: ANSWERED, decision: b.answer === 'same' ? 'skipped' : 'added', personId: me, bookId: null, decidedAt: iso }).run();
   }, { behavior: 'immediate' });
   return itemNow(db, me, id);
 }

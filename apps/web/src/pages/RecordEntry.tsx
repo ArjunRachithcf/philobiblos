@@ -117,6 +117,7 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
     setCsv(r.text);
   };
   const copies = (r: Result) => r.lines.reduce((n, l) => n + (l.qty ?? 0), 0);
+  const copiesOf = (n: number) => `${n} ${n === 1 ? 'copy' : 'copies'}`;
 
   return (
     <section className="card stack" aria-labelledby={`${id}-h`}>
@@ -189,10 +190,10 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
       {asking && (
         <div className="stack" role="group" aria-label={asking.question} tabIndex={-1} ref={askRef}>
           <Notice kind="info" title={asking.question}>
-            {`The bookshop’s invoice${asking.mail.number ? ` ${asking.mail.number}` : ''} came by mail and counts already, with the same books for ${format(asking.mail.total, 'always')}. The same invoice records nothing new; another purchase records these copies too.`}
+            {`The bookshop’s invoice${asking.mail.number ? ` ${asking.mail.number}` : ''} came by mail and counts already, ${asking.mail.more ? `with some of these books for ${format(asking.mail.total, 'always')}. If it is the same purchase, only the ${copiesOf(asking.mail.more)} beyond the mail’s are recorded` : asking.mail.part ? `with these books and more for ${format(asking.mail.total, 'always')}. If they are part of it, nothing new is recorded` : `with the same books for ${format(asking.mail.total, 'always')}. The same invoice records nothing new`}; another purchase records these copies too.`}
           </Notice>
           <div className="btn-row">
-            <button type="button" className="btn btn-primary" aria-disabled={busy || undefined} onClick={() => void send(false, { mail: asking.mail.mail, answer: 'same' })}>The same invoice</button>
+            <button type="button" className="btn btn-primary" aria-disabled={busy || undefined} onClick={() => void send(false, { mail: asking.mail.mail, answer: 'same' })}>{asking.mail.more ? 'It holds that invoice' : asking.mail.part ? 'Part of that invoice' : 'The same invoice'}</button>
             <button type="button" className="btn" aria-disabled={busy || undefined} onClick={() => void send(false, { mail: asking.mail.mail, answer: 'another' })}>Another purchase</button>
           </div>
         </div>
@@ -203,7 +204,9 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
           <>
             <Notice kind={shown.dryRun ? 'info' : 'ok'} title={shown.dryRun ? 'Nothing is recorded yet.' : 'Recorded.'}>
               {shown.sameAsMail
-                ? `The same invoice as the one that came by mail on ${longDay(shown.sameAsMail.cameOn)}: nothing new is counted.`
+                ? (shown.sameAsMail.more
+                  ? `It holds the invoice that came by mail on ${longDay(shown.sameAsMail.cameOn)}: only the ${copiesOf(shown.sameAsMail.more)} beyond it ${shown.dryRun ? 'would be' : 'are'} counted.`
+                  : `${shown.sameAsMail.part ? 'Part of' : 'The same invoice as'} the one that came by mail on ${longDay(shown.sameAsMail.cameOn)}: nothing new is counted.`)
                 : shown.kind === 'invoice'
                 ? `${copies(shown)} ${copies(shown) === 1 ? 'copy' : 'copies'} for ${format(shown.total, 'always')} ${shown.dryRun ? 'would be' : 'are'} in the library.`
                 : `The ${monthName} order ${shown.dryRun ? 'would come' : 'comes'} to ${format(shown.total, 'always')}.`}
@@ -229,7 +232,7 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
               <li key={x.id} className="row">
                 <span className="row-main">
                   <span className="row-title wrap">{[new Date(x.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), x.number ? `invoice ${x.number}` : 'no number', x.shop].filter(Boolean).join(' · ')}</span>
-                  <span className="row-sub wrap">{`${x.sameAsMail ? 'the invoice that came by mail' : `${x.copies} ${x.copies === 1 ? 'copy' : 'copies'}`}, ${format(x.total, 'always')}${x.by ? `, by ${x.by.name}` : ''}`}</span>
+                  <span className="row-sub wrap">{`${x.sameAsMail ? `the invoice that came by mail${x.copies ? `, and ${copiesOf(x.copies)} more` : ''}` : copiesOf(x.copies)}, ${format(x.total, 'always')}${x.by ? `, by ${x.by.name}` : ''}`}</span>
                 </span>
                 {x.canUndo && <span className="row-trail"><button type="button" className="btn btn-sm" aria-disabled={busy || undefined} aria-label={`Undo the invoice of ${new Date(x.createdAt).toLocaleDateString('en-GB')}${x.number ? `, ${x.number}` : ''}`} onClick={() => void undo(x)}>Undo</button></span>}
               </li>

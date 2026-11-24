@@ -143,7 +143,7 @@ function TypedItem({ it, busy, onAnswer }: { it: InboxItem; busy: boolean; onAns
       <div className="card stack">
         <p className="footnote">{[day(it.mail?.date ?? it.createdAt), it.mail?.number ? `invoice ${it.mail.number}` : null].filter(Boolean).join(' · ')}</p>
         <Notice kind="info" title="Not counted yet.">
-          {`The bookshop mailed an invoice with the same books and total as the one typed in${by}${typed?.number ? ` (number ${typed.number})` : ''}${typed ? `, ${money(typed.totalC, 'always')}` : ''}. If it is the same invoice, it counts once; if it is another purchase, its copies are added.`}
+          {`The bookshop mailed an invoice with ${typed?.more ? 'the books' : typed?.part ? 'some of the books' : 'the same books and total'} of the one typed in${by}${typed?.number ? ` (number ${typed.number})` : ''}${typed ? `, ${money(typed.totalC, 'always')}` : ''}${typed?.more ? `, and ${typed.more} more ${typed.more === 1 ? 'copy' : 'copies'}` : ''}. If it is the same purchase, ${typed?.more ? 'only the copies beyond the typed ones are added' : 'it counts once'}; if it is another purchase, its copies are added.`}
         </Notice>
         {it.found.length > 0 && (
           <ul className="footnote" aria-label="Its books">

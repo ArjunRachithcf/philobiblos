@@ -13,7 +13,7 @@
 // wrote it ("Book order, November 2026"); only the bookshop's signed mail ties anything (Compose copies the request to
 // no one). With no order, every line is unmatched.
 import { createHash } from 'node:crypto';
-import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, notInArray, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -181,58 +181,128 @@ export function invoiceLines(tx: Tx, lines: { bookId: string | null; qty: number
 /** How recent a typed invoice is (recorded at most this many days before the mail is read) to be asked about. */
 export const MAYBE_TYPED_DAYS = 30;
 
+/** An invoice's line, as two invoices are compared: the book it names (null: none), its copies and what they cost together. */
+export interface Part { bookId: string | null; qty: number; totalC: number }
+
+/**
+ * What one invoice's copies (`inner`, every line naming a book) take of another's lines (`outer`), book by book, from
+ * each book's first lines: per outer line, how many copies; and what the copies taken cost at the outer's prices (a line
+ * taken in part, its share of the line's total). Null when the outer lacks some of them.
+ */
+function take(outer: Part[], inner: Part[]): { taken: number[]; amount: number } | null {
+  if (!inner.length || inner.some((l) => !l.bookId)) return null;
+  const want = new Map<string, number>();
+  for (const l of inner) want.set(l.bookId!, (want.get(l.bookId!) ?? 0) + l.qty);
+  let amount = 0;
+  const taken = outer.map((l) => {
+    const k = l.bookId ? Math.min(want.get(l.bookId) ?? 0, l.qty) : 0;
+    if (!k) return 0;
+    want.set(l.bookId!, want.get(l.bookId!)! - k);
+    amount += share(l, k);
+    return k;
+  });
+  return [...want.values()].every((q) => q === 0) ? { taken, amount } : null;
+}
+/** What `k` of a line's copies cost: the line's total for all of them, else their share of it. */
+const share = (l: Part, k: number) => (k === l.qty ? l.totalC : Math.round((l.totalC * k) / l.qty));
+
+/** How a later invoice overlaps an earlier one (`overlap`). */
+export interface Overlap {
+  /** `same`: the same copies; `more`: the later holds every copy of the earlier, and more; `part`: the earlier holds every copy of the later. */
+  holds: 'same' | 'more' | 'part';
+  /** The later's lines beyond the earlier's (`more` only; a line taken in part: its copies left, and what they cost), with their index. */
+  rest: (Part & { index: number })[];
+  /** The copies the two share. */
+  copies: number;
+}
+
+/**
+ * Whether one of two invoices holds the other (philobiblos#64), and how: every copy of the one is a copy of the same book
+ * on the other, which charges for those copies what the one charges for them all (its books' total). A line naming no
+ * book is never shared: on the invoice that holds the other, it is part of the rest. Null when neither holds the other.
+ */
+export function overlap(earlier: Part[], later: Part[]): Overlap | null {
+  const total = (ls: Part[]) => ls.reduce((n, l) => n + l.totalC, 0);
+  const copies = (ls: Part[]) => ls.reduce((n, l) => n + l.qty, 0);
+  const inLater = take(later, earlier);
+  if (inLater && inLater.amount === total(earlier)) {
+    const rest = later.flatMap((l, index) => {
+      const k = inLater.taken[index]!;
+      return k === l.qty ? [] : [{ index, bookId: l.bookId, qty: l.qty - k, totalC: l.totalC - (k ? share(l, k) : 0) }];
+    });
+    return { holds: rest.length ? 'more' : 'same', rest, copies: copies(earlier) };
+  }
+  const inEarlier = take(earlier, later);
+  return inEarlier && inEarlier.amount === total(later) ? { holds: 'part', rest: [], copies: copies(later) } : null;
+}
+
+/** A typed or imported invoice's lines (order_entry.lines_json), as `overlap` compares them. */
+export const entryParts = (linesJson: string): Part[] =>
+  (JSON.parse(linesJson) as { bookId: string | null; qty: number | null; priceC: number | null }[])
+    .map((l) => ({ bookId: l.bookId, qty: l.qty ?? 0, totalC: (l.priceC ?? 0) * (l.qty ?? 0) }));
+
+/** A mailed invoice's lines as `overlap` compares them: a line that is no book left out; null for a line it cannot read. */
+export function mailParts(lines: unknown[], added: Map<number, string | null> = new Map()): (Part & { index: number })[] | null {
+  const out: (Part & { index: number })[] = [];
+  for (const [index, l] of (lines as { bookId?: unknown; qty?: unknown; totalC?: unknown; notBook?: unknown }[]).entries()) {
+    if (!l || typeof l !== 'object') return null;
+    if (l.notBook) continue;
+    // A line that named no book when it was read but was added from the Inbox since counts as the book it was added as.
+    const bookId = typeof l.bookId === 'string' ? l.bookId : added.get(index) ?? null;
+    if (typeof l.qty !== 'number' || l.qty < 1 || typeof l.totalC !== 'number') return null;
+    out.push({ index, bookId, qty: l.qty, totalC: l.totalC });
+  }
+  return out;
+}
+
 /**
  * The invoice typed in or imported (orders/entries.ts) that a mailed one may be (philobiblos#45), or null. An invoice
  * typed with no number, or for another shop than this connector (none, or the household's label for it), is never
- * counted once with the mail by its number; so a mail whose every line names a book is held when one such entry,
- * recorded in the last MAYBE_TYPED_DAYS days, has the same books in the same quantities and the same total for them
- * (the books' totals: what else an invoice charges, and a line that is no book, are left out). The entry's number, if it has one, must be the mail's.
- * An entry a mail counts as already (duplicateOf) or asks about (maybeTyped) is never asked about again; the newest
- * of several is asked about.
+ * counted once with the mail by its number; so a mail is held when one such entry, recorded in the last
+ * MAYBE_TYPED_DAYS days, and the mail hold each other's copies (`overlap`, philobiblos#64): the same books in the same
+ * quantities, or the typed books and more (a line it cannot place among them), or part of the typed books, at the same
+ * total for the copies they share (the books' totals: what else an invoice charges, and a line that is no book, are left
+ * out). The entry's number, if it has one, must be the mail's. An entry a mail counts as already (duplicateOf) or asks
+ * about (maybeTyped) is never asked about again; of several, the one sharing the most copies, then the newest.
  */
 function maybeTyped(tx: Tx, m: VerifiedMail, number: string | null, all: Matched<InvoiceLine>[], now: string): string | null {
-  // A line that is no book (its EAN is no ISBN: a toy, a game) is never typed in as one, and is left out; any other
-  // line that names no book is one the typed invoice did not have.
-  const lines = all.filter((l) => !l.notBook);
-  if (!lines.length || lines.some((l) => !l.bookId)) return null;
-  const want = new Map<string, number>();
-  for (const l of lines) want.set(l.bookId!, (want.get(l.bookId!) ?? 0) + l.qty);
-  const total = lines.reduce((n, l) => n + l.totalC, 0);
+  const mail = mailParts(all);
+  if (!mail?.some((l) => l.bookId)) return null;
   const since = new Date(Date.parse(now) - MAYBE_TYPED_DAYS * 86_400_000).toISOString();
   const named = sql`SELECT 1 FROM ${t.mailSeen} WHERE ${t.mailSeen.accepted} = 1 AND ${t.mailSeen.kind} = 'invoice' AND (json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') = 'entry:' || ${t.orderEntry.id} OR json_extract(${t.mailSeen.parsedJson}, '$.maybeTyped') = ${t.orderEntry.id})`;
   const rows = tx.select().from(t.orderEntry).where(and(
-    eq(t.orderEntry.kind, 'invoice'), eq(t.orderEntry.totalC, total), sql`${t.orderEntry.createdAt} >= ${since}`, sql`${t.orderEntry.createdAt} <= ${now}`,
+    eq(t.orderEntry.kind, 'invoice'), sql`${t.orderEntry.createdAt} >= ${since}`, sql`${t.orderEntry.createdAt} <= ${now}`,
     sql`(${t.orderEntry.number} IS NULL OR (upper(${t.orderEntry.number}) = upper(${number}) AND ${t.orderEntry.shop} <> ${m.auth.connector}))`,
     sql`NOT EXISTS (${named})`,
-    // One a person answered is the same as a mail counted already (philobiblos#58) stands for that mail, and counted nothing.
+    // One a person answered is the same as a mail counted already (philobiblos#58) stands for that mail.
     isNull(t.orderEntry.duplicateOf),
   )).orderBy(desc(t.orderEntry.createdAt)).all();
-  const same = rows.find((e) => {
-    const got = new Map<string, number>();
-    for (const l of JSON.parse(e.linesJson) as { bookId: string | null; qty: number | null }[]) {
-      if (!l.bookId) return false;
-      got.set(l.bookId, (got.get(l.bookId) ?? 0) + (l.qty ?? 0));
-    }
-    return got.size === want.size && [...want].every(([b, q]) => got.get(b) === q);
-  });
-  return same?.id ?? null;
+  return fullest(rows.map((e) => ({ e, o: overlap(entryParts(e.linesJson), mail) })))?.e.id ?? null;
 }
 
-/** A bookshop's invoice mail that a typed or imported one may be (`maybeMailed`). */
-export interface MailedInvoice { key: string; seenAt: string; date: string | null; day: string | null; number: string | null }
+/** Of several candidates (newest first), the one whose overlap shares the most copies; the newest of those. */
+function fullest<T extends { o: Overlap | null }>(cs: T[]): (T & { o: Overlap }) | null {
+  let best: (T & { o: Overlap }) | null = null;
+  for (const c of cs) if (c.o && (!best || c.o.copies > best.o.copies)) best = c as T & { o: Overlap };
+  return best;
+}
+
+/** A bookshop's invoice mail that a typed or imported one may be (`maybeMailed`): how they overlap, and its books' total. */
+export interface MailedInvoice { key: string; seenAt: string; date: string | null; day: string | null; number: string | null; overlap: Overlap; totalC: number }
 
 /**
  * The bookshop's invoice mail that an invoice being typed or imported may be (philobiblos#58), or null: `maybeTyped`'s
  * rule mirrored, for a mail that counted first. A verified invoice mail read in the last MAYBE_TYPED_DAYS days that
  * counted (its copies made: not one sent again, counted as a typed one, or waiting in the Inbox as maybe one), whose
- * every line that is a book names one (when read, or added from the Inbox since), with the same books in the same quantities and the same total for them as the
- * entry (`lines`: every line naming a book Philobiblos has; `total`: theirs). The entry's number, if it has one, must
- * be the mail's (typed for the mail's own connector, that number is refused before this: orders/entries.ts). A mail an entry is the same as already (order_entry.duplicate_of) is never asked about again; of several, the
- * newest.
+ * lines and the entry's (`lines`: its rows, each with the book it names, or null for one Philobiblos has not) hold each
+ * other's copies (`overlap`, philobiblos#64: the same, the mail's and more, or part of the mail's), a line that is no
+ * book left out and one added from the Inbox since counting as its book. The entry's number, if it has one, must be the
+ * mail's (typed for the mail's own connector, that number is refused before this: orders/entries.ts). A mail an entry
+ * is the same as already (order_entry.duplicate_of), or one in `skip` (keys), is never asked about; of several, the one
+ * sharing the most copies, then the newest.
  */
-export function maybeMailed(tx: Tx, e: { number: string | null; lines: { bookId: string; qty: number }[]; total: number }, now: string): MailedInvoice | null {
-  const want = new Map<string, number>();
-  for (const l of e.lines) want.set(l.bookId, (want.get(l.bookId) ?? 0) + l.qty);
+export function maybeMailed(tx: Tx, e: { number: string | null; lines: Part[] }, now: string, skip: string[] = []): MailedInvoice | null {
+  if (!e.lines.some((l) => l.bookId)) return null;
   const since = new Date(Date.parse(now) - MAYBE_TYPED_DAYS * 86_400_000).toISOString();
   const j = (path: string) => sql`json_extract(${t.mailSeen.parsedJson}, ${path})`;
   const rows = tx.select().from(t.mailSeen).where(and(
@@ -240,22 +310,19 @@ export function maybeMailed(tx: Tx, e: { number: string | null; lines: { bookId:
     sql`${j('$.duplicateOf')} IS NULL`, sql`${j('$.maybeTyped')} IS NULL`,
     e.number === null ? undefined : sql`upper(${j('$.invoiceNumber')}) = upper(${e.number})`,
     sql`NOT EXISTS (SELECT 1 FROM ${t.orderEntry} WHERE ${t.orderEntry.duplicateOf} = ${t.mailSeen.messageId})`,
+    skip.length ? notInArray(t.mailSeen.messageId, skip) : undefined,
   )).orderBy(desc(t.mailSeen.seenAt)).all();
-  for (const r of rows) {
-    const p = JSON.parse(r.parsedJson ?? '{}') as { lines?: unknown; date?: unknown; day?: unknown; invoiceNumber?: unknown };
-    if (!Array.isArray(p.lines)) continue;
-    // A line that named no book when it was read but was added from the Inbox since counts as the book it was added as.
+  const best = fullest(rows.map((r) => {
+    const p = JSON.parse(r.parsedJson ?? '{}') as { lines?: unknown };
+    if (!Array.isArray(p.lines)) return { r, o: null, mail: null };
     const added = new Map(tx.select().from(t.inboxDecision).where(and(eq(t.inboxDecision.item, mailItemId(r.messageId)), eq(t.inboxDecision.decision, 'added'))).all().map((d) => [d.idx, d.bookId]));
-    const lines = (p.lines as { bookId?: unknown; qty?: unknown; totalC?: unknown; notBook?: unknown }[])
-      .map((l, i) => (l && typeof l === 'object' && l.bookId == null && added.get(i) ? { ...l, bookId: added.get(i) } : l)).filter((l) => l && !l.notBook);
-    if (!lines.length || lines.some((l) => typeof l.bookId !== 'string' || typeof l.qty !== 'number' || typeof l.totalC !== 'number')) continue;
-    const got = new Map<string, number>();
-    for (const l of lines) got.set(l.bookId as string, (got.get(l.bookId as string) ?? 0) + (l.qty as number));
-    if (lines.reduce((n, l) => n + (l.totalC as number), 0) !== e.total || got.size !== want.size || ![...want].every(([b, q]) => got.get(b) === q)) continue;
-    const str = (v: unknown) => (typeof v === 'string' ? v : null);
-    return { key: r.messageId, seenAt: r.seenAt, date: str(p.date), day: str(p.day), number: str(p.invoiceNumber) };
-  }
-  return null;
+    const mail = mailParts(p.lines, added);
+    return { r, mail, o: mail ? overlap(mail, e.lines) : null };
+  }));
+  if (!best) return null;
+  const p = JSON.parse(best.r.parsedJson ?? '{}') as { date?: unknown; day?: unknown; invoiceNumber?: unknown };
+  const str = (v: unknown) => (typeof v === 'string' ? v : null);
+  return { key: best.r.messageId, seenAt: best.r.seenAt, date: str(p.date), day: str(p.day), number: str(p.invoiceNumber), overlap: best.o, totalC: best.mail!.reduce((n, l) => n + l.totalC, 0) };
 }
 
 /**
