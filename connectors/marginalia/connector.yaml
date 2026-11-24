@@ -1,0 +1,17 @@
+# Marginalia Index: an invented ISBN catalogue with prices (its name and domain are made up; .example is reserved,
+# RFC 2606). It is the example of a price source and nothing else (philobiblos#27): no mail, no order address, its
+# lookup asked by a book's ISBN-13 alone and read for schema.org Product markup.
+# Data only (contracts/connector.schema.json). An admin enables it in Settings, with a fresh sign-in, after reading
+# what it allows (its host, and that it sends the ISBN), and only in the household's currency.
+schema: 1
+id: marginalia
+name: Marginalia Index
+locale:
+  currency: EUR
+  language: en
+money:
+  before: [EUR]
+  after: [EUR]
+prices:
+  kind: jsonld
+  url: https://api.marginalia.example/book?format=html&isbn={isbn}

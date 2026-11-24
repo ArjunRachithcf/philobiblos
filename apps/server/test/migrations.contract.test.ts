@@ -83,11 +83,11 @@ describe('migrations', () => {
     expect(describeDb(fromTs)).toEqual(describeDb(fromSql([contractSql])));
   });
 
-  it('the migrations build the contract\'s triggers (Drizzle has none; they are hand-written in 0005 and 0011)', () => {
+  it('the migrations build the contract\'s triggers (Drizzle has none; they are hand-written in 0005, 0011 and 0021)', () => {
     const triggers = (db: Database.Database) => (db.prepare(`SELECT name, tbl_name AS tbl, sql FROM sqlite_master WHERE type='trigger' ORDER BY name`).all() as { name: string; tbl: string; sql: string }[])
       .map((t) => ({ ...t, sql: t.sql.replace(/\s+/g, ' ').trim() }));
     const contract = triggers(fromSql([contractSql]));
-    expect(contract.map((t) => t.name)).toHaveLength(14);
+    expect(contract.map((t) => t.name)).toHaveLength(16);
     expect(triggers(openDb(':memory:').$client)).toEqual(contract);
   });
 
@@ -224,5 +224,34 @@ describe('upgrades', () => {
       { book_id: 'tap', source: 'invoice', price_c: 1100, seen_at: '2026-11-02T00:00:00.000Z' },
       { book_id: 'tie', source: 'invoice', price_c: 1750, seen_at: '2026-11-05T00:00:00.000Z' },
     ]);
+  });
+
+  it('a book\'s isbn13 is 13 digits beginning 978 or 979, or none: a stored one of any other shape is dropped, the book kept (philobiblos#59)', () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'philobiblos-mig-')), 'drizzle');
+    cpSync(drizzleDir, dir, { recursive: true });
+    const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
+    const before = journal.entries.findIndex((e) => e.tag === '0021_book_isbn13_shape');
+    expect(before).toBeGreaterThan(0);
+    writeFileSync(join(dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.slice(0, before) }));
+    const client = new Database(':memory:');
+    client.pragma('foreign_keys = ON');
+    const db = drizzle(client);
+    migrate(db, { migrationsFolder: dir });
+    const book = client.prepare(`INSERT INTO book (id, title, authors_json, isbn13, audience, norm_key, created_at) VALUES (?, ?, '[]', ?, 'adult', ?, '2026-01-01T00:00:00.000Z')`);
+    const stored: [string, string | null][] = [['ok', '9780000000002'], ['ok979', '9791234567896'], ['query', '9780000000019&x=1'], ['short', '12345'], ['spaced', ' 9780000000026'], ['none', null]];
+    for (const [id, isbn] of stored) book.run(id, id, isbn, id);
+    client.prepare(`INSERT INTO book_offer (book_id, source, price_c, seen_at) VALUES ('query', 'seed', 1990, '2026-11-01T00:00:00.000Z')`).run();
+    migrate(db, { migrationsFolder: drizzleDir });
+    expect(client.prepare('SELECT id, isbn13 FROM book ORDER BY id').all()).toEqual([
+      { id: 'none', isbn13: null }, { id: 'ok', isbn13: '9780000000002' }, { id: 'ok979', isbn13: '9791234567896' },
+      { id: 'query', isbn13: null }, { id: 'short', isbn13: null }, { id: 'spaced', isbn13: null },
+    ]);
+    // Rows that point at a book are kept through the table's rebuild.
+    expect(client.prepare('SELECT count(*) AS n FROM book_offer').get()).toEqual({ n: 1 });
+    expect(client.pragma('foreign_key_check')).toEqual([]);
+    for (const bad of ['9780000000002&x=1', '978000000000', '97800000000020', '1234567890123', '978000000000X']) {
+      expect(() => book.run(`b-${bad}`, 'x', bad, 'x')).toThrow(/CHECK book\.isbn13/);
+      expect(() => client.prepare('UPDATE book SET isbn13 = ? WHERE id = ?').run(bad, 'ok')).toThrow(/CHECK book\.isbn13/);
+    }
   });
 });

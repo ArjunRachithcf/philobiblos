@@ -107,14 +107,16 @@ describe.each(shipped.map((c) => [c.id, c] as const))('connector %s', (id, loade
   });
 
   it('its words stay linear on hostile text', () => {
-    const r = mailRules(c);
     const line = 'a '.repeat(490);
     const text = `${line}\n`.repeat(4900);
     const t0 = Date.now();
-    ownLines(text, r);
-    parseQuote(text, [], r);
-    parseShop('online_order', '1', `${line} | ${'1'.repeat(400)}\n`.repeat(4900), [], r);
-    classify(r, 'x@example.org', `${'a'.repeat(250)} ${'1 '.repeat(5000)}`);
+    if (c.mail) {
+      const r = mailRules(c);
+      ownLines(text, r);
+      parseQuote(text, [], r);
+      parseShop('online_order', '1', `${line} | ${'1'.repeat(400)}\n`.repeat(4900), [], r);
+      classify(r, 'x@example.org', `${'a'.repeat(250)} ${'1 '.repeat(5000)}`);
+    }
     if (c.prices?.kind === 'search_tiles') {
       const rules = tileRules({ money: c.money, prices: c.prices });
       parseTiles(`<a href="${c.prices.article.path}${c.prices.article.id_prefix}${'1'.repeat(40)}`.repeat(20_000), rules);

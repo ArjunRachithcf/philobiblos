@@ -35,6 +35,15 @@ function shopWords(): string[] {
   });
 }
 
+/**
+ * Where these words stand in these files, case-insensitively: as whole words, or with `starts` as the start of a word
+ * (a compound too: Gesamtbetrag holds gesamt).
+ */
+function mailWordHits(words: string[], texts: readonly (readonly [string, string])[], starts = false): string[] {
+  const res = words.map((w) => [w, new RegExp(`(?<![\\p{L}\\p{N}])${w.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${starts ? '' : '(?![\\p{L}\\p{N}])'}`, 'u')] as const);
+  return texts.flatMap(([name, text]) => { const t = text.toLowerCase(); return res.filter(([, re]) => re.test(t)).map(([w]) => `${name}: ${w}`); });
+}
+
 describe('no core module names a bookshop or a mail provider', () => {
   it('the connectors that ship are where the shops are (and there is at least the example)', () => {
     expect(shopWords()).toContain('quillmere.example');
@@ -85,16 +94,22 @@ describe('no core module names a bookshop or a mail provider', () => {
     const MARKERS = ['original message', 'ursprüngliche nachricht', "message d'origine", 'messaggio originale', 'mensaje original', 'oorspronkelijk bericht',
       'mensagem original', 'schrieb', 'a écrit', 'ha scritto', 'escribió', 'schreef', 'escreveu', 'gesendet', 'envoyé', 'inviato', 'enviado', 'verzonden',
       'betreff', 'oggetto', 'asunto', 'onderwerp'];
-    const SHOP_WORDS = ['gesamt', 'summe', 'zwischensumme', 'rechnung', 'bestellung', 'lieferbar', 'vergriffen', 'versand', 'porto', 'mwst', 'rabatt',
+    const SHOP_WORDS = ['gesamt', 'summe', 'zwischensumme', 'rechnung', 'bestell', 'lieferbar', 'vergriffen', 'versand', 'porto', 'mwst', 'rabatt',
       'facture', 'commande', 'livraison', 'fattura', 'ordine', 'spedizione', 'factura', 'pedido', 'envío', 'bestelling', 'factuur', 'verzending'];
     const separators = CONNECTORS.all.flatMap((c) => c.connector?.mail?.reply?.separators ?? []);
-    const words = [...new Set([...MARKERS, ...SHOP_WORDS, ...separators, ...LANGUAGES.flatMap(monthsIn).filter((m) => !english.has(m))].map((w) => w.toLowerCase()))];
-    const res = words.map((w) => [w, new RegExp(`(?<![\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u')] as const);
-    const hits = core().flatMap((f) => {
-      const text = readFileSync(f, 'utf8').toLowerCase();
-      return res.filter(([, re]) => re.test(text)).map(([w]) => `${relative(ROOT, f)}: ${w}`);
-    });
-    expect(hits).toEqual([]);
+    const words = [...new Set([...MARKERS, ...separators, ...LANGUAGES.flatMap(monthsIn).filter((m) => !english.has(m))].map((w) => w.toLowerCase()))];
+    const texts = core().map((f) => [relative(ROOT, f), readFileSync(f, 'utf8')] as const);
+    // Shop words also as a word's start, for the compounds a shop writes (Gesamtbetrag, Versandkosten).
+    expect([...mailWordHits(words, texts), ...mailWordHits(SHOP_WORDS, texts, true)]).toEqual([]);
+  });
+
+  it('a shop word counts as the start of a word too: a compound holding one is caught', () => {
+    const source = "const TOTALS = ['Gesamtbetrag','Rechnungsbetrag','Bestellnummer'];";
+    expect(mailWordHits(['gesamt', 'rechnung', 'bestellung', 'versand'], [['books/prices.ts', source]], true)).toEqual(['books/prices.ts: gesamt', 'books/prices.ts: rechnung']);
+    // The shop-word check in the test above is this one: the example in the core is caught.
+    expect(mailWordHits(['bestell'], [['books/prices.ts', source]], true)).toEqual(['books/prices.ts: bestell']);
+    // Never a word's middle or end: "Untergesamt" is not gesamt's start.
+    expect(mailWordHits(['gesamt'], [['x.ts', 'const untergesamt = 1;']], true)).toEqual([]);
   });
 
   it('only the connector modules read connectors/, and nothing in the core names a connector folder', () => {

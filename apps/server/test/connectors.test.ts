@@ -130,9 +130,9 @@ describe('a connector is data, read strictly', () => {
     writeFileSync(join(local, 'README.txt'), 'not a connector');
     const reg = loadConnectors({ builtin: new URL('../../../connectors', import.meta.url).pathname, local });
     const by = (id: string) => reg.get(id)!;
-    expect(reg.all.map((c) => [c.id, c.origin])).toEqual([['larkspur', 'builtin'], ['quillmere', 'builtin'], ['lindenhof', 'local'], ['linked', 'local'], ['quillmere', 'local']]);
+    expect(reg.all.map((c) => [c.id, c.origin])).toEqual([['larkspur', 'builtin'], ['marginalia', 'builtin'], ['quillmere', 'builtin'], ['lindenhof', 'local'], ['linked', 'local'], ['quillmere', 'local']]);
     expect(by('lindenhof').problem).toBeNull();
-    expect(reg.all[4]).toMatchObject({ problem: expect.stringMatching(/ships with Philobiblos/), connector: null });
+    expect(reg.all[5]).toMatchObject({ problem: expect.stringMatching(/ships with Philobiblos/), connector: null });
     expect(by('linked')).toMatchObject({ problem: expect.stringMatching(/link/), connector: null });
   });
 

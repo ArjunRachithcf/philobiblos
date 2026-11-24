@@ -189,7 +189,8 @@ looks books up by ISBN: `url: https://isbn.lookup.example/book?isbn={isbn}`. It 
 nothing else (a book without an ISBN is not asked), and the product read is the one that carries that ISBN (its GTIN-13
 or ISBN; an ISBN-10 counts as its ISBN-13), whatever its name: another edition's ISBN, or none, is never the book. Such a
 connector may have no `mail` and no `order` at all: it is a price source and nothing else, enabled like any connector,
-and Settings says that it sends the ISBN.
+and Settings says that it sends the ISBN. **Marginalia Index** (`connectors/marginalia/`, invented, in euros) is the
+example: a connector of `schema`, `id`, `name`, `locale`, `money` and `prices` alone.
 
 ### What a connector cannot do
 

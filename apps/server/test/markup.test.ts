@@ -488,6 +488,15 @@ describe('a price lookup by ISBN (an ISBN metadata source: `{isbn}` in a jsonld 
     expect(await src.find({ title: 'The Long Tide of Markets', authors: ['Mira Okafor'], isbn13: null })).toBeNull();
     expect(asked).toEqual([]);
   });
+
+  it('only a valid ISBN-13 fills the URL: a wrong check digit, or a value carrying more of a query, asks nothing', async () => {
+    const asked: string[] = [];
+    const src = markupPrices('larkspur', { locale: LARKSPUR.locale, prices: byIsbn().prices! }, egressFor(ld(book({ gtin13: '9780000000002' })), asked));
+    for (const isbn13 of ['9780000000003', '9780000000002&x=1', '9780000000002#x', ' 9780000000002', '978000000000', '97800000000020']) {
+      expect(await src.find({ title: 'The Long Tide of Markets', authors: ['Mira Okafor'], isbn13 })).toBeNull();
+    }
+    expect(asked).toEqual([]);
+  });
 });
 
 describe('an invoice line from markup is matched with its author', () => {
