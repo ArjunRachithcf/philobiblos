@@ -174,10 +174,11 @@ describe('an invoice typed in: copies, as a verified invoice would make them', (
     expect(record(db, { kind: 'invoice', number: '2', shop: 'Quillmere', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] }).shop).toBe('Quillmere');
   });
 
-  it('typed for another shop, or for none: the connector\'s mail of that number still counts', async () => {
+  it('typed for another shop, or for none: the connector\'s mail of that number is not counted once by it (it may wait in the Inbox: typed-mailed.test.ts)', async () => {
     for (const shop of ['Corner Books', undefined]) {
       const db = world();
-      record(db, { kind: 'invoice', number: '99001122', ...(shop ? { shop } : {}), lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
+      // Another book's price than the mail's: not the same invoice, so the mail counts.
+      record(db, { kind: 'invoice', number: '99001122', ...(shop ? { shop } : {}), lines: [{ isbn: '9780000000002', qty: 1, price: 1890 }] });
       await mailInvoice(db, '99001122');
       expect(copies(db).filter((c) => c[1] === 'invoice')).toHaveLength(1);
       const row = db.select().from(t.mailSeen).where(eq(t.mailSeen.kind, 'invoice')).get()!;

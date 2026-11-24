@@ -12,6 +12,7 @@ import { unit, useMoney } from '../money';
 import { CSV_MAX, TOO_LONG, decodeCsv } from '../csvfile';
 
 type Result = components['schemas']['OrderEntryResult'];
+type Recent = components['schemas']['OrderEntrySummary'];
 type Kind = 'invoice' | 'quote';
 interface Row { title: string; author: string; isbn: string; qty: string; price: string; available: boolean }
 const EMPTY: Row = { title: '', author: '', isbn: '', qty: '1', price: '', available: true };
@@ -46,6 +47,22 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
   // One request at a time: a second tap on Record while the first runs would record an invoice without a number twice.
   const [busy, setBusy] = useState(false);
   const k: Kind = quotable ? kind : 'invoice';
+  // The invoices recorded lately, each undone while nothing has changed it since (philobiblos#45).
+  const [recent, setRecent] = useState<Recent[]>([]);
+  const [said, setSaid] = useState('');
+  const loadRecent = () => api<{ entries: Recent[] }>('/orders/entries').then((r) => setRecent(r.entries), () => setRecent([]));
+  useEffect(() => { void loadRecent(); }, []);
+  const undo = async (e: { id: string }) => {
+    if (busy) return;
+    setError(null); setSaid(''); setBusy(true);
+    try {
+      await api(`/orders/entries/${encodeURIComponent(e.id)}/undo`, { method: 'POST' });
+      if (done?.id === e.id) setDone(null);
+      setSaid('The invoice is undone: its copies are gone and the order is as it was.');
+      onRecorded();
+      await loadRecent();
+    } catch (x) { setError(message(x)); } finally { setBusy(false); }
+  };
 
   const shop = shopPick === OTHER ? shopName.trim() : shopPick;
   /** What would be sent, or what is missing. */
@@ -77,7 +94,7 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
     try {
       const r = await api<Result>('/orders/entries', { method: 'POST', body: { ...now, dryRun } });
       if (dryRun) return setCheck({ key, result: r });
-      setCheck(null); setDone(r);
+      setCheck(null); setDone(r); setSaid(''); void loadRecent();
       setRows([{ ...EMPTY }]); setCsv(''); setNumber(''); setDate(''); setShopPick(''); setShopName('');
       onRecorded();
     } catch (e) { setCheck(null); setError(message(e)); } finally { setBusy(false); }
@@ -159,6 +176,7 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
         <button type="button" className="btn btn-primary" aria-disabled={busy || undefined} onClick={() => void send(false)}>Record {k === 'invoice' ? 'the invoice' : 'the quote'}</button>
       </div>
       {error && <Notice kind="error">{error}</Notice>}
+      <div role="status">{said && <Notice kind="ok">{said}</Notice>}</div>
       <div className="stack" role="status">
         {shown && (
           <>
@@ -173,9 +191,29 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
                 <li key={l.row}>Row {l.row}: {l.title}{l.authors.length ? `, ${l.authors.join(', ')}` : ''}{l.new ? ' (a new book)' : ''}{l.available ? (l.price != null ? `, ${format(l.price, 'always')}` : '') : ', cannot be delivered'}</li>
               ))}
             </ul>
+            {!shown.dryRun && shown.kind === 'invoice' && shown.id && recent.some((x) => x.id === shown.id && x.canUndo) && (
+              <div className="btn-row"><button type="button" className="btn btn-sm" aria-disabled={busy || undefined} onClick={() => void undo({ id: shown.id! })}>Undo this invoice</button></div>
+            )}
           </>
         )}
       </div>
+      {recent.length > 0 && (
+        <div className="stack">
+          <h3 className="field-label">Invoices recorded in the last 7 days</h3>
+          <ul className="group" role="list">
+            {recent.map((x) => (
+              <li key={x.id} className="row">
+                <span className="row-main">
+                  <span className="row-title wrap">{[new Date(x.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), x.number ? `invoice ${x.number}` : 'no number', x.shop].filter(Boolean).join(' · ')}</span>
+                  <span className="row-sub wrap">{`${x.copies} ${x.copies === 1 ? 'copy' : 'copies'}, ${format(x.total, 'always')}${x.by ? `, by ${x.by.name}` : ''}`}</span>
+                </span>
+                {x.canUndo && <span className="row-trail"><button type="button" className="btn btn-sm" aria-disabled={busy || undefined} aria-label={`Undo the invoice of ${new Date(x.createdAt).toLocaleDateString('en-GB')}${x.number ? `, ${x.number}` : ''}`} onClick={() => void undo(x)}>Undo</button></span>}
+              </li>
+            ))}
+          </ul>
+          <p className="footnote">An invoice is undone (its copies removed, the order as it was) by whoever recorded it, or an admin, while nothing has changed it since.</p>
+        </div>
+      )}
     </section>
   );
 }

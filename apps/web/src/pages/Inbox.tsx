@@ -12,6 +12,7 @@ const FILTERS: [string, string][] = [['all', 'All'], ['shared', 'Shared'], ['mai
 const KIND: Record<InboxItem['kind'], string> = {
   share: 'Shared', ai_suggestion: 'AI suggestion', unmatched_invoice_line: 'Invoice', unmatched_quote_line: 'Quote',
   unmatched_shop_line: 'Shop order', mail_failed: 'Could not read', mail_waiting: 'Waiting', mail_unverified: 'Not verified',
+  maybe_typed_invoice: 'Invoice typed?',
 };
 const SHARE_STATUS: Record<string, string> = { received: 'Waiting for the media worker', reading: 'Reading the images and videos', done: 'Received', failed: 'Failed' };
 const day = (iso?: string | null) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null; };
@@ -66,6 +67,8 @@ export function Inbox({ me }: { me: Me }) {
     act(`/inbox/${encodeURIComponent(it.id)}/books/${f.index}`, { action, ...(forWho ? { for: forWho.handle } : {}) },
       `${f.title ?? 'The line'}: ${action === 'skip' ? 'skipped' : forWho ? `added for ${forWho.name}` : 'added'}.`);
   const dismiss = (it: InboxItem) => act(`/inbox/${encodeURIComponent(it.id)}/dismiss`, undefined, `${it.title}: dismissed.`);
+  const answer = (it: InboxItem, a: 'same' | 'another') => act(`/inbox/${encodeURIComponent(it.id)}/typed`, { answer: a },
+    a === 'same' ? 'Counted once, as the invoice typed in.' : 'Counted as another purchase: its copies are in the library.');
 
   return (
     <>
@@ -79,7 +82,9 @@ export function Inbox({ me }: { me: Me }) {
             <div className="group-head"><h2 id="in-empty-h" tabIndex={-1}>Nothing waiting</h2></div>
             <p className="group-foot">{filter === 'ai' ? 'The AI’s suggestions for you arrive here, after the monthly refresh or when an admin runs them.' : 'Share a post from your phone, or wait for the bookshop’s next mail.'}</p>
           </section>
-        ) : items.map((it) => <Item key={it.id} it={it} kids={kids} busy={busy} onDecide={decide} onDismiss={dismiss} />)}
+        ) : items.map((it) => (it.kind === 'maybe_typed_invoice'
+          ? <TypedItem key={it.id} it={it} busy={busy} onAnswer={answer} />
+          : <Item key={it.id} it={it} kids={kids} busy={busy} onDecide={decide} onDismiss={dismiss} />))}
         {next && <div className="btn-row"><button type="button" className="btn" onClick={() => void more()}>Show more</button></div>}
       </div>
     </>
@@ -118,6 +123,37 @@ function Item({ it, kids, busy, onDecide, onDismiss }: {
           </ul>
         )}
         <div className="btn-row"><button type="button" className="btn btn-sm" disabled={busy} aria-label={`Dismiss ${it.title}`} onClick={() => onDismiss(it)}>Dismiss</button></div>
+      </div>
+    </section>
+  );
+}
+
+/** A mailed invoice that may be one typed in already (philobiblos#45): it changes nothing until it is answered. */
+function TypedItem({ it, busy, onAnswer }: { it: InboxItem; busy: boolean; onAnswer: (it: InboxItem, a: 'same' | 'another') => void }) {
+  const money = useMoney().format;
+  const h = `in-${it.id}`;
+  const typed = it.typed;
+  const by = typed?.by ? ` by ${typed.by.name}` : '';
+  return (
+    <section className="group-block" aria-labelledby={h}>
+      <div className="group-head">
+        <h2 id={h} tabIndex={-1} className="wrap">{it.title}</h2>
+        <span className="pill pill-neutral">{KIND[it.kind]}</span>
+      </div>
+      <div className="card stack">
+        <p className="footnote">{[day(it.mail?.date ?? it.createdAt), it.mail?.number ? `invoice ${it.mail.number}` : null].filter(Boolean).join(' · ')}</p>
+        <Notice kind="info" title="Not counted yet.">
+          {`The bookshop mailed an invoice with the same books and total as the one typed in${by}${typed?.number ? ` (number ${typed.number})` : ''}${typed ? `, ${money(typed.totalC, 'always')}` : ''}. If it is the same invoice, it counts once; if it is another purchase, its copies are added.`}
+        </Notice>
+        {it.found.length > 0 && (
+          <ul className="footnote" aria-label="Its books">
+            {it.found.map((f) => <li key={f.index}>{[f.title ?? 'A line without a title', f.qty && f.qty > 1 ? `${f.qty} copies` : null, f.priceC == null ? null : money(f.priceC, 'always')].filter(Boolean).join(' · ')}</li>)}
+          </ul>
+        )}
+        <div className="btn-row">
+          <button type="button" className="btn btn-sm btn-primary" data-first disabled={busy} onClick={() => onAnswer(it, 'same')}>The same invoice</button>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onAnswer(it, 'another')}>Another purchase</button>
+        </div>
       </div>
     </section>
   );

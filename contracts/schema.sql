@@ -260,6 +260,7 @@ CREATE TABLE order_entry (
   total_c     INTEGER NOT NULL,
   lines_json  TEXT NOT NULL,               -- [{ bookId, qty, priceC, available }]
   created_at  TEXT NOT NULL,
+  undo_json   TEXT,                        -- an invoice's: what it did, to undo it (philobiblos#45); NULL for a quote or before then
   CHECK (kind = 'invoice' OR number IS NULL),
   CHECK (kind = 'invoice' OR shop = '')
 );

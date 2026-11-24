@@ -255,7 +255,15 @@ paths:
       tags: [inbox]
       operationId: dismissInboxItem
       summary: 'Takes a whole item out of the Inbox (a share of yours, a mail that failed closed or was not verified, the rest of a mail''s lines). Nothing else changes; the mail stays in mail_seen.'
-      responses: { '404': { description: 'No such item (or another adult''s share)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Dismissed } }
+      responses: { '404': { description: 'No such item (or another adult''s share)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'A mailed invoice that may be one typed in: it is answered (POST /inbox/{itemId}/typed), never dismissed', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Dismissed } }
+  /inbox/{itemId}/typed:
+    parameters: [{ name: itemId, in: path, required: true, schema: {type: string} }]
+    post:
+      tags: [inbox]
+      operationId: answerTypedInvoice
+      summary: 'Any adult (the bookshop''s mail is the household''s): the answer to an item of kind maybe_typed_invoice (philobiblos#45), a verified mailed invoice held because its books, quantities and books'' total are those of an invoice typed in or imported in the 30 days before it was read with no number, or with its number for no shop or another (so nothing counted them once). same: the mail counts as the typed one and nothing else changes; another: another purchase, so the mail''s effect now (its copies owned at the price paid, the price learnt, its order lines delivered and invoiced). Once; the item is gone after it.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [answer], properties: { answer: { enum: [same, another] } } } } } }
+      responses: { '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such item, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The item asks nothing about a typed invoice, or it is answered already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'The item as it is now', content: { application/json: { schema: { $ref: '#/components/schemas/InboxItem' } } } } }
   /shares:
     post:
       tags: [inbox]
@@ -320,6 +328,18 @@ paths:
       summary: 'Any adult: an order''s quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice''s copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote''s lines of the month''s composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household''s currency (a CSV''s as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop''s connector''s mail. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing.'
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OrderEntry' } } } }
       responses: { '400': { description: 'Bad request (a row it cannot read names its row number)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: 'No order that month (a quote); no one with that handle', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that shop''s invoice number counts already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '200': { description: 'A dry run: what the entry would do', content: { application/json: { schema: { $ref: '#/components/schemas/OrderEntryResult' } } } }, '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/OrderEntryResult' } } } } }
+    get:
+      tags: [orders]
+      operationId: listOrderEntries
+      summary: 'Any adult: the invoices typed in or imported in the last 7 days (philobiblos#45), newest first, at most 50: when, the number and shop, the total, how many copies, who recorded it, and whether you may undo it (canUndo: you recorded it or are an admin, and it was recorded since undo exists; whether nothing has changed since is answered by the undo).'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: object, required: [entries], properties: { entries: { type: array, items: { $ref: '#/components/schemas/OrderEntrySummary' } } } } } } } }
+  /orders/entries/{id}/undo:
+    parameters: [{ name: id, in: path, required: true, schema: {type: string} }]
+    post:
+      tags: [orders]
+      operationId: undoOrderEntry
+      summary: 'Whoever recorded it, or an admin, within 7 days (philobiblos#45): an invoice typed in or imported undone, while nothing has changed it since: its copies removed, a tap''s copy it took the tap''s again, the order lines it delivered as they were (a line whose book was bought again since by one invoice of no order, as many copies, passes to that purchase and stays delivered, the order invoiced for it, in the place of a tap''s copy the entry took, which goes; two such purchases or another quantity is 409), each order''s invoiced total less what it added (with none left, the order as before its first invoice), a price it learnt put back unless another invoice changed it since, a pile it put a book on left without it unless that book was touched since, and the entry gone (its number may be typed again). A book it added stays. Refused (409, nothing changed) once a copy, a line or an order it changed has changed, or a bookshop''s mail counts as it or waits in the Inbox as maybe it; a quote is corrected by typing it again, never undone.'
+      responses: { '403': { description: 'A kid, another origin, or another adult than whoever recorded it (and not an admin)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: No such entry, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'A quote; recorded more than 7 days ago, or before undo existed; something it changed has changed since; a bookshop''s mail counts as it', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '204': { description: Undone } }
   /orders/{id}/list.csv:
     get: { tags: [orders], operationId: getOrderList, summary: 'Any adult: the plain list of a composed order (not picked) as a CSV to download (text/csv, an attachment, never cached): the books still to buy (planned or quoted), a row each with isbn, title, author (the first), qty 1, an empty price and the estimate, the columns an invoice imported reads (POST /orders/entries; estimate is named back), so the same file with the prices paid records what was bought. No delivery address and no one''s name. A cell a spreadsheet would run as a formula (starting =, +, -, @, their full-width forms, or a tab or CR) is written with a leading quote (philobiblos#45), which the import reads back.', parameters: [{ name: id, in: path, required: true, schema: {type: string} }], responses: { '404': { description: No such order, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The order is only picked: the list is not made yet', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'The CSV (UTF-8 with a byte order mark, CRLF)', content: { text/csv: { schema: { type: string } } } } } }
   /orders/{id}/lines/{bookId}:
@@ -454,13 +474,14 @@ components:
       required: [id, kind, title, createdAt, found]
       properties:
         id: {type: string}
-        kind: { enum: [share, ai_suggestion, unmatched_invoice_line, unmatched_quote_line, unmatched_shop_line, mail_failed, mail_waiting, mail_unverified] }
+        kind: { enum: [share, ai_suggestion, unmatched_invoice_line, unmatched_quote_line, unmatched_shop_line, mail_failed, mail_waiting, mail_unverified, maybe_typed_invoice] }
         by: { $ref: '#/components/schemas/Person' }
         title: { type: string, description: 'Philobiblos''s own words, or a share''s title, or a verified mail''s subject (safeField); plain text, never HTML' }
         createdAt: {type: string}
         mediaCount: {type: integer}
         share: { type: object, description: 'kind share', properties: { status: { enum: [received, reading, done, failed] }, progress: { type: object, properties: { done: {type: integer}, total: {type: integer} } }, refused: {type: integer}, url: { type: [string, 'null'] }, note: { type: [string, 'null'] }, aiNote: { type: [string, 'null'], description: 'what the AI could not read of it (images without a vision model, or nothing), Philobiblos''s words' } } }
         unverified: { type: object, description: 'kind mail_unverified: every unverified mail since the item was last dismissed', properties: { count: {type: integer}, reasons: { type: array, maxItems: 5, items: { type: object, properties: { reason: {type: string}, count: {type: integer} } } } } }
+        typed: { type: object, description: 'kind maybe_typed_invoice: the invoice typed in or imported that this mailed one may be (its found are the mail''s books, to show: answered with POST /inbox/{itemId}/typed, never one by one)', required: [entryId, createdAt, number, shop, totalC], properties: { entryId: {type: string}, createdAt: {type: string}, number: { type: [string, 'null'] }, shop: { type: [string, 'null'] }, totalC: { $ref: '#/components/schemas/Money' }, by: { $ref: '#/components/schemas/Person' } } }
         mail: { type: object, description: 'mail kinds: what Philobiblos knows of it. An unverified mail has its reason only.', properties: { reason: { type: [string, 'null'] }, expected: { type: [string, 'null'], description: 'the kind the mail looked like (failed closed)' }, date: { type: [string, 'null'] }, number: { type: [string, 'null'], description: 'order or invoice number' } } }
         found:
           type: array
@@ -485,6 +506,19 @@ components:
               move: { $ref: '#/components/schemas/Move' }
               decided: { enum: [added, skipped, null] }
     Share: { type: object, required: [id, status, progress], properties: { id: {type: string}, status: { enum: [received, reading, done, failed] }, progress: { type: object, required: [done, total], properties: { done: {type: integer}, total: {type: integer} } }, refused: { type: integer, description: 'images the media worker refused' }, found: { type: array, items: { type: object, required: [title], properties: { title: {type: string}, author: { type: [string, 'null'] } } } }, error: { type: [string, 'null'] } } }
+    OrderEntrySummary:
+      type: object
+      required: [id, createdAt, source, number, shop, total, copies, canUndo]
+      properties:
+        id: {type: string}
+        createdAt: {type: string}
+        source: { enum: [typed, csv] }
+        number: { type: [string, 'null'] }
+        shop: { type: [string, 'null'] }
+        total: { $ref: '#/components/schemas/Money' }
+        copies: {type: integer}
+        by: { $ref: '#/components/schemas/Person' }
+        canUndo: { type: boolean }
     Order:
       type: object
       properties:

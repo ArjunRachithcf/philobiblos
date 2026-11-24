@@ -650,6 +650,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/inbox/{itemId}/typed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Any adult (the bookshop's mail is the household's): the answer to an item of kind maybe_typed_invoice (philobiblos#45), a verified mailed invoice held because its books, quantities and books' total are those of an invoice typed in or imported in the 30 days before it was read with no number, or with its number for no shop or another (so nothing counted them once). same: the mail counts as the typed one and nothing else changes; another: another purchase, so the mail's effect now (its copies owned at the price paid, the price learnt, its order lines delivered and invoiced). Once; the item is gone after it. */
+        post: operations["answerTypedInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/shares": {
         parameters: {
             query?: never;
@@ -913,10 +932,30 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Any adult: the invoices typed in or imported in the last 7 days (philobiblos#45), newest first, at most 50: when, the number and shop, the total, how many copies, who recorded it, and whether you may undo it (canUndo: you recorded it or are an admin, and it was recorded since undo exists; whether nothing has changed since is answered by the undo). */
+        get: operations["listOrderEntries"];
         put?: never;
         /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop's connector's mail. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
         post: operations["recordOrderEntry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/entries/{id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Whoever recorded it, or an admin, within 7 days (philobiblos#45): an invoice typed in or imported undone, while nothing has changed it since: its copies removed, a tap's copy it took the tap's again, the order lines it delivered as they were (a line whose book was bought again since by one invoice of no order, as many copies, passes to that purchase and stays delivered, the order invoiced for it, in the place of a tap's copy the entry took, which goes; two such purchases or another quantity is 409), each order's invoiced total less what it added (with none left, the order as before its first invoice), a price it learnt put back unless another invoice changed it since, a pile it put a book on left without it unless that book was touched since, and the entry gone (its number may be typed again). A book it added stays. Refused (409, nothing changed) once a copy, a line or an order it changed has changed, or a bookshop's mail counts as it or waits in the Inbox as maybe it; a quote is corrected by typing it again, never undone. */
+        post: operations["undoOrderEntry"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1323,7 +1362,7 @@ export interface components {
         InboxItem: {
             id: string;
             /** @enum {unknown} */
-            kind: "share" | "ai_suggestion" | "unmatched_invoice_line" | "unmatched_quote_line" | "unmatched_shop_line" | "mail_failed" | "mail_waiting" | "mail_unverified";
+            kind: "share" | "ai_suggestion" | "unmatched_invoice_line" | "unmatched_quote_line" | "unmatched_shop_line" | "mail_failed" | "mail_waiting" | "mail_unverified" | "maybe_typed_invoice";
             by?: components["schemas"]["Person"];
             /** @description Philobiblos's own words, or a share's title, or a verified mail's subject (safeField); plain text, never HTML */
             title: string;
@@ -1350,6 +1389,15 @@ export interface components {
                     reason?: string;
                     count?: number;
                 }[];
+            };
+            /** @description kind maybe_typed_invoice: the invoice typed in or imported that this mailed one may be (its found are the mail's books, to show: answered with POST /inbox/{itemId}/typed, never one by one) */
+            typed?: {
+                entryId: string;
+                createdAt: string;
+                number: string | null;
+                shop: string | null;
+                totalC: components["schemas"]["Money"];
+                by?: components["schemas"]["Person"];
             };
             /** @description mail kinds: what Philobiblos knows of it. An unverified mail has its reason only. */
             mail?: {
@@ -1400,6 +1448,18 @@ export interface components {
                 author?: string | null;
             }[];
             error?: string | null;
+        };
+        OrderEntrySummary: {
+            id: string;
+            createdAt: string;
+            /** @enum {unknown} */
+            source: "typed" | "csv";
+            number: string | null;
+            shop: string | null;
+            total: components["schemas"]["Money"];
+            copies: number;
+            by?: components["schemas"]["Person"];
+            canUndo: boolean;
         };
         Order: {
             id?: string;
@@ -3391,6 +3451,73 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description A mailed invoice that may be one typed in: it is answered (POST /inbox/{itemId}/typed), never dismissed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    answerTypedInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {unknown} */
+                    answer: "same" | "another";
+                };
+            };
+        };
+        responses: {
+            /** @description The item as it is now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such item */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The item asks nothing about a typed invoice, or it is answered already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     createShare: {
@@ -4117,6 +4244,30 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    listOrderEntries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        entries: components["schemas"]["OrderEntrySummary"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     recordOrderEntry: {
         parameters: {
             query?: never;
@@ -4169,6 +4320,54 @@ export interface operations {
                 };
             };
             /** @description The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that shop's invoice number counts already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    undoOrderEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Undone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description A kid, another origin, or another adult than whoever recorded it (and not an admin) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such entry */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A quote; recorded more than 7 days ago, or before undo existed; something it changed has changed since; a bookshop's mail counts as it */
             409: {
                 headers: {
                     [name: string]: unknown;

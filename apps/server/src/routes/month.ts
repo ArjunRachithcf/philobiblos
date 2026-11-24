@@ -9,7 +9,7 @@ import type { Db } from '../db/open';
 import { SealError, isSealed, keyProblem, sealingKey, unseal } from '../household/sealed';
 import { enabledConnectors, orderAddress } from '../connectors/enabled';
 import type { Registry } from '../connectors/load';
-import { EntryError, recordEntry } from '../orders/entries';
+import { EntryError, recentEntries, recordEntry, undoEntry } from '../orders/entries';
 import { MonthError, changePicks, checkWindow, composeOrder, getMonth, getOrder, markOwned, orderListCsv, setMonthBudget, thisMonth } from '../month/plan';
 
 export const SEALED = { bookshopEmail: 'bookshop_email', deliveryAddress: 'delivery_address' } as const;
@@ -63,6 +63,11 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, con
       const r = recordEntry(db, req.caller!.personId, req.body, new Date(), enabledConnectors(db, connectors).map((c) => c.id));
       return reply.code(r.dryRun ? 200 : 201).send(r);
     } catch (e) { return fail(reply, e); }
+  });
+  // The invoices typed in or imported lately, and undoing one (philobiblos#45: whoever recorded it, or an admin).
+  app.get('/orders/entries', async (req) => ({ entries: recentEntries(db, req.caller!.personId) }));
+  app.post<{ Params: { id: string } }>('/orders/entries/:id/undo', async (req, reply) => {
+    try { undoEntry(db, req.caller!.personId, req.params.id); return reply.code(204).send(); } catch (e) { return fail(reply, e); }
   });
   app.get<{ Params: { id: string } }>('/orders/:id', async (req, reply) => {
     try { return getOrder(db, req.params.id); } catch (e) { return fail(reply, e); }

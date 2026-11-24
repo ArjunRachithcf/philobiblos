@@ -314,6 +314,9 @@ export const orderEntry = sqliteTable('order_entry', {
   totalC: integer('total_c').notNull(),
   linesJson: text('lines_json').notNull(),
   createdAt: text('created_at').notNull(),
+  // What an invoice did, to undo it (philobiblos#45; orders/entries.ts undoEntry): the copies it made and the rows it
+  // changed, as ids and the values it found and left. Null: a quote, or an invoice recorded before undo existed.
+  undoJson: text('undo_json'),
 }, (t) => [
   check('order_entry_kind', sql`${t.kind} IN ('quote','invoice')`),
   check('order_entry_source', sql`${t.source} IN ('typed','csv')`),

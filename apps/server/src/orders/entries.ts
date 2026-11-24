@@ -15,15 +15,18 @@
 // bookshop's mail (mail/effects.ts looks here too). Amounts are in the household's currency (none yet: nothing is
 // recorded). Everything is checked before anything changes and applied in one transaction; a dry run applies it and
 // rolls back, so it answers exactly what the entry would do and changes nothing.
-import { and, desc, eq, sql } from 'drizzle-orm';
+//
+// An invoice entry keeps what it did (undo_json), so whoever recorded it, or an admin, may undo it for UNDO_DAYS while
+// nothing it changed has changed since (undoEntry; philobiblos#45).
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { bookIsbn } from '../books/isbn';
 import { BUDGET_CEILING_C } from '../household/budget';
 import { getMoney } from '../household/money';
-import { actsFor, getPerson, household } from '../household/people';
-import { invoiceOrders, keys, matchBook, orderBooks, quoteOrder, receive, type BookKey } from '../mail/effects';
+import { actsFor, getPerson, household, view } from '../household/people';
+import { invoiceOrders, keys, matchBook, orderBooks, quoteOrder, receive, type BookKey, type Delivered, type Tx } from '../mail/effects';
 import { safeField } from '../mail/read';
 import { norm } from '../seed/import';
 import { CsvError, parseCsv } from './csv';
@@ -258,7 +261,8 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
       const added = new Set<string>();
       let orderId: string | undefined;
       let quotedTotal = 0;
-      const view = (g: Given, b: BookKey | null, isNew: boolean): EntryLine => ({
+      const undo: Undo = { lines: [], orders: [], offers: [] };
+      const lineView = (g: Given, b: BookKey | null, isNew: boolean): EntryLine => ({
         row: g.row, bookId: b && !(dryRun && added.has(b.id)) ? b.id : null, new: isNew, title: b?.title ?? g.title!, authors: b?.authors ?? (g.author ? [g.author] : []),
         isbn13: b?.isbn13 ?? g.isbn, qty: kind === 'invoice' ? g.qty : null, price: g.price, available: g.available, for: g.for,
       });
@@ -272,11 +276,15 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
           // A connector's own mail of this number (only when the shop is that connector: a label or none matches no mail).
           const mailed = tx.select({ id: t.mailSeen.messageId }).from(t.mailSeen)
             .where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`upper(json_extract(${t.mailSeen.parsedJson}, '$.invoiceNumber')) = upper(${number})`,
-              sql`json_extract(${t.mailSeen.authJson}, '$.connector') = ${shop}`, sql`json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') IS NULL`)).get();
+              sql`json_extract(${t.mailSeen.authJson}, '$.connector') = ${shop}`,
+              // A mail sent again counts as its first (which this finds); one counted as a typed entry (philobiblos#45) counts.
+              sql`(json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') IS NULL OR json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') LIKE 'entry:%')`)).get();
           if (mailed) throw new EntryError(409, `invoice ${number} came in the bookshop's mail already, and counts from there`);
         }
         const books = keys(tx);
         const invoiced = new Map<string, number>();
+        // What it does, kept to undo it (undoEntry): the values each row had before it, and the ones it left.
+        const priced = new Map<string, OfferRow | null>();
         for (const g of given) {
           const person = g.for ? target.get(g.for)! : null;
           let id = matchBook(books, { ean: g.isbn, title: g.title, author: g.author });
@@ -290,12 +298,20 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
             books.push({ id, title: g.title, authors: g.author ? [g.author] : [], isbn13: g.isbn });
             added.add(id);
           }
-          const ordered = receive(tx, { bookId: id, qty: g.qty, unitC: g.price!, acquiredAt, source: 'manual' }, iso);
+          if (!priced.has(id)) priced.set(id, offerOf(tx, id));
+          const trace: Delivered = { copies: [], tap: null, line: null };
+          const ordered = receive(tx, { bookId: id, qty: g.qty, unitC: g.price!, acquiredAt, source: 'manual' }, iso, trace);
           if (ordered) invoiced.set(ordered, (invoiced.get(ordered) ?? 0) + g.price! * g.qty);
-          if (person) tx.insert(t.reading).values({ personId: person.id, bookId: id, status: 'to_read', updatedAt: iso }).onConflictDoNothing().run();
-          out.push(view(g, books.find((b) => b.id === id)!, isNew));
+          const piled = !!person && tx.insert(t.reading).values({ personId: person.id, bookId: id, status: 'to_read', updatedAt: iso }).onConflictDoNothing().run().changes > 0;
+          undo.lines.push({ ...trace, bookId: id, orderId: ordered, priceC: g.price!, acquiredAt, reading: piled ? person!.id : null });
+          out.push(lineView(g, books.find((b) => b.id === id)!, isNew));
+        }
+        for (const [id, c] of invoiced) {
+          const o = tx.select().from(t.order).where(eq(t.order.id, id)).get()!;
+          undo.orders.push({ id, c, was: { status: o.status, invoicedC: o.invoicedC } });
         }
         invoiceOrders(tx, invoiced);
+        for (const [bookId, was] of priced) undo.offers.push({ bookId, was, left: offerOf(tx, bookId) });
       } else {
         const order = tx.select().from(t.order).where(eq(t.order.month, month!)).orderBy(desc(t.order.createdAt)).get();
         if (!order) throw new EntryError(404, `no order for ${month}`);
@@ -309,7 +325,7 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
           if (!id) throw new EntryError(400, `row ${g.row}: no book of the order (${month}) has this ISBN or title`);
           if (named.has(id)) throw new EntryError(400, `row ${g.row}: names the book of row ${named.get(id)} twice`);
           named.set(id, g.row);
-          out.push(view(g, books.find((b) => b.id === id)!, false));
+          out.push(lineView(g, books.find((b) => b.id === id)!, false));
           // The delivery a shop's mail gave stays: a typed row says nothing about it.
           const delivery = tx.select({ d: t.orderLine.delivery }).from(t.orderLine).where(and(eq(t.orderLine.orderId, order.id), eq(t.orderLine.bookId, id))).get()?.d ?? null;
           return { bookId: id, available: g.available, priceC: g.available ? g.price : null, delivery };
@@ -326,6 +342,7 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
       tx.insert(t.orderEntry).values({
         id, kind, source, number, shop: shop ?? '', orderId: orderId ?? null, personId: me, totalC: total, createdAt: iso,
         linesJson: JSON.stringify(out.map((l) => ({ bookId: l.bookId, qty: l.qty, priceC: l.price, available: l.available }))),
+        undoJson: kind === 'invoice' ? JSON.stringify(undo) : null,
       }).run();
       return { id, ...result };
     });
@@ -333,4 +350,158 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
     if (e instanceof DryRun) return e.result;
     throw e;
   }
+}
+
+/** An invoice's price learnt for a book (book_offer, source invoice), or none. */
+type OfferRow = { priceC: number | null; availability: string | null; seenAt: string };
+const offerOf = (tx: Tx, bookId: string): OfferRow | null => {
+  const o = tx.select().from(t.bookOffer).where(and(eq(t.bookOffer.bookId, bookId), eq(t.bookOffer.source, 'invoice'))).get();
+  return o ? { priceC: o.priceC, availability: o.availability, seenAt: o.seenAt } : null;
+};
+/**
+ * What an invoice entry did (order_entry.undo_json), ids and amounts only: per row, the copies it made (of `orderId`,
+ * at `priceC`, acquired at `acquiredAt`), the tap's copy it took and the order line it delivered (with what each was),
+ * and whose pile it put the book on (a reading row it added); per order, what it added to the invoiced total and what
+ * the order was; per book, the price learnt before and after it.
+ */
+interface Undo {
+  lines: (Delivered & { bookId: string; orderId: string | null; priceC: number; acquiredAt: string; reading: string | null })[];
+  orders: { id: string; c: number; was: { status: string; invoicedC: number | null } }[];
+  offers: { bookId: string; was: OfferRow | null; left: OfferRow | null }[];
+}
+
+/**
+ * Copies of a book made after the entry `entryId` (a ULID: copies made later have later ids), of no order, by an
+ * invoice (mailed: invoice; typed or imported: manual). A tap's copy is always of its order, so never one of these.
+ */
+function laterCopies(tx: Tx, bookId: string, entryId: string) {
+  return tx.select().from(t.copy).where(and(eq(t.copy.bookId, bookId), isNull(t.copy.orderId), inArray(t.copy.source, ['invoice', 'manual']), sql`${t.copy.id} > ${entryId}`)).all();
+}
+
+/** How long after it was recorded an invoice entry may be undone. */
+export const UNDO_DAYS = 7;
+const DAY_MS = 86_400_000;
+
+/** Who may undo an entry: whoever recorded it, or an admin (the household's orders are any adult's to see). */
+function mayUndo(db: Db, me: string, e: { personId: string | null }): boolean {
+  return e.personId === me || getPerson(db, me)?.role === 'admin';
+}
+
+/**
+ * POST /orders/entries/{id}/undo (philobiblos#45): a mistyped invoice undone, everything it did and only that, while
+ * nothing has changed it since. Whoever recorded it, or an admin (403 for another adult; kids have no access), within
+ * UNDO_DAYS of recording it; a quote is corrected by typing the quote again, never undone (409).
+ *
+ * Refused (409, nothing changed) when a copy it made is gone or changed, a tap's copy it took has changed, an order
+ * line it delivered is no longer as it left it, an order it invoiced is closed or invoiced for less than it added, or
+ * a bookshop's mail counts as it (or waits in the Inbox as maybe it): undoing it would leave that mail uncounted.
+ * Otherwise, in one transaction: its copies removed, the tap's copy and its line the tap's again, the order lines it
+ * delivered as they were (or, for a book bought again since by an invoice of no order, that purchase's: it takes the line
+ * over, and the place of a tap's copy the entry took, and the order is invoiced for it; refused, 409, when it is not
+ * clear which purchase that is), each order's invoiced total less what it added (with nothing left invoiced, the order as it
+ * was before its first invoice), a price it learnt put back as it was unless another invoice has changed it since,
+ * a pile it put a book on left without it unless that book has been touched since, and the entry gone, so its number
+ * may be typed again. A book it added stays: it may be known elsewhere by now.
+ */
+export function undoEntry(db: Db, me: string, id: string, now = new Date()): void {
+  db.transaction((tx) => {
+    const e = tx.select().from(t.orderEntry).where(eq(t.orderEntry.id, id)).get();
+    if (!e) throw new EntryError(404, 'no such entry');
+    if (!mayUndo(db, me, e)) throw new EntryError(403, 'only whoever recorded it, or an admin, undoes it');
+    if (e.kind !== 'invoice') throw new EntryError(409, 'a quote is not undone: type the quote again to correct it');
+    if (now.getTime() - Date.parse(e.createdAt) > UNDO_DAYS * DAY_MS) throw new EntryError(409, `recorded more than ${UNDO_DAYS} days ago: it stays`);
+    if (!e.undoJson) throw new EntryError(409, 'recorded before an invoice could be undone: it stays');
+    const mail = tx.select({ p: t.mailSeen.parsedJson }).from(t.mailSeen).where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'),
+      sql`(json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') = ${`entry:${id}`} OR json_extract(${t.mailSeen.parsedJson}, '$.maybeTyped') = ${id})`)).get();
+    if (mail) {
+      throw new EntryError(409, JSON.parse(mail.p ?? '{}').maybeTyped === id
+        ? 'a bookshop mail waits in the Inbox as maybe this invoice: answer it first'
+        : 'the bookshop\'s mail of this invoice counts as it: undoing it would leave the mail uncounted');
+    }
+    const u = JSON.parse(e.undoJson) as Undo;
+
+    // Everything checked before anything changes.
+    const changed = (m: string): never => { throw new EntryError(409, `${m} has changed since: the invoice stays`); };
+    for (const l of u.lines) {
+      for (const c of l.copies) {
+        const row = tx.select().from(t.copy).where(eq(t.copy.id, c)).get();
+        if (!row || row.bookId !== l.bookId || row.source !== 'manual' || row.orderId !== l.orderId || row.priceC !== l.priceC || row.acquiredAt !== l.acquiredAt) changed('one of its copies');
+      }
+      if (l.tap) {
+        const row = tx.select().from(t.copy).where(eq(t.copy.id, l.tap.copyId)).get();
+        if (!row || row.bookId !== l.bookId || row.source !== 'manual' || row.orderId !== l.orderId || row.priceC !== l.priceC) changed('one of its copies');
+      }
+      if (l.line) {
+        const row = tx.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, l.line.orderId), eq(t.orderLine.bookId, l.bookId))).get();
+        if (!row || row.state !== 'delivered' || row.copyId !== null || row.tappedFrom !== null) changed('an order line it delivered');
+      }
+    }
+    for (const o of u.orders) {
+      const row = tx.select().from(t.order).where(eq(t.order.id, o.id)).get();
+      if (!row || row.status !== 'invoiced' || (row.invoicedC ?? 0) < o.c) changed('the order it invoiced');
+    }
+    // A line it delivered, of a book bought again since, of no order (an invoice read or typed after it, which found
+    // the line delivered already): that purchase takes the line over rather than leave it to buy (philobiblos#45 review).
+    // A line it took from a tap too: the later purchase would have taken the tap's copy had this entry not been typed
+    // (mail/effects.ts deliver), so it takes the tap's place, and the tap's copy goes.
+    const handover = new Map<number, string[]>();
+    const added = new Map<string, number>();
+    const own = new Set(u.lines.flatMap((l) => l.copies));
+    for (const [i, l] of u.lines.entries()) {
+      if (!l.line) continue;
+      const later = laterCopies(tx, l.bookId, id).filter((c) => !own.has(c.id));
+      if (!later.length) continue;
+      const purchases = new Set(later.map((c) => `${c.source}|${c.acquiredAt}|${c.priceC}`));
+      if (purchases.size > 1 || later.length !== l.copies.length + (l.tap ? 1 : 0)) {
+        throw new EntryError(409, 'its book was bought again since, and it is not clear which purchase the order line goes to: the invoice stays');
+      }
+      handover.set(i, later.map((c) => c.id));
+      added.set(l.line.orderId, (added.get(l.line.orderId) ?? 0) + later.reduce((n, c) => n + (c.priceC ?? 0), 0));
+    }
+
+    for (const [i, l] of u.lines.entries()) {
+      for (const c of l.copies) tx.delete(t.copy).where(eq(t.copy.id, c)).run();
+      const later = handover.get(i);
+      if (l.tap && later) tx.delete(t.copy).where(eq(t.copy.id, l.tap.copyId)).run();
+      else if (l.tap) tx.update(t.copy).set(l.tap.was).where(eq(t.copy.id, l.tap.copyId)).run();
+      if (later && l.line) tx.update(t.copy).set({ orderId: l.line.orderId }).where(inArray(t.copy.id, later)).run();
+      else if (l.line) tx.update(t.orderLine).set(l.line.was as { state: 'planned' }).where(and(eq(t.orderLine.orderId, l.line.orderId), eq(t.orderLine.bookId, l.bookId))).run();
+      if (l.reading) {
+        tx.delete(t.reading).where(and(eq(t.reading.personId, l.reading), eq(t.reading.bookId, l.bookId), eq(t.reading.status, 'to_read'), eq(t.reading.updatedAt, e.createdAt))).run();
+      }
+    }
+    for (const o of u.orders) {
+      const row = tx.select().from(t.order).where(eq(t.order.id, o.id)).get()!;
+      const left = (row.invoicedC ?? 0) - o.c + (added.get(o.id) ?? 0);
+      // Nothing left of what it was invoiced: still invoiced while a line of it stays delivered by an invoice (a free
+      // one, say; a tap's line is no invoice's), else as it was before its first invoice.
+      const invoicedLine = tx.select({ b: t.orderLine.bookId }).from(t.orderLine)
+        .where(and(eq(t.orderLine.orderId, o.id), eq(t.orderLine.state, 'delivered'), isNull(t.orderLine.copyId))).get();
+      const before = o.was.status !== 'invoiced' ? o.was : { status: row.quotedC != null ? 'quoted' : 'drafted', invoicedC: null };
+      tx.update(t.order).set(left > 0 || invoicedLine ? { invoicedC: left } : before as { status: 'quoted'; invoicedC: number | null }).where(eq(t.order.id, o.id)).run();
+    }
+    for (const o of u.offers) {
+      if (JSON.stringify(offerOf(tx, o.bookId)) !== JSON.stringify(o.left)) continue;
+      const at = and(eq(t.bookOffer.bookId, o.bookId), eq(t.bookOffer.source, 'invoice'));
+      if (o.was) tx.insert(t.bookOffer).values({ bookId: o.bookId, source: 'invoice', ...o.was }).onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: o.was }).run();
+      else tx.delete(t.bookOffer).where(at).run();
+    }
+    tx.delete(t.orderEntry).where(eq(t.orderEntry.id, id)).run();
+  }, { behavior: 'immediate' });
+}
+
+/** GET /orders/entries: the invoices typed in or imported in the last UNDO_DAYS days, newest first (at most 50). */
+export function recentEntries(db: Db, me: string, now = new Date()) {
+  const since = new Date(now.getTime() - UNDO_DAYS * DAY_MS).toISOString();
+  return db.select().from(t.orderEntry).where(and(eq(t.orderEntry.kind, 'invoice'), sql`${t.orderEntry.createdAt} >= ${since}`))
+    .orderBy(desc(t.orderEntry.createdAt), desc(t.orderEntry.id)).limit(50).all().map((e) => {
+      const by = e.personId ? getPerson(db, e.personId) : null;
+      return {
+        id: e.id, createdAt: e.createdAt, source: e.source, number: e.number, shop: e.shop || null, total: e.totalC,
+        copies: (JSON.parse(e.linesJson) as { qty: number | null }[]).reduce((n, l) => n + (l.qty ?? 0), 0),
+        ...(by ? { by: view(db, by) } : {}),
+        // Who and when only: whether nothing has changed since is answered by the undo itself.
+        canUndo: e.undoJson != null && mayUndo(db, me, e),
+      };
+    });
 }

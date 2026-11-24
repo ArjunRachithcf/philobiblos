@@ -19,7 +19,8 @@ import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
-import { invoiceOrders, matchBook, receive } from '../mail/effects';
+import { invoiceLines, invoiceOrders, matchBook, receive } from '../mail/effects';
+import { MONTHS } from '../month/order-mail';
 import { norm } from '../seed/import';
 import { foundBooks, keptFiles, ownShare, shareAiNote, type ShareRow } from '../shares/shares';
 import { validateAiOutput, type SuggestNextOut } from '@philobiblos/contracts';
@@ -93,12 +94,13 @@ function shareItem(db: Db, s: ShareRow, decided: Map<number, string> | undefined
 }
 
 /** The mail's item, or null when nothing of it waits (every line matched or decided, or nothing to say). */
-function mailItem(r: MailRow, decided: Map<number, string> | undefined): InboxItem | null {
+function mailItem(db: Db, r: MailRow, decided: Map<number, string> | undefined): InboxItem | null {
   const id = mailItemId(r.messageId);
   if (r.accepted !== 1) return null; // unverified mail is one item for all of it (unverifiedItem)
   const p = json(r.parsedJson);
   const date = str(p.date, 40);
   const number = str(p.invoiceNumber, 40) ?? str(p.orderNumber, 40);
+  if (r.kind === 'invoice' && typeof p.maybeTyped === 'string') return maybeTypedItem(db, r, p, p.maybeTyped, { date, number });
   if (FAILED.includes(r.kind)) {
     const reason = r.kind === 'reread_refused' ? str(json(r.authJson).reason, 500) : str(p.reason, 500);
     return { id, kind: 'mail_failed', title: str(p.subject) ?? 'A bookshop mail Philobiblos could not read', createdAt: r.seenAt, mail: { reason, expected: str(p.expected, 40), date, number }, found: [] };
@@ -211,7 +213,7 @@ export function listInbox(db: Db, me: string, filter: Filter = 'all', o: { curso
       const d = decisions(db, rows.map((r) => mailItemId(r.messageId)));
       return rows.map((r) => ({ pos: { at: r.seenAt, tag: 'm' as const, key: r.messageId }, item: () => {
         const dd = d.get(mailItemId(r.messageId));
-        return dd?.has(-1) ? null : mailItem(r, dd);
+        return dd?.has(-1) ? null : mailItem(db, r, dd);
       } }));
     } });
   }
@@ -261,7 +263,7 @@ function itemNow(db: Db, me: string, id: string): InboxItem {
   const dd = decisions(db, [id]).get(id);
   if (it.kind === 'share') return shareItem(db, it.share, dd);
   if (it.kind === 'ai') return aiItem(it.run, dd) ?? { id, kind: 'ai_suggestion', title: 'Suggested for you', createdAt: it.run.startedAt, found: [] };
-  return mailItem(it.row, dd) ?? { id, kind: LINES[it.row.kind] ?? 'mail_failed', title: MAIL_TITLE[it.row.kind] ?? 'A bookshop mail', createdAt: it.row.seenAt, found: [] };
+  return mailItem(db, it.row, dd) ?? { id, kind: LINES[it.row.kind] ?? 'mail_failed', title: MAIL_TITLE[it.row.kind] ?? 'A bookshop mail', createdAt: it.row.seenAt, found: [] };
 }
 
 /** POST /inbox/{itemId}/books/{index}: add or skip one book; returns the item as it is now. */
@@ -366,6 +368,64 @@ export function dismiss(db: Db, me: string, id: string, now = new Date()): void 
     db.insert(t.inboxDecision).values({ item: id, idx: -1, ...v }).onConflictDoUpdate({ target: [t.inboxDecision.item, t.inboxDecision.idx], set: v }).run();
     return;
   }
-  resolve(db, me, id);
+  const it = resolve(db, me, id);
+  if (it.kind === 'mail' && waitsForAnswer(it.row)) throw new InboxError(409, 'answer it: the same invoice as the one typed, or another purchase');
   db.insert(t.inboxDecision).values({ item: id, idx: -1, decision: 'dismissed', personId: me, bookId: null, decidedAt: now.toISOString() }).onConflictDoNothing().run();
+}
+
+/** A verified invoice held because it may be one typed in already (mail/effects.ts maybeTyped), not answered yet. */
+const waitsForAnswer = (r: MailRow) => r.accepted === 1 && r.kind === 'invoice' && typeof json(r.parsedJson).maybeTyped === 'string';
+
+/** "2026-11-16T10:00:00.000Z" → "16 November 2026" (its UTC day). */
+const longDay = (iso: string) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
+
+/**
+ * A mailed invoice that may be the one typed in on that day (philobiblos#45): its books and the typed entry, for a
+ * person to answer (answerTyped). It has changed nothing yet.
+ */
+function maybeTypedItem(db: Db, r: MailRow, p: Record<string, unknown>, entryId: string, mail: { date: string | null; number: string | null }): InboxItem {
+  const e = db.select().from(t.orderEntry).where(eq(t.orderEntry.id, entryId)).get();
+  const by = e?.personId ? getPerson(db, e.personId) : null;
+  const lines = Array.isArray(p.lines) ? (p.lines as Line[]) : [];
+  const found = lines.flatMap((l, index): Found[] => (l && typeof l === 'object' ? [{
+    index, title: str(l.title), author: str(l.author, 200), ean: str(l.ean, 13), decided: null,
+    ...(typeof l.qty === 'number' ? { qty: l.qty } : {}), priceC: typeof l.totalC === 'number' ? l.totalC : null,
+  }] : []));
+  return {
+    id: mailItemId(r.messageId), kind: 'maybe_typed_invoice', createdAt: r.seenAt, mail, found,
+    title: e ? `Maybe the invoice typed on ${longDay(e.createdAt)}` : 'Maybe an invoice typed in already',
+    ...(e ? { typed: { entryId: e.id, createdAt: e.createdAt, number: e.number, shop: e.shop || null, totalC: e.totalC, ...(by ? { by: view(db, by) } : {}) } } : {}),
+  };
+}
+
+/**
+ * POST /inbox/{itemId}/typed: the answer to a mailed invoice that may be one typed in (philobiblos#45), by any adult
+ * (the bookshop's mail is the household's). `same`: the mail counts as the typed one (duplicateOf the entry, as a typed
+ * invoice of the connector's number makes it) and nothing else changes; `another`: another purchase, so the mail's
+ * effect now, as when it was read (its copies owned at the price paid, the price learnt, its order lines delivered
+ * and invoiced). Once: the item is gone, and a second answer is 409.
+ */
+export function answerTyped(db: Db, me: string, id: string, body: unknown, now = new Date()): InboxItem {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new InboxError(400, 'a JSON object is needed');
+  const b = body as Record<string, unknown>;
+  for (const k of Object.keys(b)) if (k !== 'answer') throw new InboxError(400, `unknown field ${k.slice(0, 40)}`);
+  if (b.answer !== 'same' && b.answer !== 'another') throw new InboxError(400, 'answer: same or another');
+  const it = resolve(db, me, id);
+  if (it.kind !== 'mail') throw new InboxError(409, 'this item asks nothing about a typed invoice');
+  const iso = now.toISOString();
+  db.transaction((tx) => {
+    const row = tx.select().from(t.mailSeen).where(eq(t.mailSeen.messageId, it.row.messageId)).get()!;
+    if (!waitsForAnswer(row)) throw new InboxError(409, 'this item asks nothing about a typed invoice, or it is answered already');
+    const p = json(row.parsedJson);
+    const entry = p.maybeTyped as string;
+    delete p.maybeTyped;
+    if (b.answer === 'same') p.duplicateOf = `entry:${entry}`;
+    else {
+      const lines = (Array.isArray(p.lines) ? (p.lines as Line[]) : []).flatMap((l) => (l && typeof l.bookId === 'string' && typeof l.qty === 'number' && l.qty > 0 && typeof l.totalC === 'number' ? [{ bookId: l.bookId, qty: l.qty, totalC: l.totalC }] : []));
+      invoiceLines(tx, lines, { date: str(p.date, 40), day: DAY.test(str(p.day, 24) ?? '') ? str(p.day, 24) : null, readAt: row.seenAt }, iso);
+    }
+    tx.update(t.mailSeen).set({ parsedJson: JSON.stringify(p) }).where(eq(t.mailSeen.messageId, row.messageId)).run();
+    tx.insert(t.inboxDecision).values({ item: id, idx: -1, decision: b.answer === 'same' ? 'skipped' : 'added', personId: me, bookId: null, decidedAt: iso }).run();
+  }, { behavior: 'immediate' });
+  return itemNow(db, me, id);
 }

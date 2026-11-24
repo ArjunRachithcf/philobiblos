@@ -5,13 +5,14 @@
 //
 // Lines are matched to books by EAN first, then by normalised title and author (title alone on an invoice, which has
 // no author); a line that matches no book, or more than one, is kept as unmatched (its structured fields only), for a
-// person to resolve in the Inbox.
+// person to resolve in the Inbox. An invoice that may be one typed in already with no number to tell (maybeTyped,
+// philobiblos#45) changes nothing until a person answers in the Inbox.
 //
 // A quote or a confirmation belongs to a composed order (drafted or quoted): the one whose thread holds the mail's
 // signed In-Reply-To (a bookshop mail already tied to it), or the one of the month its signed Subject names as Compose
 // wrote it ("Book order, November 2026"); only the bookshop's signed mail ties anything (Compose copies the request to
 // no one). With no order, every line is unmatched.
-import { and, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -147,16 +148,67 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
     .where(and(eq(t.orderEntry.kind, 'invoice'), sql`upper(${t.orderEntry.number}) = upper(${p.invoiceNumber})`, eq(t.orderEntry.shop, m.auth.connector))).get();
   if (typed) return { ...kept, duplicateOf: `entry:${typed.id}` };
   const books = keys(tx);
-  const acquired = m.content.date && !Number.isNaN(Date.parse(m.content.date)) ? new Date(m.content.date).toISOString() : o.now;
-  const invoiced = new Map<string, number>();
   const out = p.lines.map((l): Matched<InvoiceLine> => ({ ...l, bookId: matchBook(books, l) }));
-  for (const l of out) {
+  // Maybe one typed in already, with no number to tell (philobiblos#45): it waits for a person, and changes nothing.
+  const maybe = maybeTyped(tx, m, p.invoiceNumber, out, o.now);
+  if (maybe) return { ...kept, lines: out, maybeTyped: maybe };
+  invoiceLines(tx, out, { date: m.content.date, day: m.content.day, readAt: o.now }, o.now);
+  return { ...kept, lines: out };
+}
+
+/**
+ * A verified invoice's lines that name a book, applied: each one's copies owned at the price paid (source invoice),
+ * the price learnt and its order line delivered (`receive`), each order invoiced for its lines. `when` is the mail's:
+ * its Date header (an unreadable one counts from when it was read) and its day (read.ts `mailDay`). Applied when the
+ * mail is read, or when a person answers that a mail that waited (`maybeTyped`) is another purchase.
+ */
+export function invoiceLines(tx: Tx, lines: { bookId: string | null; qty: number; totalC: number }[], when: { date: string | null; day: string | null; readAt: string }, now: string): void {
+  const acquired = when.date && !Number.isNaN(Date.parse(when.date)) ? new Date(when.date).toISOString() : when.readAt;
+  const invoiced = new Map<string, number>();
+  for (const l of lines) {
     if (!l.bookId) continue;
-    const orderId = receive(tx, { bookId: l.bookId, qty: l.qty, unitC: Math.round(l.totalC / l.qty), acquiredAt: acquired, source: 'invoice', day: m.content.day }, o.now);
+    const orderId = receive(tx, { bookId: l.bookId, qty: l.qty, unitC: Math.round(l.totalC / l.qty), acquiredAt: acquired, source: 'invoice', day: when.day }, now);
     if (orderId) invoiced.set(orderId, (invoiced.get(orderId) ?? 0) + l.totalC);
   }
   invoiceOrders(tx, invoiced);
-  return { ...kept, lines: out };
+}
+
+/** How recent a typed invoice is (recorded at most this many days before the mail is read) to be asked about. */
+export const MAYBE_TYPED_DAYS = 30;
+
+/**
+ * The invoice typed in or imported (orders/entries.ts) that a mailed one may be (philobiblos#45), or null. An invoice
+ * typed with no number, or for another shop than this connector (none, or the household's label for it), is never
+ * counted once with the mail by its number; so a mail whose every line names a book is held when one such entry,
+ * recorded in the last MAYBE_TYPED_DAYS days, has the same books in the same quantities and the same total for them
+ * (the books' totals: what else an invoice charges, and a line that is no book, are left out). The entry's number, if it has one, must be the mail's.
+ * An entry a mail counts as already (duplicateOf) or asks about (maybeTyped) is never asked about again; the newest
+ * of several is asked about.
+ */
+function maybeTyped(tx: Tx, m: VerifiedMail, number: string | null, all: Matched<InvoiceLine>[], now: string): string | null {
+  // A line that is no book (its EAN is no ISBN: a toy, a game) is never typed in as one, and is left out; any other
+  // line that names no book is one the typed invoice did not have.
+  const lines = all.filter((l) => !l.notBook);
+  if (!lines.length || lines.some((l) => !l.bookId)) return null;
+  const want = new Map<string, number>();
+  for (const l of lines) want.set(l.bookId!, (want.get(l.bookId!) ?? 0) + l.qty);
+  const total = lines.reduce((n, l) => n + l.totalC, 0);
+  const since = new Date(Date.parse(now) - MAYBE_TYPED_DAYS * 86_400_000).toISOString();
+  const named = sql`SELECT 1 FROM ${t.mailSeen} WHERE ${t.mailSeen.accepted} = 1 AND ${t.mailSeen.kind} = 'invoice' AND (json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') = 'entry:' || ${t.orderEntry.id} OR json_extract(${t.mailSeen.parsedJson}, '$.maybeTyped') = ${t.orderEntry.id})`;
+  const rows = tx.select().from(t.orderEntry).where(and(
+    eq(t.orderEntry.kind, 'invoice'), eq(t.orderEntry.totalC, total), sql`${t.orderEntry.createdAt} >= ${since}`, sql`${t.orderEntry.createdAt} <= ${now}`,
+    sql`(${t.orderEntry.number} IS NULL OR (upper(${t.orderEntry.number}) = upper(${number}) AND ${t.orderEntry.shop} <> ${m.auth.connector}))`,
+    sql`NOT EXISTS (${named})`,
+  )).orderBy(desc(t.orderEntry.createdAt)).all();
+  const same = rows.find((e) => {
+    const got = new Map<string, number>();
+    for (const l of JSON.parse(e.linesJson) as { bookId: string | null; qty: number | null }[]) {
+      if (!l.bookId) return false;
+      got.set(l.bookId, (got.get(l.bookId) ?? 0) + (l.qty ?? 0));
+    }
+    return got.size === want.size && [...want].every(([b, q]) => got.get(b) === q);
+  });
+  return same?.id ?? null;
 }
 
 /**
@@ -173,8 +225,8 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
  * line (0: a gift, a promotion) says nothing of what the book costs, and is no price learnt. Migration 0019 repaired
  * the rows from before this.
  */
-export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual'; day?: string | null }, now: string): string | null {
-  const orderId = deliver(tx, l);
+export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual'; day?: string | null }, now: string, trace?: Delivered): string | null {
+  const orderId = deliver(tx, l, trace);
   if (l.unitC > 0) {
     const at = Date.parse(l.acquiredAt);
     const today = invoiceDay(now);
@@ -184,6 +236,16 @@ export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number;
       .onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: v, setWhere: sql`excluded.seen_at >= ${t.bookOffer.seenAt}` }).run();
   }
   return orderId;
+}
+
+/**
+ * What one `receive` did, for an undo (orders/entries.ts undoEntry): the copies it made, the tap's copy it took (with
+ * what that copy was), and the order line it delivered (with what that line was).
+ */
+export interface Delivered {
+  copies: string[];
+  tap: { copyId: string; was: { source: typeof t.copy.$inferSelect['source']; orderId: string | null; priceC: number | null } } | null;
+  line: { orderId: string; was: { state: string; copyId: string | null; tappedFrom: string | null } } | null;
 }
 
 /** An instant's day, as an invoice's price is dated: "2026-11-16T08:00:00.000Z" → "2026-11-16T00:00:00.000Z". */
@@ -200,7 +262,7 @@ export const TAP_INVOICE_DAYS = 60;
  * date kept), and the line no longer the tap's, so its Undo is refused like any invoice's: one copy for one book bought.
  * A tap older than that is another purchase, and the invoice makes copies of its own. Returns the line's order id.
  */
-function deliver(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }): string | null {
+function deliver(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }, trace?: Delivered): string | null {
   const composed = and(eq(t.orderLine.bookId, l.bookId), inArray(t.order.status, ['drafted', 'quoted', 'invoiced']));
   const open = tx.select({ orderId: t.orderLine.orderId }).from(t.orderLine).innerJoin(t.order, eq(t.order.id, t.orderLine.orderId))
     .where(and(composed, inArray(t.orderLine.state, ['planned', 'quoted']))).orderBy(sql`${t.order.month} DESC`).get();
@@ -211,9 +273,24 @@ function deliver(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquir
     .find((r) => Math.abs(Date.parse(r.tappedAt) - at) <= TAP_INVOICE_DAYS * 86_400_000);
   const orderId = open?.orderId ?? tap?.orderId ?? null;
   const copy = { bookId: l.bookId, source: l.source, orderId, priceC: l.unitC };
-  if (tap) tx.update(t.copy).set(copy).where(eq(t.copy.id, tap.copyId)).run();
-  for (let i = tap ? 1 : 0; i < l.qty; i++) tx.insert(t.copy).values({ id: ulid(), ...copy, acquiredAt: l.acquiredAt }).run();
-  if (orderId) tx.update(t.orderLine).set({ state: 'delivered', copyId: null, tappedFrom: null }).where(and(eq(t.orderLine.orderId, orderId), eq(t.orderLine.bookId, l.bookId))).run();
+  const lineOf = (id: string) => and(eq(t.orderLine.orderId, id), eq(t.orderLine.bookId, l.bookId));
+  if (trace && orderId) {
+    const was = tx.select().from(t.orderLine).where(lineOf(orderId)).get()!;
+    trace.line = { orderId, was: { state: was.state, copyId: was.copyId, tappedFrom: was.tappedFrom } };
+  }
+  if (tap) {
+    if (trace) {
+      const was = tx.select().from(t.copy).where(eq(t.copy.id, tap.copyId)).get()!;
+      trace.tap = { copyId: tap.copyId, was: { source: was.source, orderId: was.orderId, priceC: was.priceC } };
+    }
+    tx.update(t.copy).set(copy).where(eq(t.copy.id, tap.copyId)).run();
+  }
+  for (let i = tap ? 1 : 0; i < l.qty; i++) {
+    const id = ulid();
+    tx.insert(t.copy).values({ id, ...copy, acquiredAt: l.acquiredAt }).run();
+    trace?.copies.push(id);
+  }
+  if (orderId) tx.update(t.orderLine).set({ state: 'delivered', copyId: null, tappedFrom: null }).where(lineOf(orderId)).run();
   return orderId;
 }
 
