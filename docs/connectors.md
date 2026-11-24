@@ -121,7 +121,9 @@ may not be one that ships.
 schema: 1
 id: quillmere                 # its folder's name
 name: Quillmere Books
-locale: { currency: CHF, language: de }     # ISO 4217: it counts only while this is the household's currency
+locale: { currency: CHF, language: de }     # ISO 4217: it counts only while this is the household's currency; the
+                                            # order letter Compose writes to it is in its language (locales/), else
+                                            # in the household's (PHILOBIBLOS_LOCALE), else English
 money: { before: [CHF, Fr.], after: [CHF] }    # how amounts are written: "CHF 19.90", "19.90 CHF" (its currency's decimals, grouped or not)
 #  decimal: '.'                                # optional (needed in a currency with three decimals): its decimal mark
 #  groups: [',', "'"]                          # optional: its thousands groups; ' ' only if listed (else "12 500" is refused)

@@ -17,7 +17,7 @@ import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { MONTHS } from '../month/order-mail';
+import { LETTERS } from '../household/locale';
 import { norm } from '../seed/import';
 import { isVerified, type VerifiedMail } from './read';
 import type { InvoiceLine, Parsed, QuoteLine, ShopLine } from './parse';
@@ -64,10 +64,20 @@ export function matchBook(books: BookKey[], l: { ean: string | null; title: stri
   return hits.length === 1 ? hits[0]!.id : null;
 }
 
-/** "Re: Book order, November 2026" → "2026-11". */
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Each letter's subject as a pattern: its month names and a year where the placeholders stand. */
+const SUBJECTS = Object.values(LETTERS).map((l) => ({
+  months: l.months,
+  re: new RegExp(`(?<![\\p{L}\\p{N}])${l.subject.split(/(\{month\}|\{year\})/).map((p) => (p === '{month}' ? `(?<month>${l.months.map(escape).join('|')})` : p === '{year}' ? '(?<year>\\d{4})' : escape(p))).join('')}(?![\\p{L}\\p{N}])`, 'u'),
+}));
+
+/** "Re: Book order, November 2026" → "2026-11", in any language Compose writes a letter in (locales/). */
 export function monthOfSubject(subject: string | null): string | null {
-  const m = new RegExp(`\\bBook order, (${MONTHS.join('|')}) (\\d{4})\\b`).exec(subject ?? '');
-  return m ? `${m[2]}-${String(MONTHS.indexOf(m[1]!) + 1).padStart(2, '0')}` : null;
+  for (const s of SUBJECTS) {
+    const g = s.re.exec(subject ?? '')?.groups;
+    if (g) return `${g.year}-${String(s.months.indexOf(g.month!) + 1).padStart(2, '0')}`;
+  }
+  return null;
 }
 
 function tiedOrder(tx: Tx, m: VerifiedMail) {

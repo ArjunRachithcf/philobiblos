@@ -1,0 +1,13 @@
+{
+  "language": "en",
+  "months": ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+  "subject": "Book order, {month} {year}",
+  "greeting": "Hello,",
+  "one": "I would like to order this book:",
+  "many": "I would like to order these {count} books:",
+  "isbn": "ISBN {isbn}",
+  "sendTo": "Please send them to:",
+  "quote": "Could you reply with the prices and delivery times before sending anything? I will give the payment details myself.",
+  "thanks": "Thank you,",
+  "tooLong": "(Paste the order from Philobiblos here: it is too long for this link.)"
+}

@@ -8,6 +8,7 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import { SealError, isSealed, keyProblem, sealingKey, unseal } from '../household/sealed';
 import { enabledConnectors, orderAddress } from '../connectors/enabled';
+import { letterShop } from '../household/locale';
 import type { Registry } from '../connectors/load';
 import { EntryError, recentEntries, recordEntry, undoEntry } from '../orders/entries';
 import { MonthError, changePicks, checkWindow, composeOrder, getMonth, getOrder, markOwned, orderListCsv, setMonthBudget, thisMonth } from '../month/plan';
@@ -48,12 +49,15 @@ export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, con
       if (typeof list !== 'boolean') throw new MonthError(400, 'list: true or false');
       checkWindow(db, month, true);
       // No-shop mode: the plain list needs no address and opens nothing sealed.
-      if (list) return reply.code(201).send(composeOrder(db, month, req.caller!.personId, 'list'));
+      if (list) return reply.code(201).send(composeOrder(db, month, req.caller!.personId, 'list', { household: cfg.locale }));
       const problem = keyProblem(cfg);
       if (problem && (isSealed(db, SEALED.bookshopEmail) || isSealed(db, SEALED.deliveryAddress))) throw new MonthError(409, `the sealing key is ${problem}: the server's PHILOBIBLOS_SEALING_KEY needs fixing`);
       const open = (name: string) => (isSealed(db, name) ? unseal(db, sealingKey(cfg), name) : null);
-      const places = { bookshopEmail: orderAddress(open(SEALED.bookshopEmail), enabledConnectors(db, connectors)), deliveryAddress: open(SEALED.deliveryAddress) };
-      return reply.code(201).send(composeOrder(db, month, req.caller!.personId, places));
+      const enabled = enabledConnectors(db, connectors);
+      const places = { bookshopEmail: orderAddress(open(SEALED.bookshopEmail), enabled), deliveryAddress: open(SEALED.deliveryAddress) };
+      // The letter in the language of the shop it goes to (its connector's), else the household's (household/locale.ts).
+      const shop = letterShop(places.bookshopEmail, enabled);
+      return reply.code(201).send(composeOrder(db, month, req.caller!.personId, places, { connector: shop?.connector.locale.language ?? null, household: cfg.locale }));
     } catch (e) { return fail(reply, e); }
   });
   // The shops an invoice may name by their connector (the enabled ones in force): any adult, ids and names only.

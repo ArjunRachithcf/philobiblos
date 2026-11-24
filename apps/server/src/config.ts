@@ -6,6 +6,7 @@ import { resolveEnv } from '@philobiblos/contracts/env';
 import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY, wildcardTooBroad } from './push/hosts';
 import { validTimeZone } from './jobs/zone';
 import { validCurrency } from './household/currency';
+import { parseLocale } from './household/locale';
 import type { MailboxPlace, Secret } from './net/imap';
 
 export type Mode = 'homerslab' | 'standalone';
@@ -42,6 +43,12 @@ export interface Config {
    * initCurrency); one it has is never replaced. null: none is assumed, an admin chooses it in Settings.
    */
   currency: string | null;
+  /**
+   * PHILOBIBLOS_LOCALE (BCP 47, such as en-GB or de-CH): the household's locale, read at every start (household/locale.ts):
+   * the order letter's language when the shop's connector names none Philobiblos has, and the delivery-address
+   * filter's common words. null: English.
+   */
+  locale: string | null;
   /** homerslab: the only address whose X-HomersLab-Person header is trusted. */
   trustedProxy: string | null;
   webDir: string | null;
@@ -122,6 +129,7 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
     port,
     timezone: parseTimeZone(env.PHILOBIBLOS_TZ),
     currency: parseCurrency(env.PHILOBIBLOS_CURRENCY),
+    locale: parseLocaleEnv(env.PHILOBIBLOS_LOCALE),
     trustedProxy: env.PHILOBIBLOS_TRUSTED_PROXY || null,
     webDir: env.PHILOBIBLOS_WEB_DIR ?? null,
     origin: origin.origin,
@@ -149,6 +157,14 @@ function parseTimeZone(v: string | undefined): string {
   const tz = v.trim();
   if (!validTimeZone(tz)) throw new Error(`PHILOBIBLOS_TZ: a time zone such as Europe/Zurich, not ${v.trim().slice(0, 80)}`);
   return tz;
+}
+
+/** PHILOBIBLOS_LOCALE: a BCP 47 tag, canonical (de-ch is de-CH); empty or unset is none. */
+function parseLocaleEnv(v: string | undefined): string | null {
+  if (v === undefined || !v.trim()) return null;
+  const l = parseLocale(v);
+  if (!l) throw new Error(`PHILOBIBLOS_LOCALE: a language tag such as en-GB or de-CH, not ${v.trim().slice(0, 20)}`);
+  return l.tag;
 }
 
 /** PHILOBIBLOS_CURRENCY: an ISO 4217 code this server knows, any case; empty or unset is none. */

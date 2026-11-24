@@ -22,6 +22,9 @@ services:
       PHILOBIBLOS_TZ: Europe/Zurich
       # The household's currency (ISO 4217) for a household that has none yet; empty: an admin chooses it in Settings.
       PHILOBIBLOS_CURRENCY: ${PHILOBIBLOS_CURRENCY:-}
+      # The household's locale (BCP 47, e.g. en-GB, de-CH): the order letter's language when the shop's connector names none
+      # Philobiblos writes, and the delivery-address filter's common words (locales/). Empty: English.
+      PHILOBIBLOS_LOCALE: ${PHILOBIBLOS_LOCALE:-}
       # AI: Ollama is the default; Claude only after the opt-in in Settings.
       OLLAMA_URL: ${OLLAMA_URL:-}
       # off: nothing leaves (prices, Open Library and covers stay as they are); docs/security.md

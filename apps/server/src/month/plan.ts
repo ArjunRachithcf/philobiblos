@@ -17,6 +17,7 @@ import { personSettings } from '../library/settings';
 import { householdZone } from '../jobs/schedule';
 import { listCsv, listText } from '../orders/list';
 import { mailto, orderText } from './order-mail';
+import { letterFor, type Letter } from '../household/locale';
 
 type S = components['schemas'];
 type Line = { bookId: string; forPerson: string; move: string | null; estimateC: number | null };
@@ -293,29 +294,33 @@ export function setMonthBudget(db: Db, month: string, me: string, body: unknown)
 }
 
 export interface OrderPlaces { bookshopEmail: string | null; deliveryAddress: string | null }
+/** The languages the letter may be in (household/locale.ts letterFor): the shop connector's, the household's. */
+export interface OrderLanguage { connector?: string | null; household?: string | null }
 
 /**
  * POST /orders: the month's picks as an order, and its Compose link (never sent by Philobiblos). `places: 'list'` is
  * no-shop mode (philobiblos#27 slice 5): the plain list for any shop or none, its mail text to no one and without the
  * delivery address (orders/list.ts), so it needs no address and opens nothing sealed.
  */
-export function composeOrder(db: Db, month: string, me: string, places: OrderPlaces | 'list'): S['Order'] {
+export function composeOrder(db: Db, month: string, me: string, places: OrderPlaces | 'list', language: OrderLanguage = {}): S['Order'] {
   checkMonth(month);
+  // The plain list is to no shop: the household's language.
+  const letter = letterFor(places === 'list' ? { household: language.household } : language);
   const list = places === 'list';
   if (!list && !places.bookshopEmail) throw new MonthError(409, 'an admin adds the bookshop’s address in Settings first, or make a plain list');
   // A composed order's list is read again (after a reload, or once books are bought): its books still to buy, and
   // nothing changes, so it never needs the picks to be editable.
   const had = orderOf(db, month);
-  if (list && had && had.status !== 'picked') return listOf(db, had);
+  if (list && had && had.status !== 'picked') return listOf(db, had, letter);
   const o = keep(db, month, me);
   editable(db, o);
   const lines = db.select().from(t.orderLine).where(eq(t.orderLine.orderId, o.id)).all();
   if (!lines.length) throw new MonthError(409, 'nothing is picked this month');
   const estimate = lines.reduce((n, l) => n + (l.estimateC ?? 0), 0);
   db.update(t.order).set({ status: 'drafted', estimateC: estimate }).where(eq(t.order.id, o.id)).run();
-  if (list) return listOf(db, orderOf(db, month)!);
-  const { subject, body } = orderText({ month, signedBy: getPerson(db, me)!.name, deliveryAddress: places.deliveryAddress, lines: lineTexts(db, lines) });
-  const link = mailto(places.bookshopEmail!, subject, body);
+  if (list) return listOf(db, orderOf(db, month)!, letter);
+  const { subject, body } = orderText({ month, signedBy: getPerson(db, me)!.name, deliveryAddress: places.deliveryAddress, lines: lineTexts(db, lines) }, letter);
+  const link = mailto(places.bookshopEmail!, subject, body, letter);
   return { ...orderView(db, orderOf(db, month)!), composeUrl: link.url, composeComplete: link.complete, composeTo: places.bookshopEmail!, composeSubject: subject, composeText: body };
 }
 
@@ -328,9 +333,9 @@ const lineTexts = (db: Db, lines: LineRow[]) => {
 const toBuy = (db: Db, orderId: string) => db.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, orderId), inArray(t.orderLine.state, ['planned', 'quoted']))).all();
 
 /** A composed order as its plain list: the mail text of the books still to buy, to no one, unsigned, no address. */
-function listOf(db: Db, o: typeof t.order.$inferSelect): S['Order'] {
-  const { subject, body } = listText({ month: o.month, lines: lineTexts(db, toBuy(db, o.id)) });
-  const link = mailto(null, subject, body);
+function listOf(db: Db, o: typeof t.order.$inferSelect, letter: Letter): S['Order'] {
+  const { subject, body } = listText({ month: o.month, lines: lineTexts(db, toBuy(db, o.id)) }, letter);
+  const link = mailto(null, subject, body, letter);
   return { ...orderView(db, o), listUrl: link.url, listComplete: link.complete, listSubject: subject, listText: body };
 }
 
