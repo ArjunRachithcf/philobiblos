@@ -107,6 +107,19 @@ describe('the list', () => {
     expect((await built.app.inject({ url: '/api/backlog?limit=500', headers: { cookie: cookie.alex! } })).statusCode).toBe(400);
   });
 
+  it('a free price (0: a gift, a promotion) is never the cheapest: the book keeps its other price, or none (philobiblos#53)', async () => {
+    const priced = (await list('sort:price')).items.find((i) => i.price != null)!;
+    const other = (await list('sort:price')).items.find((i) => i.price == null && i.book.id !== priced.book.id)!;
+    db.insert(t.bookOffer).values([
+      { bookId: priced.book.id, source: 'test-free', priceC: 0, seenAt: '2026-11-02T00:00:00.000Z' },
+      { bookId: other.book.id, source: 'test-free', priceC: 0, seenAt: '2026-11-02T00:00:00.000Z' },
+    ]).run();
+    const after = (await list('sort:price')).items;
+    expect(after.find((i) => i.id === priced.id)!.price).toBe(priced.price);
+    expect(after.find((i) => i.id === other.id)!.price).toBeUndefined();
+    db.delete(t.bookOffer).where(eq(t.bookOffer.source, 'test-free')).run();
+  });
+
   it('a book the household comes to own closes as owned', async () => {
     db.insert(t.copy).values({ id: 'c_test', bookId: bookId('Markets Made Simple'), source: 'manual', acquiredAt: '2026-11-02T00:00:00.000Z' }).run();
     const closed = await list('is:closed reason:owned');

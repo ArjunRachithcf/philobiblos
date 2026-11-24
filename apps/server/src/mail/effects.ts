@@ -121,7 +121,8 @@ export function quoteOrder(tx: Tx, order: { id: string }, lines: { bookId: strin
     // A line already delivered (a book bought from the plain list, a tap) stays as it is: the household owns it.
     tx.update(t.orderLine).set({ state: l.available ? 'quoted' : 'unavailable', quotedC: l.available ? l.priceC : null, delivery: l.delivery })
       .where(and(eq(t.orderLine.orderId, order.id), eq(t.orderLine.bookId, l.bookId), ne(t.orderLine.state, 'delivered'))).run();
-    if (l.available && l.priceC != null) {
+    // A free quote (0) is no price learnt, as a free invoice line is none (philobiblos#53).
+    if (l.available && l.priceC != null && l.priceC > 0) {
       const v = { priceC: l.priceC, availability: l.delivery, seenAt: now };
       tx.insert(t.bookOffer).values({ bookId: l.bookId, source: 'quote', ...v }).onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: v }).run();
     }
@@ -151,7 +152,7 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
   const out = p.lines.map((l): Matched<InvoiceLine> => ({ ...l, bookId: matchBook(books, l) }));
   for (const l of out) {
     if (!l.bookId) continue;
-    const orderId = receive(tx, { bookId: l.bookId, qty: l.qty, unitC: Math.round(l.totalC / l.qty), acquiredAt: acquired, source: 'invoice' }, o.now);
+    const orderId = receive(tx, { bookId: l.bookId, qty: l.qty, unitC: Math.round(l.totalC / l.qty), acquiredAt: acquired, source: 'invoice', day: m.content.day }, o.now);
     if (orderId) invoiced.set(orderId, (invoiced.get(orderId) ?? 0) + l.totalC);
   }
   invoiceOrders(tx, invoiced);
@@ -163,13 +164,30 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
  * copies owned at the unit price (the copies' source is the caller's), the price paid learnt (book_offer, always source
  * 'invoice'), and the line of the composed order the book was ordered in, if any, delivered (see `deliver`). Returns
  * that order's id.
+ *
+ * The price learnt is the latest invoice's by the invoice's day (philobiblos#53): its row's seen_at is that day, as UTC
+ * midnight (`day`: a mail's, as its Date header names it in its own zone, read.ts `mailDay`; else the UTC day of
+ * `acquiredAt`, a typed invoice's day as typed). A mail's time of day and a typed day compare alike; a day still to
+ * come counts as today, so a misdated invoice never holds the price past today's. An invoice of an earlier day leaves
+ * it, however late it is read or decided (an Inbox line weeks after its mail); one of the same day replaces it. A free
+ * line (0: a gift, a promotion) says nothing of what the book costs, and is no price learnt. Migration 0019 repaired
+ * the rows from before this.
  */
-export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual' }, now: string): string | null {
+export function receive(tx: Tx, l: { bookId: string; qty: number; unitC: number; acquiredAt: string; source: 'invoice' | 'manual'; day?: string | null }, now: string): string | null {
   const orderId = deliver(tx, l);
-  const v = { priceC: l.unitC, availability: null, seenAt: now };
-  tx.insert(t.bookOffer).values({ bookId: l.bookId, source: 'invoice', ...v }).onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: v }).run();
+  if (l.unitC > 0) {
+    const at = Date.parse(l.acquiredAt);
+    const today = invoiceDay(now);
+    const day = l.day ?? (Number.isNaN(at) ? today : invoiceDay(new Date(at).toISOString()));
+    const v = { priceC: l.unitC, availability: null, seenAt: day < today ? day : today };
+    tx.insert(t.bookOffer).values({ bookId: l.bookId, source: 'invoice', ...v })
+      .onConflictDoUpdate({ target: [t.bookOffer.bookId, t.bookOffer.source], set: v, setWhere: sql`excluded.seen_at >= ${t.bookOffer.seenAt}` }).run();
+  }
   return orderId;
 }
+
+/** An instant's day, as an invoice's price is dated: "2026-11-16T08:00:00.000Z" → "2026-11-16T00:00:00.000Z". */
+const invoiceDay = (iso: string) => `${iso.slice(0, 10)}T00:00:00.000Z`;
 
 /** How far apart a tap and the invoice of the same book may be for the invoice to take the tap's copy (philobiblos#47). */
 export const TAP_INVOICE_DAYS = 60;

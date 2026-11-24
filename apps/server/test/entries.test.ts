@@ -9,6 +9,7 @@ import { bookIsbn } from '../src/books/isbn';
 import { CSV_LIMITS, CsvError, parseCsv } from '../src/orders/csv';
 import { ENTRY_LIMITS, EntryError, recordEntry } from '../src/orders/entries';
 import { refreshMail } from '../src/mail/job';
+import { receive } from '../src/mail/effects';
 import type { MediaOutcome } from '../src/media/client';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
 import { CFG, fakeBox, message, resolver, signed } from './mailkit';
@@ -206,10 +207,72 @@ const PDF = Buffer.from('%PDF-1.4\n% invented, read only by the fake worker belo
 const rows = (): MediaOutcome => ({ id: 'j', ok: true, kind: 'pdf.text', pages: 1, truncated: false, rows: [
   ['9780000000002', 'The Long Tide of Markets', '1 ST', '19.90', '19.90 CHF', '2.6 %'], ['Total', '19.90 CHF'],
 ] });
-async function mailInvoice(db: W, number: string) {
-  const raw = await signed(message({ id: `inv-${number}`, from: 'rechnung@quillmere.example', subject: `Ihre Quillmere-Rechnung Nr. ${number}`, body: 'Guten Tag, Ihre Rechnung finden Sie im Anhang.', pdf: PDF }));
+async function mailInvoice(db: W, number: string, date?: string) {
+  const raw = await signed(message({ id: `inv-${number}`, from: 'rechnung@quillmere.example', subject: `Ihre Quillmere-Rechnung Nr. ${number}`, body: 'Guten Tag, Ihre Rechnung finden Sie im Anhang.', pdf: PDF, ...(date ? { date } : {}) }));
   await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: 1, raw }]), resolver, pdfText: async () => rows() });
 }
+const paid = (db: W, bookId: string) => db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, bookId)).all().map((o) => [o.source, o.priceC, o.seenAt]);
+
+describe('the price paid learnt: the latest invoice\'s, by its date (philobiblos#53)', () => {
+  it('an invoice older than the one the price came from leaves it; a newer one, or one of the same day, replaces it', () => {
+    const db = world();
+    record(db, { kind: 'invoice', number: 'R-2', date: '2026-11-12', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
+    record(db, { kind: 'invoice', number: 'R-1', date: '2026-10-01', lines: [{ isbn: '9780000000002', qty: 1, price: 1500 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1990, '2026-11-12T00:00:00.000Z']]);
+    record(db, { kind: 'invoice', number: 'R-3', date: '2026-11-12', lines: [{ isbn: '9780000000002', qty: 1, price: 1890 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1890, '2026-11-12T00:00:00.000Z']]);
+    record(db, { kind: 'invoice', number: 'R-4', date: '2026-11-14', lines: [{ isbn: '9780000000002', qty: 1, price: 2090 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 2090, '2026-11-14T00:00:00.000Z']]);
+  });
+
+  it('a mailed invoice and a typed one are ordered by their day alike: an earlier day leaves the mail\'s price, the same day replaces it', async () => {
+    const db = world();
+    await mailInvoice(db, '88001');
+    record(db, { kind: 'invoice', number: 'R-1', date: '2026-11-12', lines: [{ isbn: '9780000000002', qty: 1, price: 1500 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1990, '2026-11-16T00:00:00.000Z']]);
+    record(db, { kind: 'invoice', number: 'R-2', date: '2026-11-16', lines: [{ isbn: '9780000000002', qty: 1, price: 1890 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1890, '2026-11-16T00:00:00.000Z']]);
+  });
+
+  it('a mail\'s day is the one its Date header names, in its own zone: just after midnight there is that day, not the day before in UTC', async () => {
+    const db = world();
+    await mailInvoice(db, '88002', 'Thu, 12 Nov 2026 00:30:00 +0100');
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1990, '2026-11-12T00:00:00.000Z']]);
+    record(db, { kind: 'invoice', number: 'R-1', date: '2026-11-11', lines: [{ isbn: '9780000000002', qty: 1, price: 1500 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1990, '2026-11-12T00:00:00.000Z']]);
+  });
+
+  it('a day still to come counts as today: an invoice misdated ahead holds the price no longer than today\'s invoices', () => {
+    const db = world();
+    const today = '2026-11-16T00:00:00.000Z';
+    db.transaction((tx) => { receive(tx, { bookId: 'b_tide', qty: 1, unitC: 9900, acquiredAt: '2027-06-01T00:00:00.000Z', source: 'invoice' }, NOW.toISOString()); });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 9900, today]]);
+    record(db, { kind: 'invoice', number: 'R-0', date: '2026-11-15', lines: [{ isbn: '9780000000002', qty: 1, price: 1400 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 9900, today]]);
+    record(db, { kind: 'invoice', number: 'R-1', date: '2026-11-16', lines: [{ isbn: '9780000000002', qty: 1, price: 1500 }] });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1500, today]]);
+    db.transaction((tx) => { receive(tx, { bookId: 'b_tide', qty: 1, unitC: 1600, acquiredAt: '2026-11-17T08:00:00.000Z', source: 'invoice' }, '2026-11-17T09:00:00.000Z'); });
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1600, '2026-11-17T00:00:00.000Z']]);
+  });
+
+  it('a free line (0: a gift, a promotion) is no price: the copy is owned at 0 and the price learnt stays', () => {
+    const db = world();
+    record(db, { kind: 'invoice', number: 'R-1', date: '2026-11-01', lines: [{ isbn: '9780000000002', qty: 1, price: 1990 }] });
+    record(db, { kind: 'invoice', number: 'R-2', date: '2026-11-12', lines: [{ isbn: '9780000000002', qty: 1, price: 0 }, { title: 'the quiet hedgehog', author: 'Paulsen', qty: 1, price: 0 }] });
+    expect(copies(db).filter((c) => c[0] === 'b_tide').map((c) => c[3])).toEqual([0, 1990]);
+    expect(paid(db, 'b_tide')).toEqual([['invoice', 1990, '2026-11-01T00:00:00.000Z']]);
+    expect(paid(db, 'b_hedgehog')).toEqual([]);
+  });
+
+  it('a free quote line (0) is no price learnt either; the line is quoted at 0', () => {
+    const db = world();
+    db.update(t.order).set({ status: 'quoted' }).where(eq(t.order.id, 'o_nov')).run();
+    record(db, { kind: 'quote', month: '2026-11', lines: [{ isbn: '9780000000002', price: 0 }, { title: 'the quiet hedgehog', author: 'Paulsen', price: 1690 }] });
+    expect(lines(db)).toMatchObject({ b_tide: { state: 'quoted', quotedC: 0 }, b_hedgehog: { state: 'quoted', quotedC: 1690 } });
+    expect(paid(db, 'b_tide')).toEqual([]);
+    expect(paid(db, 'b_hedgehog').map((o) => o.slice(0, 2))).toEqual([['quote', 1690]]);
+  });
+});
 
 describe('a quote typed in: the shop\'s answer to the month\'s order', () => {
   it('lines quoted at their price or unavailable; the order\'s total is the quote\'s and it is quoted; the prices learnt', () => {

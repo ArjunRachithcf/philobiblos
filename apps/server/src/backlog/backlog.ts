@@ -50,9 +50,10 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
   const unknown = getMoney(db).unknownPrice / 100;
   const adultWeights = { ...DEFAULT_ADULT_WEIGHTS, priceUnknown: unknown };
   const kidWeights = { ...DEFAULT_KID_WEIGHTS, priceUnknown: unknown };
+  // The cheapest price known; a free one (0: a gift, a promotion) says nothing of what the book costs (philobiblos#53).
   const offers = new Map<string, number>();
   for (const o of db.select().from(t.bookOffer).where(inArray(t.bookOffer.bookId, bookIds)).all()) {
-    if (o.priceC != null && (!offers.has(o.bookId) || o.priceC < offers.get(o.bookId)!)) offers.set(o.bookId, o.priceC);
+    if (o.priceC != null && o.priceC > 0 && (!offers.has(o.bookId) || o.priceC < offers.get(o.bookId)!)) offers.set(o.bookId, o.priceC);
   }
   const owned = new Set(db.selectDistinct({ id: t.copy.bookId }).from(t.copy).all().map((r) => r.id));
   // A repeat counts once a person confirmed it: the AI's (checkRedundant) are proposals, and close nothing by themselves.
