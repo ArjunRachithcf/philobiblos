@@ -159,12 +159,34 @@ describe('upgrades', () => {
     expect(client.prepare('SELECT budget_min_c, budget_max_c, timezone, ai_provider, currency, unknown_price_c FROM household_settings').all()).toEqual([
       { budget_min_c: 12000, budget_max_c: 18000, timezone: 'America/New_York', ai_provider: 'none', currency: 'CHF', unknown_price_c: 2500 },
     ]);
-    // The database's own rules hold the currency to a code's shape and the unknown price to the budget's range.
-    for (const bad of [`currency = 'chf'`, `currency = 'EURO'`, `currency = ''`, 'unknown_price_c = -1', 'unknown_price_c = 1000001']) {
+    // The database's own rules hold the currency to a code's shape and the unknown price to any amount's range.
+    for (const bad of [`currency = 'chf'`, `currency = 'EURO'`, `currency = ''`, 'unknown_price_c = -1', 'unknown_price_c = 1000000000001']) {
       expect(() => client.prepare(`UPDATE household_settings SET ${bad}`).run(), bad).toThrow(/CHECK/);
     }
     // A database made new has no settings row until the first start, which gives it its currency (or none).
     expect(openDb(':memory:').$client.prepare('SELECT count(*) AS n FROM household_settings').get()).toEqual({ n: 0 });
+  });
+  it('a household from before its own price limits scores as it did: 40 and 60 of its currency, followed or its own (philobiblos#40)', () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'philobiblos-mig-')), 'drizzle');
+    cpSync(drizzleDir, dir, { recursive: true });
+    const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] };
+    const before = journal.entries.findIndex((e) => e.tag === '0022_household_price_limits');
+    expect(before).toBeGreaterThan(0);
+    writeFileSync(join(dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.slice(0, before) }));
+    const run = (unknown: number) => {
+      const client = new Database(':memory:');
+      client.pragma('foreign_keys = ON');
+      const db = drizzle(client);
+      migrate(db, { migrationsFolder: dir });
+      client.prepare(`INSERT INTO household_settings (id, currency, unknown_price_c) VALUES (1, 'EUR', ?)`).run(unknown);
+      migrate(db, { migrationsFolder: drizzleDir });
+      return client.prepare('SELECT unknown_price_c, price_high_c, price_max_c FROM household_settings').get();
+    };
+    // At 25 the limits that follow it are 40 and 60: it follows, as a new household does.
+    expect(run(2500)).toEqual({ unknown_price_c: 2500, price_high_c: null, price_max_c: null });
+    // At any other, its limits of 40 and 60 become its own.
+    expect(run(3000)).toEqual({ unknown_price_c: 3000, price_high_c: 4000, price_max_c: 6000 });
+    expect(run(0)).toEqual({ unknown_price_c: 0, price_high_c: 4000, price_max_c: 6000 });
   });
   it('prices learnt before philobiblos#53 are repaired: each invoice row is the latest invoice\'s price and day, a free row goes (philobiblos#53)', () => {
     const dir = join(mkdtempSync(join(tmpdir(), 'philobiblos-mig-')), 'drizzle');

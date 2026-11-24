@@ -239,7 +239,7 @@ describe('the budget (one shared monthly budget; admins set it)', () => {
   });
 
   it.each([
-    [{ min: 13000 }], [{ min: -1 }], [{ max: 10.5 }], [{ max: 2_000_000 }], [{ rollover: true }], ['x'],
+    [{ min: 13000 }], [{ min: -1 }], [{ max: 10.5 }], [{ max: 1_000_000_000_001 }], [{ rollover: true }], ['x'],
   ])('400: %j', async (b) => {
     expect((await patch('alex', { budget: b })).statusCode).toBe(400);
     expect(await budget()).toEqual({ min: 8000, max: 12000 });

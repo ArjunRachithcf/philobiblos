@@ -163,11 +163,26 @@ describe('Order markup', () => {
     expect(parse(ld(order([offer()], { orderStatus: status })))).toMatchObject({ kind: 'online_order' });
   });
 
-  it('a quantity above 99 is no count; an amount above 9999.99 is none Philobiblos reads', () => {
+  it('a quantity above 99 is no count; an amount above any amount\'s ceiling is none Philobiblos reads', () => {
     expect(parse(ld(order([offer({ qty: 99 })])))).toMatchObject({ kind: 'online_order', lines: [{ qty: 99 }] });
     expect(parse(ld(order([offer({ qty: 100 })])))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/quantity/) });
     expect(parse(ld(order([offer({ price: '9999.99' })])))).toMatchObject({ kind: 'online_order', lines: [{ priceC: 999999 }] });
-    expect(parse(ld(order([offer({ price: '10000' })])))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/price/) });
+    expect(parse(ld(order([offer({ price: '10000000000' })])))).toMatchObject({ kind: 'online_order', lines: [{ priceC: 1_000_000_000_000 }] });
+    expect(parse(ld(order([offer({ price: '10000000000.01' })])))).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/price/) });
+  });
+
+  it('in a currency without decimals, its amounts read as whole units, of any size; a fraction of a unit is none (philobiblos#40)', () => {
+    const yen = { ...RULES, markup: { ...RULES.markup!, currency: 'JPY' } };
+    const inYen = (price: unknown) => parseMarkup(ldBlocks(ld(order([offer({ price, currency: 'JPY' })]))), [], yen);
+    expect(inYen('1500')).toMatchObject({ kind: 'online_order', lines: [{ priceC: 150000 }] });
+    expect(inYen(1500)).toMatchObject({ kind: 'online_order', lines: [{ priceC: 150000 }] });
+    expect(inYen('25000')).toMatchObject({ kind: 'online_order', lines: [{ priceC: 2500000 }] });
+    expect(inYen('1500.00')).toMatchObject({ kind: 'online_order', lines: [{ priceC: 150000 }] });
+    expect(inYen('1500.5')).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/price/) });
+    // A search page's offer too.
+    const page = `<html><body>${ld({ '@context': CTX, '@type': 'Book', name: 'The Long Tide of Markets', author: { '@type': 'Person', name: 'Mira Okafor' }, sku: 'LK-1', offers: { '@type': 'Offer', price: '24800', priceCurrency: 'KRW' } })}</body></html>`;
+    expect(pageOffer(page, 'The Long Tide of Markets', ['Mira Okafor'], 'KRW')).toMatchObject({ priceC: 2480000 });
+    expect(pageOffer(page.replace('24800', '24800.5'), 'The Long Tide of Markets', ['Mira Okafor'], 'KRW')).toMatchObject({ priceC: null });
   });
 
   it('an ISBN-10 is read as its ISBN-13; one whose check digit is wrong is an ISBN Philobiblos cannot read', () => {

@@ -264,6 +264,40 @@ test('the currency: none is assumed; an admin chooses it, and every amount is in
   await expectAccessible(page, 'settings, the currency');
 });
 
+test('price limits in the household\'s currency, and a currency without decimals (philobiblos#40)', async () => {
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const follow = page.getByLabel('Follow the unknown price');
+  await expect(follow).toBeChecked();
+  await expect(page.getByText(/^Amounts are in/)).toContainText(/above CHF\s40.*above CHF\s60/);
+  // The household's own: the "dear" one at most the other.
+  await follow.uncheck();
+  await page.getByLabel(/^Dear above/).fill('50');
+  await page.getByLabel(/^Left out above/).fill('45');
+  await page.getByRole('button', { name: 'Save the currency' }).click();
+  await expect(page.getByRole('alert')).toContainText('above the one that leaves it out');
+  await page.getByLabel(/^Left out above/).fill('80');
+  await page.getByRole('button', { name: 'Save the currency' }).click();
+  await expect(page.getByText(/^Amounts are in/)).toContainText(/above CHF\s50.*above CHF\s80/);
+  await expectAccessible(page, 'settings, own price limits');
+  // In a currency without decimals, amounts are whole units, typed and shown without them.
+  await page.getByLabel('The household’s currency').selectOption('JPY');
+  await page.getByLabel(/^An unknown price counts as/).fill('2500.5');
+  await page.getByRole('button', { name: 'Save the currency' }).click();
+  await expect(page.getByRole('alert')).toContainText('for example 1890');
+  await page.getByLabel(/^An unknown price counts as/).fill('2500');
+  await follow.check();
+  await page.getByRole('button', { name: 'Save the currency' }).click();
+  await expect(page.getByText(/^Amounts are in/)).toContainText('JPY');
+  await expect(page.getByText(/^Amounts are in/)).toContainText(/2,500\b(?![.,]\d)/);
+  await expect(page.getByText(/^Amounts are in/)).toContainText(/4,000\b(?![.,]\d).*6,000\b(?![.,]\d)/);
+  // Back as it was, for the tests after this one.
+  await page.getByLabel('The household’s currency').selectOption('CHF');
+  await page.getByLabel(/^An unknown price counts as/).fill('25');
+  await page.getByRole('button', { name: 'Save the currency' }).click();
+  await expect(page.getByText(/^Amounts are in/)).toContainText(/CHF\s25/);
+  await expect(follow).toBeChecked();
+});
+
 test('the budget: an admin sets it; it is not carried over', async () => {
   await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Monthly budget' })).toBeVisible();

@@ -10,7 +10,8 @@
     "./openapi": "./src/openapi.gen.ts",
     "./media": "./src/media.ts",
     "./env": "./src/env.ts",
-    "./connector": "./src/connector.ts"
+    "./connector": "./src/connector.ts",
+    "./money": "./src/money.ts"
   },
   "scripts": {
     "gen": "openapi-typescript ../../contracts/openapi.yaml -o src/openapi.gen.ts && node scripts/gen-ai-types.mjs",

@@ -1,6 +1,6 @@
 // Price estimates (ADR 0008): a read-only lookup behind `PriceSource`, so it can be swapped or turned off. The bookshop's
 // quote stays the truth; an estimate only helps the month's plan fit the budget, and an unknown price counts as the
-// household's own amount (Settings, household/money.ts), in the plan and in packages/scoring (`priceUnknown`).
+// household's own amount (Settings, household/money.ts), in the plan and in packages/scoring (`priceUnknownC`).
 //
 // Which shop is asked, and how its page reads, is the connector's (`prices` in connectors/<id>/connector.yaml): the
 // search URL, the article links, the print formats, the languages and the availability words. Nothing here names a shop.
@@ -178,7 +178,7 @@ export function pickProduct(nodes: LdNode[], title: string, authors: string[], c
     if (list(p.bookFormat, 4).some((f) => /(?:^|[/:])(?:EBook|AudiobookFormat)$/.test(String(f)))) continue;
     for (const o of list(p.offers, 20).map(node)) {
       if (!o || o.priceCurrency !== currency) continue;
-      const priceC = hundredths(o[isType(o, 'AggregateOffer') ? 'lowPrice' : 'price']);
+      const priceC = hundredths(o[isType(o, 'AggregateOffer') ? 'lowPrice' : 'price'], currency);
       const at = priceC ?? Number.MAX_SAFE_INTEGER;
       if (!best || at < best.at) best = { externalId: idOf(p), priceC, availability: availabilityOf(o.availability), at };
     }

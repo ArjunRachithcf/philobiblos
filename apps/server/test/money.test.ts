@@ -12,7 +12,8 @@ import { ConnectorError, connectorView, enabledConnectors, setConnector } from '
 import { readConnector } from '../src/connectors/load';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
-import { BUDGET_CEILING_C } from '../src/household/budget';
+import { AMOUNT_CEILING_C } from '@philobiblos/contracts/money';
+import { getMonth } from '../src/month/plan';
 import { DEFAULT_UNKNOWN_PRICE_C } from '../src/household/money';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
 import { CONNECTORS } from './mailkit';
@@ -20,6 +21,8 @@ import { CONNECTORS } from './mailkit';
 const env = (more: Record<string, string> = {}) => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, PHILOBIBLOS_EGRESS: 'off', ...more });
 const start = (db: Db, more: Record<string, string> = {}) => buildApp(env(more), db, { connectors: CONNECTORS, jobs: { schedule: { start: false } } });
 const VERSION = CONNECTORS.get('quillmere')!.version;
+/** The price limits of a household that sets none: they follow its unknown price of 25 (packages/scoring price.ts). */
+const FOLLOWING = { high: 4000, max: 6000, own: false };
 
 function admins(): Db {
   const db = openDb(':memory:');
@@ -45,19 +48,19 @@ describe('the household\'s currency', () => {
   it('PHILOBIBLOS_CURRENCY is the currency the household starts with; once its settings exist it is never read again', async () => {
     const db = admins();
     const a = await client(db, { PHILOBIBLOS_CURRENCY: 'EUR' });
-    expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: 'EUR', unknownPrice: DEFAULT_UNKNOWN_PRICE_C });
+    expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: 'EUR', unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING });
     await a.built.app.close();
     const b = await client(db, { PHILOBIBLOS_CURRENCY: 'GBP' });
     expect((await b.get('p_admin', '/api/settings')).json().money.currency).toBe('EUR');
     // Everyone signed in sees it (the screens write amounts in it), from /me.
-    expect((await b.get('p_adult', '/api/me')).json().money).toEqual({ currency: 'EUR', unknownPrice: DEFAULT_UNKNOWN_PRICE_C });
+    expect((await b.get('p_adult', '/api/me')).json().money).toEqual({ currency: 'EUR', unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING });
     await b.built.app.close();
   });
 
   it('unset, the household has no currency until it is chosen: none is assumed; set at a later start, it fills that in', async () => {
     const db = admins();
     const a = await client(db);
-    expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: null, unknownPrice: DEFAULT_UNKNOWN_PRICE_C });
+    expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: null, unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING });
     expect((await a.get('p_adult', '/api/me')).json().money.currency).toBeNull();
     await a.built.app.close();
     // An enabling made while there was no currency (by hand: the server refuses it) does not survive the filling in.
@@ -100,12 +103,12 @@ describe('the household\'s currency', () => {
 });
 
 describe('the unknown price is the household\'s own', () => {
-  it('25 in the household\'s currency by default; an admin sets it, whole hundredths from 0 to the budget\'s ceiling', async () => {
+  it('25 in the household\'s currency by default; an admin sets it, whole hundredths from 0 to any amount\'s ceiling', async () => {
     expect(DEFAULT_UNKNOWN_PRICE_C).toBe(2500);
     const db = household();
     const a = await client(db);
     expect((await a.patch('p_sam', { money: { unknownPrice: 4000 } })).statusCode).toBe(403);
-    for (const bad of [-1, 1.5, BUDGET_CEILING_C + 1, '4000', null]) expect((await a.patch('p_alex', { money: { unknownPrice: bad } })).statusCode, String(bad)).toBe(400);
+    for (const bad of [-1, 1.5, AMOUNT_CEILING_C + 1, '4000', null]) expect((await a.patch('p_alex', { money: { unknownPrice: bad } })).statusCode, String(bad)).toBe(400);
     expect((await a.patch('p_alex', { money: { unknownPrice: 4000 } })).statusCode).toBe(200);
     expect((await a.get('p_alex', '/api/settings')).json().money.unknownPrice).toBe(4000);
     await a.built.app.close();
@@ -124,12 +127,15 @@ describe('the unknown price is the household\'s own', () => {
     await a.built.app.close();
   });
 
-  it('the scores read it too: an unknown price above a person\'s price limit leaves the book out', () => {
+  it('the scores read it too: an unknown price above the household\'s own price limit leaves the book out', () => {
     const db = household();
     const tide = () => allCandidates(db, new Date(), 'p_alex').find((r) => r.personId === 'p_alex' && r.book.id === 'b_tide')!;
     expect(tide().score).toBeDefined();
-    // Above packages/scoring's priceMax (60): a book whose price nobody knows now counts as too dear.
+    // Limits that follow the unknown price never leave out a book whose price nobody knows, at any amount.
     db.update(t.householdSettings).set({ unknownPriceC: 7000 }).run();
+    expect(tide().score).toBeDefined();
+    // The household's own limit of 60: a book whose price nobody knows now counts as too dear.
+    db.update(t.householdSettings).set({ priceHighC: 4000, priceMaxC: 6000 }).run();
     expect(tide().score).toBeUndefined();
     expect(tide().scoreParts).toEqual([expect.objectContaining({ kind: 'excluded' })]);
   });
@@ -148,8 +154,10 @@ describe('the kids\' unknown price is the household\'s too', () => {
   it('a kid\'s score prices an unknown price at the household\'s amount', () => {
     const db = withKidsBook();
     const fox = allCandidates(db, new Date(), 'p_alex').find((r) => r.book.id === 'b_fox')!;
-    // packages/scoring kids: -pricePerUnit (0.3) for each unit of the price: 10, not the scoring's own 25.
-    expect(fox.scoreParts!.find((p) => p.kind === 'price')!.value).toBeCloseTo(-3);
+    // packages/scoring kids: 12 points at the "dear" limit, which follows the unknown price (16 at 10): 10 costs 7.5.
+    expect(fox.scoreParts!.find((p) => p.kind === 'price')!.value).toBeCloseTo(-7.5);
+    db.update(t.householdSettings).set({ priceHighC: 4000, priceMaxC: 6000 }).run();
+    expect(allCandidates(db, new Date(), 'p_alex').find((r) => r.book.id === 'b_fox')!.scoreParts!.find((p) => p.kind === 'price')!.value).toBeCloseTo(-3);
   });
 
   it('the kids\' basket fits the budget at the household\'s unknown price: at 10 the book fits, at 25 it would not', async () => {
@@ -162,6 +170,94 @@ describe('the kids\' unknown price is the household\'s too', () => {
     expect(month.kids.flatMap((g: { picks: Pick[] }) => g.picks).map((p: Pick) => p.candidate.book.id)).toEqual(['b_fox']);
     expect(month.total).toBe(2000);
     await a.built.app.close();
+  });
+});
+
+describe('price limits in the household\'s currency (philobiblos#40)', () => {
+  it('a household that sets none has limits that follow its unknown price; an admin sets its own, or follows again', async () => {
+    const db = household();
+    const a = await client(db);
+    expect((await a.get('p_alex', '/api/settings')).json().money.priceLimits).toEqual(FOLLOWING);
+    expect((await a.patch('p_alex', { money: { unknownPrice: 3000 } })).statusCode).toBe(200);
+    expect((await a.get('p_alex', '/api/settings')).json().money.priceLimits).toEqual({ high: 4800, max: 7200, own: false });
+    expect((await a.patch('p_sam', { money: { priceLimits: { high: 3000, max: 5000 } } })).statusCode).toBe(403);
+    expect((await a.patch('p_alex', { money: { priceLimits: { high: 3000, max: 5000 } } })).statusCode).toBe(200);
+    expect((await a.get('p_alex', '/api/settings')).json().money.priceLimits).toEqual({ high: 3000, max: 5000, own: true });
+    expect((await a.get('p_sam', '/api/me')).json().money.priceLimits).toEqual({ high: 3000, max: 5000, own: true });
+    // Its own limits stay when the unknown price changes.
+    expect((await a.patch('p_alex', { money: { unknownPrice: 1000 } })).statusCode).toBe(200);
+    expect((await a.get('p_alex', '/api/settings')).json().money.priceLimits).toEqual({ high: 3000, max: 5000, own: true });
+    expect((await a.patch('p_alex', { money: { priceLimits: null } })).statusCode).toBe(200);
+    expect((await a.get('p_alex', '/api/settings')).json().money.priceLimits).toEqual({ high: 1600, max: 2400, own: false });
+    // An unknown price of 0 has none that follow it.
+    expect((await a.patch('p_alex', { money: { unknownPrice: 0 } })).statusCode).toBe(200);
+    expect((await a.get('p_alex', '/api/settings')).json().money.priceLimits).toEqual({ high: null, max: null, own: false });
+    await a.built.app.close();
+  });
+
+  it('its own limits: whole amounts in its currency, the "dear" one at most the other, both or neither', async () => {
+    const db = household();
+    const a = await client(db);
+    for (const bad of [{ high: 5000 }, { high: 6000, max: 5000 }, { high: -1, max: 5000 }, { high: 1.5, max: 5000 }, { high: 1000, max: AMOUNT_CEILING_C + 1 },
+      { high: '1000', max: 5000 }, { high: 1000, max: 5000, ratio: 2 }, [1000, 5000], 'none']) {
+      const r = await a.patch('p_alex', { money: { priceLimits: bad } });
+      expect(r.statusCode, JSON.stringify(bad)).toBe(400);
+      expect(r.json().error).toMatch(/priceLimits/);
+    }
+    expect((await a.patch('p_alex', { money: { priceLimits: { high: 0, max: 0 } } })).statusCode).toBe(200);
+    expect(() => db.update(t.householdSettings).set({ priceHighC: 1000, priceMaxC: null }).run()).toThrow(/CHECK/);
+    expect(() => db.update(t.householdSettings).set({ priceHighC: 2000, priceMaxC: 1000 }).run()).toThrow(/CHECK/);
+    await a.built.app.close();
+  });
+
+  it('in a currency without decimals, every amount an admin sets is whole: no fraction of a unit it cannot write', async () => {
+    const db = household();
+    db.delete(t.connectorEnabled).run();
+    const a = await client(db);
+    expect((await a.patch('p_alex', { money: { currency: 'JPY', unknownPrice: 250000 } })).statusCode).toBe(200);
+    for (const body of [{ money: { unknownPrice: 250050 } }, { money: { priceLimits: { high: 400000, max: 600050 } } }, { budget: { min: 1000050, max: 2000000 } }]) {
+      const r = await a.patch('p_alex', body);
+      expect(r.statusCode, JSON.stringify(body)).toBe(400);
+      expect(r.json().error).toMatch(/whole/);
+    }
+    expect((await a.patch('p_alex', { money: { priceLimits: { high: 400000, max: 600000 } }, budget: { min: 1000000, max: 2000000 } })).statusCode).toBe(200);
+    // A month's own budget too.
+    const month = (await a.get('p_alex', '/api/month')).json().month;
+    const put = (b: unknown) => a.built.app.inject({ method: 'PUT', url: `/api/month/${month}/budget`, headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN, 'content-type': 'application/json' }, payload: JSON.stringify(b) });
+    expect((await put({ min: 1000050, max: 2000000 })).statusCode).toBe(400);
+    expect((await put({ min: 1000000, max: 2000000 })).statusCode).toBe(200);
+    await a.built.app.close();
+  });
+
+  it('a household in a currency without decimals and one in a high-nominal currency rank and pick as the two-decimal one does', () => {
+    /** household() with priced books for an adult and a kid, every amount times `factor`, in `currency`. */
+    function priced(factor: number, currency: string): Db {
+      const db = household();
+      const now = new Date().toISOString();
+      const books: [string, 'adult' | 'kids', string, number | null][] = [
+        ['b_a1', 'adult', 'p_alex', 1990], ['b_a2', 'adult', 'p_alex', 4490], ['b_a3', 'adult', 'p_alex', 6500], ['b_a4', 'adult', 'p_alex', null],
+        ['b_k1', 'kids', 'p_kid1', 1690], ['b_k2', 'kids', 'p_kid1', 2690], ['b_k3', 'kids', 'p_kid1', 3990],
+      ];
+      for (const [id, audience, personId, priceC] of books) {
+        db.insert(t.book).values({ id, title: `Invented ${id}`, authorsJson: `["Author ${id}"]`, audience, normKey: id, createdAt: now }).run();
+        db.insert(t.candidate).values({ personId, bookId: id, origin: 'wishlist', addedAt: now, touchedAt: now }).run();
+        if (priceC != null) db.insert(t.bookOffer).values({ bookId: id, source: 'invented', priceC: priceC * factor, seenAt: now }).run();
+      }
+      db.delete(t.connectorEnabled).run();
+      db.update(t.householdSettings).set({ currency, unknownPriceC: 2500 * factor, budgetMinC: 10000 * factor, budgetMaxC: 15000 * factor }).run();
+      return db;
+    }
+    const outcome = (db: Db) => {
+      const rows = allCandidates(db, new Date('2026-11-20T12:00:00Z'), 'p_alex').map((r) => [r.personId, r.book.id, r.score === undefined ? 'left out' : Math.round(r.score * 1e6) / 1e6]);
+      const m = getMonth(db, '2026-12', 'p_alex');
+      const ids = (gs: { picks?: { candidate?: { book?: { id: string } } }[] }[] | undefined) => (gs ?? []).flatMap((g) => (g.picks ?? []).map((p) => p.candidate?.book?.id));
+      return { rows, adults: ids(m.adults), kids: ids(m.kids) };
+    };
+    const two = outcome(priced(1, 'CHF'));
+    expect(two.rows.some((r) => r[2] === 'left out')).toBe(true);
+    expect(two.kids.length).toBeGreaterThan(0);
+    expect(outcome(priced(100, 'JPY'))).toEqual(two);
+    expect(outcome(priced(10000, 'IDR'))).toEqual(two);
   });
 });
 

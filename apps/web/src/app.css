@@ -209,6 +209,9 @@ dialog.lib-sheet::backdrop { background: var(--scrim); -webkit-backdrop-filter: 
 .re-book { border: 0; margin: 0; padding: 0; min-width: 0; }
 .re-book legend { padding: 0; }
 .re-book + .re-book { padding-top: var(--space-4); border-top: 1px solid var(--separator); }
+/* Settings, the scores' price limits (Settings.tsx HouseholdMoney): the same group with no box. */
+.set-limits { border: 0; margin: 0; padding: 0; min-width: 0; }
+.set-limits legend { padding: 0; }
 .re-check { display: inline-flex; align-items: center; gap: var(--space-2); }
 
 /* No-shop mode's printed list (philobiblos#27 slice 5): on screen the text box shows it; printed from "Print the list"

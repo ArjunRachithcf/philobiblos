@@ -1,5 +1,35 @@
 {
  "_comment": "Produced by the prototype's scorer on the household's library, with invented titles and authors; the last two adult vectors are boundary cases from docs/spec.md §6.",
+ "household": {
+  "_comment": "The vectors' household: prices in a currency with two decimals, a price nobody knows counted as 25 and no price limits of its own, so they follow it (docs/spec.md §6: above 1.6 × 25 = 40 a book costs 8, above 2.4 × 25 = 60 it is left out; a kid's book at 40 costs 12 points).",
+  "unknownPrice": 25,
+  "priceLimits": null
+ },
+ "households": {
+  "_comment": "The same vectors in other households: every price, the unknown price and the budget times `factor`, written with `fractionDigits` decimals. Each must give the same scores, moves, exclusions and picks: no currency is assumed.",
+  "cases": [
+   {
+    "name": "the vectors' own",
+    "factor": 1,
+    "fractionDigits": 2
+   },
+   {
+    "name": "a currency without decimals",
+    "factor": 100,
+    "fractionDigits": 0
+   },
+   {
+    "name": "a high-nominal currency without decimals",
+    "factor": 10000,
+    "fractionDigits": 0
+   },
+   {
+    "name": "a low-nominal currency with decimals",
+    "factor": 0.1,
+    "fractionDigits": 2
+   }
+  ]
+ },
  "weights": {
   "links": 15,
   "bridge": 8,

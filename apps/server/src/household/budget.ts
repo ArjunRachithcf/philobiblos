@@ -4,9 +4,9 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
+import { amountProblem, getMoney } from './money';
 
 export interface Budget { min: number; max: number }
-export const BUDGET_CEILING_C = 1_000_000; // 10,000 of the household's currency: a typo guard, not a policy
 
 export class BudgetError extends Error {}
 
@@ -22,7 +22,8 @@ export function setBudget(db: Db, body: unknown): Budget {
   const cur = getBudget(db);
   const next = { min: b.min ?? cur.min, max: b.max ?? cur.max };
   for (const [k, v] of Object.entries(next)) {
-    if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > BUDGET_CEILING_C) throw new BudgetError(`budget.${k}: whole hundredths from 0 to ${BUDGET_CEILING_C}`);
+    const problem = amountProblem(v, getMoney(db).currency);
+    if (problem) throw new BudgetError(`budget.${k}: ${problem}`);
   }
   if ((next.min as number) > (next.max as number)) throw new BudgetError('budget: the minimum is above the maximum');
   const row = { id: 1, budgetMinC: next.min as number, budgetMaxC: next.max as number };

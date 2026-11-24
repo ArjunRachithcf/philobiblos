@@ -391,7 +391,7 @@ export function parseMarkup(markup: Markup, address: string[], r: MailRules): Pa
     const ok = inCurrency(cur);
     if (ok === 'none') return { problem: 'an amount without its currency' };
     if (ok === 'other') return { problem: 'an amount in another currency' };
-    const c = hundredths(v);
+    const c = hundredths(v, currency);
     return c == null ? { problem: 'a price Philobiblos cannot read' } : { c };
   };
   const top = isInvoice ? invoices[0]! : orders[0]!;

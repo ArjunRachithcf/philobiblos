@@ -11,13 +11,19 @@ export interface KidWeights {
   share: number;
   waitingCapDays: number;
   waitingDivisor: number;
-  pricePerUnit: number;
-  priceUnknown: number;
+  /** Points a book at the household's "dear" limit (`priceHighC`) costs; in proportion below and above it. */
+  pricePointsAtHigh: number;
+  /** Hundredths of the household's currency; null = no limit, and no price points (packages/scoring price.ts). */
+  priceHighC: number | null;
+  /** Hundredths of the household's currency: the price assumed when it is unknown (ADR 0008). */
+  priceUnknownC: number;
 }
 
 export const DEFAULT_KID_WEIGHTS: KidWeights = {
   base: 20, themeNew: 15, themeThinPerBook: 5, authorOnShelf: 15, lovedAuthor: 10,
-  toBuy: 12, share: 10, waitingCapDays: 150, waitingDivisor: 15, pricePerUnit: 0.3, priceUnknown: 25,
+  toBuy: 12, share: 10, waitingCapDays: 150, waitingDivisor: 15,
+  // 12 points at 40 (0.3 a unit) in a household whose unknown price is 25 and that sets no limits of its own.
+  pricePointsAtHigh: 12, priceHighC: 4000, priceUnknownC: 2500,
 };
 
 export interface KidCandidateFacts {
@@ -31,7 +37,7 @@ export interface KidCandidateFacts {
   toBuy: boolean;
   fromShare: boolean;
   waitingDays: number;
-  /** Centimes; null = unknown. */
+  /** Hundredths of the household's currency; null = unknown. */
   priceC: number | null;
 }
 
@@ -43,7 +49,7 @@ export interface KidSettings {
 export const DEFAULT_KID_SETTINGS: KidSettings = { lovedAuthorBonus: true };
 
 export function scoreKid(f: KidCandidateFacts, s: KidSettings = DEFAULT_KID_SETTINGS, w: KidWeights = DEFAULT_KID_WEIGHTS): { score: number; parts: ScorePart[] } {
-  const price = f.priceC == null ? w.priceUnknown : f.priceC / 100;
+  const price = f.priceC ?? w.priceUnknownC;
   const parts: ScorePart[] = [
     { label: 'Base', value: w.base, kind: 'base' },
     { label: 'A new theme for this kid', value: f.themeBooks === 0 ? w.themeNew : 0, kind: 'themeNew' },
@@ -53,7 +59,7 @@ export function scoreKid(f: KidCandidateFacts, s: KidSettings = DEFAULT_KID_SETT
     { label: 'On the To buy list', value: f.toBuy ? w.toBuy : 0, kind: 'source' },
     { label: 'From a share', value: f.fromShare ? w.share : 0, kind: 'source' },
     { label: 'Waiting', value: Math.min(Math.max(0, f.waitingDays), w.waitingCapDays) / w.waitingDivisor, kind: 'waiting' },
-    { label: 'Price', value: -w.pricePerUnit * price, kind: 'price' },
+    { label: 'Price', value: w.priceHighC ? -(w.pricePointsAtHigh * price) / w.priceHighC : 0, kind: 'price' },
   ];
   return { score: parts.reduce((t, p) => t + p.value, 0), parts: parts.filter((p) => p.value !== 0) };
 }

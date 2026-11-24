@@ -1094,7 +1094,7 @@ export interface components {
                 markup: boolean;
             };
         };
-        /** @description hundredths of the household's currency (HouseholdMoney) */
+        /** @description hundredths of the household's currency (HouseholdMoney), 0 to 1,000,000,000,000 (10,000,000,000 of any currency: arithmetic's ceiling, not a typo guard). Hundredths are a fixed scale, not the currency's minor unit: in a currency without decimals an amount is whole units (a multiple of 100), written and typed without decimals (Intl's digits for the currency, at most two); one an admin sets that is not is refused (400) */
         Money: number;
         Me: {
             person?: components["schemas"]["Person"];
@@ -1107,8 +1107,16 @@ export interface components {
         HouseholdMoney: {
             /** @description ISO 4217, one this server knows; null until chosen (PHILOBIBLOS_CURRENCY at a start fills in a household that has none, or an admin here). A connector counts only in it, and it does not change while a connector in another is enabled (409); amounts are never converted. */
             currency: string | null;
-            /** @description what a price nobody knows counts as in the month and the scores (ADR 0008): 0 to 1,000,000, default 2500 */
+            /** @description what a price nobody knows counts as in the month and the scores (ADR 0008): default 2500 */
             unknownPrice: components["schemas"]["Money"];
+            /** @description The scores' price limits (docs/spec.md §6, philobiblos#40), in the household's currency: above high a book is dear (an adult's candidate loses 8; a kid's book loses 12 points at high, in proportion), above max an adult's candidate is left out. Read: the limits in force, and own false when they follow the unknown price (1.6 and 2.4 times it, rounded to whole hundredths; none when it is 0). Write: { high, max } (high ≤ max) for the household's own, or null to follow the unknown price again; admins only. */
+            priceLimits: {
+                /** @description null (read only): no limit, the unknown price is 0 */
+                high: components["schemas"]["Money"] | null;
+                max: components["schemas"]["Money"] | null;
+                /** @description the household's own limits; false while they follow its unknown price */
+                readonly own?: boolean;
+            } | null;
         };
         Person: {
             id: string;
@@ -1568,9 +1576,9 @@ export interface components {
             }[];
         };
         Settings: {
-            /** @description admins change it; either part alone (a currency cannot be set back to null) */
+            /** @description admins change it; any part alone (a currency cannot be set back to null) */
             money?: components["schemas"]["HouseholdMoney"];
-            /** @description one shared monthly budget (hundredths of the household's currency, 0 to 1,000,000, min ≤ max); admins set it; no rollover */
+            /** @description one shared monthly budget (Money, min ≤ max); admins set it; no rollover */
             budget?: components["schemas"]["Budget"];
             adultPicks?: number;
             newAuthorsOnly?: boolean;

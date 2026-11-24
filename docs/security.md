@@ -68,7 +68,9 @@ applies; a feature that cannot meet them waits.
   A zone is checked when it is written (Settings, `PHILOBIBLOS_TZ`); one this server does not know (written by hand, or an
   ICU update) stops the scheduler's ticks with a log line and a message in Settings, never the server.
 - One currency: the household's (Settings; philobiblos#27). Every amount is in hundredths of it, and nothing is ever
-  converted. None is assumed: `PHILOBIBLOS_CURRENCY` gives a household that has none its currency at a start (never
+  converted. No amount is capped at one currency's size: any is at most 10,000,000,000 of the currency (arithmetic's
+  ceiling, so sums stay exact), and in a currency without decimals an amount an admin sets or types is whole units
+  (philobiblos#40). None is assumed: `PHILOBIBLOS_CURRENCY` gives a household that has none its currency at a start (never
   replacing one it has), or an admin chooses it. A database from before M4 says the currency its amounts were in.
   A connector counts only in the household's currency: enabling one in another (or before there is one) is refused, one
   enabled before the currency changed underneath it counts for nothing (its senders, words and price host with it), and
