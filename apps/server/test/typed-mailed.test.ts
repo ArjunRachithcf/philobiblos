@@ -808,6 +808,11 @@ describe('what is left, read as it was compared (philobiblos#64, second review)'
     const m1 = mailItemId(mailRow(one).messageId);
     typed(one, { lines: [tide({ price: 334 })], mailed: { mail: m1, answer: 'same' } }, LATER);
     expect(askedOf(() => typed(one, { lines: [tide({ price: 332 })] }, LATER)).maybeMailed).toMatchObject({ mail: m1, part: true });
+    // A split that came out exact carries no cent: a cent off the copy left is another price.
+    const exact = world();
+    await mailInvoice(exact, '99001122', { rows: [['9780000000002', 'The Long Tide of Markets', '2 ST', '10.00', '20.00 CHF', '2.6 %']] });
+    typed(exact, { lines: [tide({ price: 1000 })], mailed: { mail: mailItemId(mailRow(exact).messageId), answer: 'same' } }, LATER);
+    expect(typed(exact, { lines: [tide({ price: 1001 })] }, LATER).id).toBeDefined();
   });
 
   it('typed while the mail waited: asked about once the mail is answered, and counted once', async () => {
@@ -847,5 +852,33 @@ describe('what is left, read as it was compared (philobiblos#64, second review)'
     const before = { copies: copies(db), p: parsed(db) };
     expectError(() => answer(db, 'same'), InboxError, 409, /no longer fits/);
     expect({ copies: copies(db), p: parsed(db) }).toEqual(before);
+  });
+});
+
+describe('a typed purchase mailed in two shipments: each mail waits as its part (philobiblos#64, independent review)', () => {
+  /** Two invoice mails read in one refresh, each with its own rows. */
+  async function mailTwo(db: W, a: string[][], b: string[][]) {
+    const pdfs = [Buffer.from('%PDF-1.4\n% one\n'), Buffer.from('%PDF-1.4\n% two\n')];
+    const raws = await Promise.all([a, b].map((_, i) => signed(message({ id: `inv-two-${i}`, from: 'rechnung@quillmere.example', subject: `Ihre Quillmere-Rechnung Nr. 9900${i}`, body: 'Guten Tag, Ihre Rechnung finden Sie im Anhang.', pdf: pdfs[i]! }))));
+    await refreshMail(db, CFG, { open: async () => fakeBox(raws.map((raw, i) => ({ uid: i + 1, raw }))), resolver,
+      pdfText: async (pdf) => rows(Buffer.from(pdf).equals(pdfs[0]!) ? a : b), now: () => new Date(NOW.getTime() + 3600_000) });
+  }
+  const invoices = (db: W) => db.select().from(t.mailSeen).where(eq(t.mailSeen.kind, 'invoice')).all();
+  const answerAll = (db: W) => { for (const r of invoices(db)) answerTyped(db, 'p_sam', mailItemId(r.messageId), { answer: 'same' }, LATER); };
+  const shipments: [string, (db: W) => Promise<void>][] = [
+    ['both in one refresh', (db) => mailTwo(db, [TIDE_ROW], [HEDGEHOG_ROW])],
+    ['the second days later', async (db) => { await mailInvoice(db, '99001122'); await mailInvoice(db, '99001133', { uid: 2, at: new Date(NOW.getTime() + 3 * DAY), rows: [HEDGEHOG_ROW] }); }],
+  ];
+
+  it('typed A+B, then mailed A and mailed B before any answer: both wait; answered the same, every book counts once', async () => {
+    for (const [what, ship] of shipments) {
+      const db = world();
+      const e = typed(db, { lines: [tide(), hedgehog()] });
+      await ship(db);
+      expect(invoices(db).map((r) => (JSON.parse(r.parsedJson!) as { maybeTyped?: string }).maybeTyped), what).toEqual([e.id, e.id]);
+      expect(copies(db), what).toEqual([['b_hedgehog', 'manual', 'o_nov', 1200], ['b_tide', 'manual', 'o_nov', 1990]]);
+      answerAll(db);
+      expect(copies(db), what).toEqual([['b_hedgehog', 'manual', 'o_nov', 1200], ['b_tide', 'manual', 'o_nov', 1990]]);
+    }
   });
 });

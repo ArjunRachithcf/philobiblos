@@ -222,7 +222,9 @@ function take(outer: Part[], inner: Part[]): { taken: number[]; amount: number; 
 /** What `k` of a line's copies cost: the line's total for all of them, else their share of it. */
 const share = (l: Part, k: number) => (k === l.qty ? l.totalC : Math.round((l.totalC * k) / l.qty));
 /** A line's copies left once `k` of them are taken, and what they cost. */
-const left = <L extends Part>(l: L, k: number): L => (k ? { ...l, qty: l.qty - k, totalC: l.totalC - share(l, k), slack: (l.slack ?? 0) + 1 } : l);
+const left = <L extends Part>(l: L, k: number): L => (k
+  ? { ...l, qty: l.qty - k, totalC: l.totalC - share(l, k), slack: (l.slack ?? 0) + ((l.totalC * k) % l.qty === 0 ? 0 : 1) }
+  : l);
 
 /** How a later invoice overlaps an earlier one (`overlap`). */
 export interface Overlap {
@@ -353,22 +355,37 @@ export function mailLeft(tx: Tx, r: { messageId: string; parsedJson: string | nu
  * philobiblos#64): the same books in the same quantities, the typed books and more (a line it cannot place among them),
  * or part of the typed books, at the same total for the copies they share (the books' totals: what else an invoice
  * charges, and a line that is no book, are left out). What of the entry a mail counts as already is left out of it
- * (`entryLeft`): an entry wholly counted so is never asked about again, nor one another mail waits as maybe. The entry's
+ * (`entryLeft`), and so is what each other mail waiting as maybe it would share with it (`entryWaitLeft`): an entry
+ * wholly counted or waited for so is never asked about again, and one waited for in part is for the rest. The entry's
  * number, if it has one, must be the mail's. Of several, the one sharing the most copies, then the newest.
  */
 export function maybeTyped(tx: Tx, m: { connector: string; number: string | null; key: string }, lines: Part[], now: string, skip: string[] = []): { id: string; o: Overlap } | null {
   if (!lines.some((l) => l.bookId)) return null;
   const since = new Date(Date.parse(now) - MAYBE_TYPED_DAYS * 86_400_000).toISOString();
-  const waits = sql`SELECT 1 FROM ${t.mailSeen} WHERE ${t.mailSeen.accepted} = 1 AND ${t.mailSeen.kind} = 'invoice' AND ${t.mailSeen.messageId} <> ${m.key} AND json_extract(${t.mailSeen.parsedJson}, '$.maybeTyped') = ${t.orderEntry.id}`;
   const rows = tx.select().from(t.orderEntry).where(and(
     eq(t.orderEntry.kind, 'invoice'), sql`${t.orderEntry.createdAt} >= ${since}`, sql`${t.orderEntry.createdAt} <= ${now}`,
     sql`(${t.orderEntry.number} IS NULL OR (upper(${t.orderEntry.number}) = upper(${m.number}) AND ${t.orderEntry.shop} <> ${m.connector}))`,
-    sql`NOT EXISTS (${waits})`,
     skip.length ? notInArray(t.orderEntry.id, skip) : undefined,
   )).orderBy(desc(t.orderEntry.createdAt)).all();
   const links = mailLinks(tx);
-  const best = fullest(rows.map((e) => ({ e, o: overlap(entryLeft(tx, e, links), lines) })));
+  const best = fullest(rows.map((e) => ({ e, o: overlap(entryWaitLeft(tx, e, m.key, links), lines) })));
   return best ? { id: best.e.id, o: best.o } : null;
+}
+
+/**
+ * What of a typed entry is left (`entryLeft`) less what each mail waiting in the Inbox as maybe it, other than `key`,
+ * would share with it if answered the same (philobiblos#64): a purchase mailed in two parts waits as two parts of it.
+ */
+export function entryWaitLeft(tx: Tx, e: { id: string; linesJson: string; duplicateOf: string | null; undoJson: string | null }, key: string, links: MailLinks = mailLinks(tx)): Part[] {
+  let lines = entryLeft(tx, e, links);
+  const waiting = tx.select().from(t.mailSeen).where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), ne(t.mailSeen.messageId, key),
+    sql`json_extract(${t.mailSeen.parsedJson}, '$.maybeTyped') = ${e.id}`)).orderBy(t.mailSeen.seenAt).all();
+  for (const w of waiting) {
+    // One that no longer fits shares nothing (its answer "the same" is refused: inbox.ts answerTyped).
+    const o = overlap(lines, mailLeft(tx, w) ?? []);
+    if (o) lines = less(lines, o.shared);
+  }
+  return lines;
 }
 
 /** Of several candidates (newest first), the one whose overlap shares the most copies; the newest of those. */

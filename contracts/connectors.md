@@ -181,7 +181,9 @@ effects of the mail of its kind in the table above, on the same records, and not
   one (`duplicateOf: entry:<id>`, nothing else changes but what it holds beyond it: below); `another`, and it has its
   effect then, as when read. It is never
   dismissed unanswered. A typed invoice another mail counts as, or asks about, is not asked about again; of several
-  that fit, the one sharing the most copies, then the newest. A typed one with another number counts as before.
+  that fit, the one sharing the most copies, then the newest. A typed one with another number counts as before. A mail
+  with a line Philobiblos cannot place, then the same invoice typed afterwards in full, is not asked about (the typed one
+  holds a book the mail names none for): philobiblos#70.
 - **Maybe mailed already** (philobiblos#58): the same rule the other way round. An invoice typed or imported whose
   every row names a book Philobiblos has (since philobiblos#64, below: one holding the mail's books may name others), with the same books in the same quantities and the same total as a verified
   mailed invoice that counted (read in the last 30 days; not one sent again, counted as a typed one, or waiting as maybe
