@@ -4,10 +4,10 @@
 import { eq, inArray } from 'drizzle-orm';
 import { parseQuery, type ParsedQuery, type Term } from '@philobiblos/contracts';
 import type { components } from '@philobiblos/contracts/openapi';
-import { DEFAULT_ADULT_WEIGHTS, DEFAULT_KID_SETTINGS, DEFAULT_KID_WEIGHTS, scoreAdult, scoreKid, type Layer, type ScorePart } from '@philobiblos/scoring';
+import { DEFAULT_KID_SETTINGS, householdWeights, scoreAdult, scoreKid, type Layer, type ScorePart } from '@philobiblos/scoring';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { getMoney } from '../household/money';
+import { getMoney, ownPriceLimits } from '../household/money';
 import { household, view } from '../household/people';
 import { visibleReason } from '../knowledge/knowledge';
 import { COUNTED, countedTags, fromAi } from '../knowledge/tags';
@@ -46,10 +46,10 @@ export function allCandidates(db: Db, now = new Date(), viewer = ''): Row[] {
   const bookIds = [...new Set(cands.map((c) => c.bookId))];
   if (!bookIds.length) return [];
   const books = new Map(db.select().from(t.book).where(inArray(t.book.id, bookIds)).all().map((b) => [b.id, b]));
-  // A price nobody knows is scored at the household's unknown price (Settings, household/money.ts), as the plan counts it.
-  const unknown = getMoney(db).unknownPrice / 100;
-  const adultWeights = { ...DEFAULT_ADULT_WEIGHTS, priceUnknown: unknown };
-  const kidWeights = { ...DEFAULT_KID_WEIGHTS, priceUnknown: unknown };
+  // A price nobody knows is scored at the household's unknown price (Settings, household/money.ts), as the plan counts it,
+  // and the price limits are the household's own, or follow that price (philobiblos#40): no currency's sizes.
+  const money = getMoney(db);
+  const { adult: adultWeights, kid: kidWeights } = householdWeights({ unknownPriceC: money.unknownPrice, priceLimits: ownPriceLimits(money) });
   // The cheapest price known; a free one (0: a gift, a promotion) says nothing of what the book costs (philobiblos#53).
   const offers = new Map<string, number>();
   for (const o of db.select().from(t.bookOffer).where(inArray(t.bookOffer.bookId, bookIds)).all()) {

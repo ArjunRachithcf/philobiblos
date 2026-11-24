@@ -9,8 +9,8 @@ import { adultPickCount, pickAdults, pickKids, type Mix } from '@philobiblos/sco
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { allCandidates, publicView, type Row } from '../backlog/backlog';
-import { BUDGET_CEILING_C, getBudget, type Budget } from '../household/budget';
-import { getMoney } from '../household/money';
+import { getBudget, type Budget } from '../household/budget';
+import { amountProblem, getMoney } from '../household/money';
 import { actsFor, getPerson, household, view, type Person } from '../household/people';
 import { getLibrary } from '../library/library';
 import { personSettings } from '../library/settings';
@@ -266,8 +266,10 @@ export function setMonthBudget(db: Db, month: string, me: string, body: unknown)
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new MonthError(400, 'budget: { min, max } in hundredths of the household currency, or null');
     const b = body as Record<string, unknown>;
     for (const k of Object.keys(b)) if (k !== 'min' && k !== 'max') throw new MonthError(400, `budget: unknown field ${k}`);
+    const { currency } = getMoney(db);
     for (const k of ['min', 'max'] as const) {
-      if (!Number.isInteger(b[k]) || (b[k] as number) < 0 || (b[k] as number) > BUDGET_CEILING_C) throw new MonthError(400, `budget.${k}: whole hundredths from 0 to ${BUDGET_CEILING_C}`);
+      const problem = amountProblem(b[k], currency);
+      if (problem) throw new MonthError(400, `budget.${k}: ${problem}`);
     }
     if ((b.min as number) > (b.max as number)) throw new MonthError(400, 'budget: the minimum is above the maximum');
   }

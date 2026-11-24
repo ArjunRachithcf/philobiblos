@@ -365,6 +365,26 @@ describe('a CSV imported: the same entry as typed', () => {
   });
 });
 
+describe('amounts in the household\'s currency, with its decimals or none (philobiblos#40)', () => {
+  it('in a currency without decimals a CSV\'s price is whole units, and a fraction is refused, typed or imported', () => {
+    const db = world();
+    db.update(t.householdSettings).set({ currency: 'JPY' }).run();
+    const s = snapshot(db);
+    refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,1500.50\n' }, 400, /row 1.*price/);
+    refused(db, { kind: 'invoice', lines: [{ isbn: '9780000000002', qty: 1, price: 150050 }] }, 400, /row 1.*price/);
+    expect(snapshot(db)).toBe(s);
+    record(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,1500\n' });
+    expect(copies(db).find((c) => c[0] === 'b_tide')![3]).toBe(150000);
+  });
+
+  it('a high-nominal amount reads in full, past the old ceiling of 10,000', () => {
+    const db = world();
+    db.update(t.householdSettings).set({ currency: 'IDR' }).run();
+    record(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,250000\n' });
+    expect(copies(db).find((c) => c[0] === 'b_tide')![3]).toBe(25_000_000);
+  });
+});
+
 describe('a dry run: what would happen, and nothing changes', () => {
   it('the same answer as the entry, with no id, and every table as it was', () => {
     const db = world();

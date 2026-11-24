@@ -77,7 +77,7 @@ Philobiblos plans and buys. It is not an ebook reader or a daily reading log; Ka
   and optionally free sentences. Adults run it for kids, and write sentences only for kids under 13 (by birth year);
   for a kid of 13 or more they pick themes and add read books only.
 - **Settings**: budget and split; the household's currency and unknown price (no currency is assumed; a bookshop
-  counts only in it); bookshops (the connectors, what each allows, enabled by an admin with a fresh
+  counts only in it), and the scores' price limits (its own amounts, or following the unknown price; philobiblos#40); bookshops (the connectors, what each allows, enabled by an admin with a fresh
   sign-in); how your brain grows (mix, unread limit, counterpoints, takeaways); AI plugin
   (provider, jobs on/off, wildcards); score weights; kids' themes; sources; family (people, waiting people, join
   links and their rules, the home network); where Philobiblos runs; what leaves (Open Library,
@@ -116,7 +116,7 @@ newIdea    = 15 if c starts an idea p has no read books in (Broaden), else 0
 source     = 5 if on the person's "To buy" list + 5 if from a share
 age        = 6 if waiting > 90 days
 sink       = −4 per month untouched after 3 months in the backlog (floor −20)
-price      = −8 if price > 40, excluded if > 60 (per-person setting)
+price      = −8 if price > high, excluded if > max (the household's price limits, below)
 score      = 15·links + 8·bridge + layerFill + 2·stale + newIdea + source + age + sink + price
 move       = the first that applies, in this order (packages/scoring adultMove):
              Fiction if c is fiction; Wildcard if newIdea and links = 0; Broaden if newIdea;
@@ -132,9 +132,16 @@ themeThin = −5 × (books k has in that theme, loved counts 2)
 author    = −15 if author already on the shelf; +10 if k loved another book by this author and the setting allows
 source    = 12 To buy + 10 share
 waiting   = min(days on list, 150) / 15
-price     = −0.3 × price
+price     = −12 × price / high   (−0.3 × price at high = 40)
 score     = 20 + themeNew + themeThin + author + source + waiting + price
 ```
+
+Prices are in the household's currency (philobiblos#40): a price nobody knows counts as the household's unknown price
+(Settings, 25 by default; ADR 0008). The price limits `high` and `max` are the household's own amounts (Settings), or
+they follow the unknown price: 1.6 and 2.4 times it (40 and 60 at 25), and none when it is 0. No currency's sizes are
+built in, so a household in a currency without decimals, or one whose amounts are a thousand times larger, scores and
+ranks the same. Amounts are kept in hundredths of the currency, a fixed scale: in a currency without decimals they are
+whole units, typed and written without decimals (Intl's digits for the currency, at most two).
 
 Test vectors: `contracts/scoring-vectors.json`.
 

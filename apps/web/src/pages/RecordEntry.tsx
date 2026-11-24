@@ -8,7 +8,7 @@ import { useEffect, useId, useState } from 'react';
 import type { components } from '@philobiblos/contracts/openapi';
 import { api, message } from '../api';
 import { Choice, Notice } from '../ui';
-import { unit, useMoney } from '../money';
+import { amountExample, typed, unit, useMoney } from '../money';
 import { CSV_MAX, TOO_LONG, decodeCsv } from '../csvfile';
 
 type Result = components['schemas']['OrderEntryResult'];
@@ -19,11 +19,6 @@ const EMPTY: Row = { title: '', author: '', isbn: '', qty: '1', price: '', avail
 const ROWS_MAX = 100;
 const OTHER = '\u0000other';
 
-/** An amount as typed (18.90 or 18,90) in hundredths; null for anything else. */
-const hundredths = (s: string): number | null => {
-  const m = /^(\d{1,7})(?:[.,](\d{1,2}))?$/.exec(s.trim());
-  return m ? Number(m[1]) * 100 + Number((m[2] ?? '0').padEnd(2, '0')) : null;
-};
 
 export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { month: string; monthName: string; orderStatus: string | null; onRecorded: () => void }) {
   const id = useId();
@@ -72,8 +67,9 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
     const lines = [];
     for (const [i, r] of rows.entries()) {
       if (!r.title.trim() && !r.isbn.trim()) return `Book ${i + 1}: give its title or its ISBN.`;
-      const price = r.price.trim() ? hundredths(r.price) : null;
-      if (r.price.trim() && price === null && (k === 'invoice' || r.available)) return `Book ${i + 1}: enter the price as an amount, for example 18.90.`;
+      // An amount as typed (18.90 or 18,90; whole units in a currency without decimals), in hundredths (money.ts).
+      const price = r.price.trim() ? typed(r.price, currency) : null;
+      if (r.price.trim() && price === null && (k === 'invoice' || r.available)) return `Book ${i + 1}: enter the price as an amount, for example ${amountExample(currency)}.`;
       if ((k === 'invoice' || r.available) && price === null) return `Book ${i + 1}: enter its price.`;
       lines.push({
         ...(r.title.trim() ? { title: r.title.trim() } : {}), ...(r.author.trim() ? { author: r.author.trim() } : {}), ...(r.isbn.trim() ? { isbn: r.isbn.trim() } : {}),
@@ -167,7 +163,7 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
           <div className="field">
             <label className="field-label" htmlFor={`${id}-c`}>Or paste it</label>
             <textarea className="input textarea" id={`${id}-c`} spellCheck={false} value={csv} onChange={(e) => setCsv(e.target.value)} aria-describedby={`${id}-ch`} />
-            <span className="hint" id={`${id}-ch`}>A header row, then a row a book. Columns: isbn, title, author, {k === 'invoice' ? 'qty, price (of a copy) and for (me or a kid’s handle)' : 'price and available (yes or no)'}; any others are left out. Prices as amounts, for example 18.90.</span>
+            <span className="hint" id={`${id}-ch`}>A header row, then a row a book. Columns: isbn, title, author, {k === 'invoice' ? 'qty, price (of a copy) and for (me or a kid’s handle)' : 'price and available (yes or no)'}; any others are left out. Prices as amounts, for example {amountExample(currency)}.</span>
           </div>
         </div>
       )}

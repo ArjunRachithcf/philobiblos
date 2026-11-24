@@ -65,7 +65,10 @@ CREATE TABLE household_settings (
   ai_leaves_accepted TEXT,                      -- JSON: the lines of what leaves with Claude an admin accepted; Claude runs only while they cover it
   ai_daily_tokens   INTEGER NOT NULL DEFAULT 200000, -- the household's Claude allowance: tokens in any 24 hours, every run together
   currency          TEXT CHECK (currency IS NULL OR (length(currency) = 3 AND currency GLOB '[A-Z][A-Z][A-Z]')), -- ISO 4217, the household's one currency; null until chosen (PHILOBIBLOS_CURRENCY at the first start, or Settings)
-  unknown_price_c   INTEGER NOT NULL DEFAULT 2500 CHECK (unknown_price_c BETWEEN 0 AND 1000000) -- what a price nobody knows counts as (ADR 0008), in hundredths of the currency
+  unknown_price_c   INTEGER NOT NULL DEFAULT 2500 CHECK (unknown_price_c BETWEEN 0 AND 1000000000000), -- what a price nobody knows counts as (ADR 0008), in hundredths of the currency
+  price_high_c      INTEGER,                    -- the household's own price limits (philobiblos#40), hundredths: above high a book is dear,
+  price_max_c       INTEGER,                    -- above max an adult's candidate is left out; both null = they follow the unknown price
+  CHECK ((price_high_c IS NULL AND price_max_c IS NULL) OR (price_high_c IS NOT NULL AND price_max_c IS NOT NULL AND price_high_c BETWEEN 1 AND price_max_c AND price_max_c <= 1000000000000))
 );
 
 CREATE TABLE month_override (             -- "just this month" budget changes

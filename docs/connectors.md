@@ -173,7 +173,7 @@ and an invoice for an order whose status is not processing, payment due, in tran
 first author, ISBN or GTIN-13, quantity and price. Philobiblos **fails closed**: an amount in another currency than
 the connector's, or with none, a price that is not plain digits with a `.` for decimals, a book without a title or a
 price, an ISBN that is neither 13 digits nor an ISBN-10 whose check digit holds (that one is read as its ISBN-13), a
-quantity above 99 or an amount above 9999.99, more than one order in a mail, more markup than Philobiblos reads (a ninth
+quantity above 99, an amount above 10,000,000,000 or a fraction of a unit in a currency without decimals, more than one order in a mail, more markup than Philobiblos reads (a ninth
 block, a block over 256 K characters, an unclosed one, one that is not JSON, more than 500 nodes in all, an HTML part
 cut short): none of it is read rather than a part, or an invoice without a number Philobiblos can
 keep (each shop's invoice number counts once), or whose stated total is not the sum of its lines, makes the mail an unknown layout that changes

@@ -10,9 +10,12 @@ import { AiSettings } from './AiSettings';
 import { Bookshops } from './Bookshops';
 import { Mailbox } from './Mailbox';
 import { Notifications } from './Notifications';
-import { unit, useMoney } from '../money';
+import { amountExample, asTyped, typed, unit, useMoney } from '../money';
 
-const whole = (c: number) => (c / 100).toFixed(0);
+/** A budget's end as its field shows it: whole units of the household's currency. */
+const whole = (c: number) => String(Math.round(c / 100));
+/** The most digits a whole amount may have (packages/contracts money.ts AMOUNT_CEILING_C: 10,000,000,000). */
+const WHOLE_DIGITS = 11;
 
 export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }) {
   const id = useId();
@@ -34,12 +37,13 @@ export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null); setOk('');
-    const next = { min: Math.round(Number(min) * 100), max: Math.round(Number(max) * 100) };
-    if (!/^\d{1,5}$/.test(min) || !/^\d{1,5}$/.test(max)) return setError('Enter whole amounts, for example 100.');
+    const next = { min: typed(min, null), max: typed(max, null) };
+    if (!/^\d+$/.test(min) || !/^\d+$/.test(max)) return setError('Enter whole amounts, for example 100.');
+    if (next.min === null || next.max === null) return setError('Enter at most 10,000,000,000.');
     if (next.min > next.max) return setError('The lower end is above the upper end.');
     try {
       await api('/settings', { method: 'PATCH', body: { budget: next } });
-      setBudget(next); setOk('The budget is saved. It applies from the next month’s order.');
+      setBudget(next as { min: number; max: number }); setOk('The budget is saved. It applies from the next month’s order.');
     } catch (err) { setError(message(err)); }
   };
 
@@ -57,11 +61,11 @@ export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }
               <div className="fields fields-2">
                 <div className="field">
                   <label className="field-label" htmlFor={`${id}-min`}>At least ({unit(currency)})</label>
-                  <input className="input" id={`${id}-min`} inputMode="numeric" value={min} onChange={(e) => setMin(e.target.value.replace(/\D/g, '').slice(0, 5))} />
+                  <input className="input" id={`${id}-min`} inputMode="numeric" value={min} onChange={(e) => setMin(e.target.value.replace(/\D/g, '').slice(0, WHOLE_DIGITS))} />
                 </div>
                 <div className="field">
                   <label className="field-label" htmlFor={`${id}-max`}>At most ({unit(currency)})</label>
-                  <input className="input" id={`${id}-max`} inputMode="numeric" value={max} onChange={(e) => setMax(e.target.value.replace(/\D/g, '').slice(0, 5))} />
+                  <input className="input" id={`${id}-max`} inputMode="numeric" value={max} onChange={(e) => setMax(e.target.value.replace(/\D/g, '').slice(0, WHOLE_DIGITS))} />
                 </div>
               </div>
               {error && <Notice kind="error">{error}</Notice>}
@@ -107,20 +111,40 @@ function currencies(own: string | null | undefined): { code: string; name: strin
  */
 function HouseholdMoney({ admin, reload }: { admin: boolean; reload: () => Promise<void> }) {
   const id = useId();
-  const { currency, unknownPrice, format } = useMoney();
+  const { currency, unknownPrice, priceLimits, format } = useMoney();
   const [code, setCode] = useState(currency ?? '');
-  const [unknown, setUnknown] = useState(unknownPrice == null ? '' : String(unknownPrice / 100));
+  const [unknown, setUnknown] = useState(unknownPrice == null ? '' : asTyped(unknownPrice, currency));
+  // The scores' price limits (philobiblos#40): the household's own, or following the unknown price.
+  const [own, setOwn] = useState(priceLimits?.own ?? false);
+  const [high, setHigh] = useState(priceLimits?.high == null ? '' : asTyped(priceLimits.high, currency));
+  const [max, setMax] = useState(priceLimits?.max == null ? '' : asTyped(priceLimits.max, currency));
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState('');
   const [list] = useState(() => (admin ? currencies(currency) : []));
   useEffect(() => { setCode(currency ?? ''); }, [currency]);
-  useEffect(() => { if (unknownPrice != null) setUnknown(String(unknownPrice / 100)); }, [unknownPrice]);
+  useEffect(() => { if (unknownPrice != null) setUnknown(asTyped(unknownPrice, currency)); }, [unknownPrice, currency]);
+  useEffect(() => {
+    if (!priceLimits) return;
+    setOwn(priceLimits.own ?? false);
+    setHigh(priceLimits.high == null ? '' : asTyped(priceLimits.high, currency));
+    setMax(priceLimits.max == null ? '' : asTyped(priceLimits.max, currency));
+  }, [priceLimits?.own, priceLimits?.high, priceLimits?.max, currency]);
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null); setOk('');
-    if (!/^\d{1,5}([.,]\d{1,2})?$/.test(unknown.trim())) return setError('Enter the unknown price as an amount, for example 25 or 24.50.');
-    const body: { currency?: string; unknownPrice: number } = { unknownPrice: Math.round(Number(unknown.trim().replace(',', '.')) * 100) };
+    // Typed in the currency being saved: its own decimals, none in one without them (money.ts).
+    const cur = code || currency;
+    const u = typed(unknown, cur);
+    if (u === null) return setError(`Enter the unknown price as an amount, for example ${amountExample(cur)}.`);
+    const body: { currency?: string; unknownPrice: number; priceLimits: { high: number; max: number } | null } = { unknownPrice: u, priceLimits: null };
+    if (own) {
+      const h = typed(high, cur);
+      const m = typed(max, cur);
+      if (h === null || m === null) return setError(`Enter both price limits as amounts, for example ${amountExample(cur)}.`);
+      if (h > m) return setError('The price above which a book is dear is above the one that leaves it out.');
+      body.priceLimits = { high: h, max: m };
+    }
     if (code && code !== currency) body.currency = code;
     try {
       await api('/settings', { method: 'PATCH', body: { money: body } });
@@ -136,7 +160,7 @@ function HouseholdMoney({ admin, reload }: { admin: boolean; reload: () => Promi
         <p className="footnote">Every amount in Philobiblos is in the household’s currency. A bookshop counts only in it, so choose it before you enable one.</p>
       </div>
       {currency
-        ? <p>Amounts are in <b>{currency}</b>. A price nobody knows counts as <b>{unknownPrice == null ? '' : format(unknownPrice)}</b> in the month’s plan.</p>
+        ? <p>Amounts are in <b>{currency}</b>. A price nobody knows counts as <b>{unknownPrice == null ? '' : format(unknownPrice)}</b> in the month’s plan.{priceLimits?.high != null && priceLimits.max != null && <> A book above <b>{format(priceLimits.high)}</b> counts as dear in the scores; an adult’s above <b>{format(priceLimits.max)}</b> is left out.</>}</p>
         : <Notice kind="warn" title="The household has no currency yet.">{admin ? 'Choose it here.' : 'An admin of the household chooses it.'} Until then no bookshop can be enabled.</Notice>}
       {admin ? (
         <form className="stack" onSubmit={save} noValidate>
@@ -155,9 +179,26 @@ function HouseholdMoney({ admin, reload }: { admin: boolean; reload: () => Promi
             </div>
             <div className="field">
               <label className="field-label" htmlFor={`${id}-u`}>An unknown price counts as ({unit(code || currency)})</label>
-              <input className="input" id={`${id}-u`} inputMode="decimal" value={unknown} onChange={(e) => setUnknown(e.target.value.slice(0, 8))} />
+              <input className="input" id={`${id}-u`} inputMode="decimal" value={unknown} onChange={(e) => setUnknown(e.target.value.slice(0, 15))} />
             </div>
           </div>
+          <fieldset className="stack set-limits">
+            <legend className="field-label">Price limits in the scores</legend>
+            <label className="row"><input type="checkbox" checked={!own} onChange={(e) => setOwn(!e.target.checked)} aria-describedby={`${id}-lh`} /> Follow the unknown price</label>
+            <span className="hint" id={`${id}-lh`}>Above 1.6 times the unknown price a book counts as dear; above 2.4 times it, an adult’s book is left out of the picks. Set your own amounts instead, in the household’s currency.</span>
+            {own && (
+              <div className="fields fields-2">
+                <div className="field">
+                  <label className="field-label" htmlFor={`${id}-lh1`}>Dear above ({unit(code || currency)})</label>
+                  <input className="input" id={`${id}-lh1`} inputMode="decimal" value={high} onChange={(e) => setHigh(e.target.value.slice(0, 15))} />
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor={`${id}-lh2`}>Left out above ({unit(code || currency)})</label>
+                  <input className="input" id={`${id}-lh2`} inputMode="decimal" value={max} onChange={(e) => setMax(e.target.value.slice(0, 15))} />
+                </div>
+              </div>
+            )}
+          </fieldset>
           {error && <Notice kind="error">{error}</Notice>}
           {ok && <Notice kind="ok">{ok}</Notice>}
           <div className="btn-row"><button type="submit" className="btn btn-primary">Save the currency</button></div>

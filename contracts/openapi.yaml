@@ -390,15 +390,23 @@ components:
             priceAsks: { enum: [title, isbn, null], description: 'what its price lookup sends that host: a book''s title and first author, or its ISBN-13 alone (only books with one are asked); null without a lookup' }
             orderTo: { type: [string, 'null'], description: 'where Compose writes unless Settings names another address' }
             markup: { type: boolean, description: 'schema.org Order and Invoice markup (JSON-LD) in its signed mail counts: an order''s lines are kept, an invoice makes copies' }
-    Money: { type: integer, description: 'hundredths of the household''s currency (HouseholdMoney)' }
+    Money: { type: integer, description: 'hundredths of the household''s currency (HouseholdMoney), 0 to 1,000,000,000,000 (10,000,000,000 of any currency: arithmetic''s ceiling, not a typo guard). Hundredths are a fixed scale, not the currency''s minor unit: in a currency without decimals an amount is whole units (a multiple of 100), written and typed without decimals (Intl''s digits for the currency, at most two); one an admin sets that is not is refused (400)' }
     Me: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, household: { type: array, items: { $ref: '#/components/schemas/Person' } }, mode: { enum: [homerslab, standalone] }, money: { $ref: '#/components/schemas/HouseholdMoney' } } }
     HouseholdMoney:
       type: object
-      required: [currency, unknownPrice]
+      required: [currency, unknownPrice, priceLimits]
       description: 'The household''s money (philobiblos#27): every amount (Money) is in hundredths of its currency. No currency is assumed.'
       properties:
         currency: { type: [string, 'null'], pattern: '^[A-Z]{3}$', description: 'ISO 4217, one this server knows; null until chosen (PHILOBIBLOS_CURRENCY at a start fills in a household that has none, or an admin here). A connector counts only in it, and it does not change while a connector in another is enabled (409); amounts are never converted.' }
-        unknownPrice: { allOf: [ { $ref: '#/components/schemas/Money' } ], description: 'what a price nobody knows counts as in the month and the scores (ADR 0008): 0 to 1,000,000, default 2500' }
+        unknownPrice: { allOf: [ { $ref: '#/components/schemas/Money' } ], description: 'what a price nobody knows counts as in the month and the scores (ADR 0008): default 2500' }
+        priceLimits:
+          type: [object, 'null']
+          description: 'The scores'' price limits (docs/spec.md §6, philobiblos#40), in the household''s currency: above high a book is dear (an adult''s candidate loses 8; a kid''s book loses 12 points at high, in proportion), above max an adult''s candidate is left out. Read: the limits in force, and own false when they follow the unknown price (1.6 and 2.4 times it, rounded to whole hundredths; none when it is 0). Write: { high, max } (high ≤ max) for the household''s own, or null to follow the unknown price again; admins only.'
+          required: [high, max]
+          properties:
+            high: { oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ], description: 'null (read only): no limit, the unknown price is 0' }
+            max: { oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ] }
+            own: { type: boolean, readOnly: true, description: 'the household''s own limits; false while they follow its unknown price' }
     Person: { type: object, required: [id, name, role], properties: { id: {type: string}, name: {type: string}, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'] }, birthYear: { type: [integer, 'null'], description: kids only }, ageBand: { enum: ['0-2','3-5','6-8','9-12', null] }, signsIn: { type: boolean, description: 'standalone: has at least one passkey' } } }
     PersonInput: { type: object, required: [name, role], additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: string, pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: integer, minimum: 2000, maximum: 2100 } } }
     PersonPatch: { type: object, additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'], pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: [integer, 'null'], minimum: 2000, maximum: 2100 } } }
@@ -598,8 +606,8 @@ components:
     Settings:
       type: object
       properties:
-        money: { allOf: [ { $ref: '#/components/schemas/HouseholdMoney' } ], description: 'admins change it; either part alone (a currency cannot be set back to null)' }
-        budget: { allOf: [ { $ref: '#/components/schemas/Budget' } ], description: 'one shared monthly budget (hundredths of the household''s currency, 0 to 1,000,000, min ≤ max); admins set it; no rollover' }
+        money: { allOf: [ { $ref: '#/components/schemas/HouseholdMoney' } ], description: 'admins change it; any part alone (a currency cannot be set back to null)' }
+        budget: { allOf: [ { $ref: '#/components/schemas/Budget' } ], description: 'one shared monthly budget (Money, min ≤ max); admins set it; no rollover' }
         adultPicks: {type: integer}
         newAuthorsOnly: {type: boolean}
         ai:

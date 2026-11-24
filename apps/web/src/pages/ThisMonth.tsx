@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
 import type { components } from '@philobiblos/contracts/openapi';
 import { ApiError, api, message, type Me } from '../api';
 import { Notice, PageHead } from '../ui';
-import { useMoney } from '../money';
+import { budgetBar, useMoney } from '../money';
 import { RecordEntry } from './RecordEntry';
 
 type Plan = components['schemas']['MonthPlan'];
@@ -102,15 +102,14 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
 
 // ---------------------------------------------------------------------------------------------------------- the budget
 
-const STEP = 500; // 5 of the household's currency
-const scaleOf = (b: Budget, total: number) => Math.max(40000, Math.ceil((Math.max(b.max, total) * 1.5) / 10000) * 10000);
 
 function BudgetBar({ budget, total, override, admin, count, onApply }: { budget: Budget; total: number; override: boolean; admin: boolean; count: string; onApply: (b: Budget | null) => Promise<void> }) {
   const id = useId();
-  const { format: fmt, unknownPrice } = useMoney();
+  const { format: fmt, unknownPrice, currency } = useMoney();
   const [draft, setDraft] = useState(budget);
   useEffect(() => setDraft(budget), [budget.min, budget.max]);
-  const [scale] = useState(() => scaleOf(budget, total));
+  // Steps and the bar's end follow the household's unknown price: the same bar in any currency (money.ts budgetBar).
+  const [{ step: STEP, scale }] = useState(() => budgetBar(budget, total, unknownPrice ?? 0, currency));
   const track = useRef<HTMLDivElement>(null);
   const pct = (c: number) => `${Math.min(100, (c / scale) * 100)}%`;
   const over = total > budget.max;

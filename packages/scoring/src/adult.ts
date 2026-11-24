@@ -19,12 +19,12 @@ export interface AdultWeights {
   sinkAfterMonths: number;
   sinkFloor: number;
   pricePenalty: number;
-  /** In the household's currency: above this, `pricePenalty` applies. */
-  priceHigh: number;
-  /** In the household's currency: above this, the candidate is excluded (a per-person setting). */
-  priceMax: number;
-  /** In the household's currency: the price assumed when it is unknown (ADR 0008; the household's own, Settings). */
-  priceUnknown: number;
+  /** Hundredths of the household's currency: above this, `pricePenalty` applies; null = never (packages/scoring price.ts). */
+  priceHighC: number | null;
+  /** Hundredths of the household's currency: above this, the candidate is excluded; null = never. */
+  priceMaxC: number | null;
+  /** Hundredths of the household's currency: the price assumed when it is unknown (ADR 0008; the household's own, Settings). */
+  priceUnknownC: number;
 }
 
 export const DEFAULT_ADULT_WEIGHTS: AdultWeights = {
@@ -33,7 +33,8 @@ export const DEFAULT_ADULT_WEIGHTS: AdultWeights = {
   newIdea: 15, toBuy: 5, share: 5,
   age: 6, ageAfterDays: 90, staleCapMonths: 4,
   sinkPerMonth: 4, sinkAfterMonths: 3, sinkFloor: -20,
-  pricePenalty: 8, priceHigh: 40, priceMax: 60, priceUnknown: 25,
+  // A household whose unknown price is 25 and that sets no limits of its own (householdWeights gives a household's).
+  pricePenalty: 8, priceHighC: 4000, priceMaxC: 6000, priceUnknownC: 2500,
 };
 
 export interface AdultCandidateFacts {
@@ -53,7 +54,7 @@ export interface AdultCandidateFacts {
   fromShare: boolean;
   waitingDays: number;
   untouchedMonths: number;
-  /** Centimes; null = unknown. */
+  /** Hundredths of the household's currency; null = unknown. */
   priceC: number | null;
   /** Both ideas of the bridge have at least two read books (needed for Connect). Unknown = true. */
   ideasDense?: boolean;
@@ -96,8 +97,8 @@ export function adultMove(f: AdultCandidateFacts, layerFill: number): Move {
 }
 
 export function scoreAdult(f: AdultCandidateFacts, w: AdultWeights = DEFAULT_ADULT_WEIGHTS): AdultScore {
-  const price = f.priceC == null ? w.priceUnknown : f.priceC / 100;
-  if (price > w.priceMax) return { excluded: true, score: null, move: null, parts: [{ label: `Over the price limit (${w.priceMax})`, value: 0, kind: 'excluded' }] };
+  const price = f.priceC ?? w.priceUnknownC;
+  if (w.priceMaxC != null && price > w.priceMaxC) return { excluded: true, score: null, move: null, parts: [{ label: 'Over the price limit', value: 0, kind: 'excluded' }] };
 
   const layerFill = layerFillPoints(f, w);
   const bridge = Math.max(0, f.bridge);
@@ -111,7 +112,7 @@ export function scoreAdult(f: AdultCandidateFacts, w: AdultWeights = DEFAULT_ADU
     { label: 'From a share', value: f.fromShare ? w.share : 0, kind: 'source' },
     { label: 'Waiting long', value: f.waitingDays > w.ageAfterDays ? w.age : 0, kind: 'age' },
     { label: 'Untouched', value: sinkPoints(f.untouchedMonths, w), kind: 'sink' },
-    { label: 'Price', value: price > w.priceHigh ? -w.pricePenalty : 0, kind: 'price' },
+    { label: 'Price', value: w.priceHighC != null && price > w.priceHighC ? -w.pricePenalty : 0, kind: 'price' },
   ];
   const score = parts.reduce((s, p) => s + p.value, 0);
   return { excluded: false, score, move: adultMove(f, layerFill), parts: parts.filter((p) => p.value !== 0) };

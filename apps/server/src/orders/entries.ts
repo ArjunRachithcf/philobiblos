@@ -23,8 +23,8 @@ import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { bookIsbn } from '../books/isbn';
-import { BUDGET_CEILING_C } from '../household/budget';
-import { getMoney } from '../household/money';
+import { AMOUNT_CEILING_C, parseAmount } from '@philobiblos/contracts/money';
+import { amountProblem, getMoney } from '../household/money';
 import { actsFor, getPerson, household, view } from '../household/people';
 import { invoiceOrders, keys, matchBook, orderBooks, quoteOrder, receive, type BookKey, type Delivered, type Tx } from '../mail/effects';
 import { safeField } from '../mail/read';
@@ -32,8 +32,8 @@ import { norm } from '../seed/import';
 import { CsvError, parseCsv } from './csv';
 import { unguardCell } from './list';
 
-/** At most 100 lines (a parser's books a mail), 20 copies a line (the Inbox's), a price at most the budget's ceiling. */
-export const ENTRY_LIMITS = { lines: 100, qty: 20, price: BUDGET_CEILING_C, number: 40, shop: 80, title: 300, author: 200 } as const;
+/** At most 100 lines (a parser's books a mail), 20 copies a line (the Inbox's), a price at most any amount's ceiling. */
+export const ENTRY_LIMITS = { lines: 100, qty: 20, price: AMOUNT_CEILING_C, number: 40, shop: 80, title: 300, author: 200 } as const;
 
 export class EntryError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string) { super(message); }
@@ -93,8 +93,11 @@ function textField(v: unknown, name: string, max: number): string | null {
 
 const LINE_FIELDS: Record<EntryKind, string[]> = { invoice: ['isbn', 'title', 'author', 'qty', 'price', 'for'], quote: ['isbn', 'title', 'author', 'price', 'available'] };
 
-/** One line, from JSON (`price` in hundredths) or a CSV's row (its cells as text: `price` an amount such as 18.90). */
-function line(kind: EntryKind, row: number, v: unknown, csv: boolean): Given {
+/**
+ * One line, from JSON (`price` in hundredths) or a CSV's row (its cells as text: `price` an amount such as 18.90), in
+ * the household's `currency`: whole units in one without decimals.
+ */
+function line(kind: EntryKind, row: number, v: unknown, csv: boolean, currency: string): Given {
   const at = (m: string) => bad(`row ${row}: ${m}`);
   if (!isObject(v)) return at('an object');
   for (const k of Object.keys(v)) {
@@ -128,13 +131,13 @@ function line(kind: EntryKind, row: number, v: unknown, csv: boolean): Given {
   if (v.price !== undefined && v.price !== null && v.price !== '') {
     let p: unknown = v.price;
     if (csv) {
-      // An amount in the household's currency as a person writes it: digits, then a point or a comma and one or two
-      // more. No symbol, sign or thousands separator: an amount Philobiblos cannot place is refused, never guessed.
-      const m = typeof p === 'string' ? /^(\d{1,7})(?:[.,](\d{1,2}))?$/.exec(p.trim()) : null;
-      p = m ? Number(m[1]) * 100 + Number((m[2] ?? '0').padEnd(2, '0')) : null;
-      if (p === null) return at('price: an amount such as 18.90, in the household\'s currency');
+      // An amount in the household's currency as a person writes it: digits, then a point or a comma and at most the
+      // currency's decimals. No symbol, sign or thousands separator: an amount Philobiblos cannot place is refused, never guessed.
+      p = typeof p === 'string' ? parseAmount(p, currency) : null;
+      if (p === null) return at(`price: an amount such as 18.90 (or 1890 in a currency without decimals), in ${currency}`);
     }
-    if (!Number.isInteger(p) || (p as number) < 0 || (p as number) > ENTRY_LIMITS.price) return at(`price: whole hundredths of the household's currency, 0 to ${ENTRY_LIMITS.price}`);
+    const problem = amountProblem(p, currency);
+    if (problem) return at(`price: ${problem}`);
     price = p as number;
   }
   if (kind === 'invoice' && price === null) return at('price: what was paid for each copy');
@@ -237,9 +240,9 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
   const source = body.csv !== undefined ? 'csv' as const : 'typed' as const;
   const { lines: raw, ignored } = source === 'csv' ? csvLines(kind, body.csv) : { lines: body.lines, ignored: [] as string[] };
   if (!Array.isArray(raw) || !raw.length || raw.length > ENTRY_LIMITS.lines) return bad(`lines: 1 to ${ENTRY_LIMITS.lines}`);
-  const given = raw.map((v, i) => line(kind, i + 1, v, source === 'csv'));
-
-  if (!getMoney(db).currency) throw new EntryError(409, 'the household has no currency yet: an admin chooses it in Settings');
+  const { currency } = getMoney(db);
+  if (!currency) throw new EntryError(409, 'the household has no currency yet: an admin chooses it in Settings');
+  const given = raw.map((v, i) => line(kind, i + 1, v, source === 'csv', currency));
 
   // Whose pile each book goes on: yourself or a kid, never another adult (the Backlog's rule).
   const people = household(db);

@@ -6,6 +6,7 @@
 // any of them (a block too many or too big, an unclosed one, more nodes than are kept, a block that is not JSON) is
 // reported as `overflow`, and callers read none of it rather than a part. Callers keep only the few fields they need,
 // through their own filters.
+import { AMOUNT_CEILING_C, wholeIn } from '@philobiblos/contracts/money';
 
 export const MARKUP_LIMITS = {
   /** Script blocks read from one page or mail. */
@@ -119,11 +120,13 @@ export function text(v: unknown): string | null {
 }
 
 /**
- * An amount as schema.org writes it (a number, or a string of digits with `.` for decimals, no grouping): hundredths, at
- * most 9999.99, or null for anything else (a comma, an exponent, a sign, more than two decimals).
+ * An amount in `currency` as schema.org writes it (a number, or a string of digits with `.` for decimals, no grouping):
+ * hundredths, at most any amount's ceiling, or null for anything else (a comma, an exponent, a sign, more than two
+ * decimals, or a fraction of a unit in a currency without one: `1500.00` reads, `1500.50` does not).
  */
-export function hundredths(v: unknown): number | null {
+export function hundredths(v: unknown, currency: string): number | null {
   const s = typeof v === 'number' && Number.isFinite(v) ? String(v) : typeof v === 'string' ? v.trim() : '';
-  const m = /^(\d{1,4})(?:\.(\d{1,2}))?$/.exec(s);
-  return m ? Number(m[1]) * 100 + Number((m[2] ?? '0').padEnd(2, '0')) : null;
+  const m = /^(\d{1,11})(?:\.(\d{1,2}))?$/.exec(s);
+  const c = m ? Number(m[1]) * 100 + Number((m[2] ?? '0').padEnd(2, '0')) : null;
+  return c !== null && c <= AMOUNT_CEILING_C && wholeIn(c, currency) ? c : null;
 }
