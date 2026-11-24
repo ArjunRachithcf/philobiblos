@@ -178,11 +178,12 @@ effects of the mail of its kind in the table above, on the same records, and not
   read (`MAYBE_TYPED_DAYS`) with no number, or with the mail's number for no shop or another (a label), changes nothing
   when it is read: it is kept with `maybeTyped: <entry id>` and waits in the Inbox (kind `maybe_typed_invoice`, "Maybe
   the invoice typed on …"). Any adult answers it (`POST /inbox/{itemId}/typed`): `same`, and it counts as the typed
-  one (`duplicateOf: entry:<id>`, nothing else changes); `another`, and it has its effect then, as when read. It is never
+  one (`duplicateOf: entry:<id>`, nothing else changes but what it holds beyond it: below); `another`, and it has its
+  effect then, as when read. It is never
   dismissed unanswered. A typed invoice another mail counts as, or asks about, is not asked about again; of several
   that fit, the one sharing the most copies, then the newest. A typed one with another number counts as before.
 - **Maybe mailed already** (philobiblos#58): the same rule the other way round. An invoice typed or imported whose
-  every row names a book Philobiblos has, with the same books in the same quantities and the same total as a verified
+  every row names a book Philobiblos has (since philobiblos#64, below: one holding the mail's books may name others), with the same books in the same quantities and the same total as a verified
   mailed invoice that counted (read in the last 30 days; not one sent again, counted as a typed one, or waiting as maybe
   one; a line added from the Inbox since counts as the book it was added as), and with no number or the mail's, is asked about before it counts, at entry time: 409 with `maybeMailed` (the
   mail's Inbox item id, the day its Date header names, its number, its books' total), "Is this the invoice that came by
@@ -195,17 +196,22 @@ effects of the mail of its kind in the table above, on the same records, and not
   its undo removes only the entry (the mail may then be asked about again). Typed for the mail's own connector with its
   number, it is refused by the number, as before.
 - **One holding the other** (philobiblos#64): the two rules above ask too when one invoice holds every copy of the other,
-  not only the same ones, at the same total for the copies they share (`overlap`): the mailed books and more typed (or
-  more copies of one), part of them typed, the typed books and more mailed (a line Philobiblos cannot place among the
-  more), or part of them mailed. The question says which: "Does this invoice hold the one that came by mail on …? Its
-  N other copies count either way." (`maybeMailed.more`), "Is this invoice part of the one …?" (`maybeMailed.part`);
-  the Inbox item's `typed.more` / `typed.part`. The same then counts only the copies the second one holds beyond the
-  first (at its own prices; a line taken in part at its share of the line's total): never a shared book twice, never the
-  rest dropped. An entry kept as a mail's duplicate makes those copies, and its undo takes them back. A line of a held
-  mail Philobiblos cannot place waits in the Inbox after the answer, as any such line (the answer is kept apart from a
-  dismissal). An invoice typed or imported that holds the books of two mails is refused (409, no question): one answer
-  could count one mail's books twice, so each part is recorded apart. A mail holding two typed invoices is asked about
-  the one it shares the most copies with.
+  not only the same ones, at the same total for the copies they share (`overlap`; a cent off for each line taken in
+  part, and of a book billed on several lines, those nearest the other's price first): the mailed books and more typed
+  (or more copies of one, or a book nobody has yet), part of them typed, the typed books and more mailed (a line
+  Philobiblos cannot place among the more), or part of them mailed. The question says which: "Does this invoice hold
+  the one that came by mail on …? Its N other copies count either way." (`maybeMailed.more`), "Is this invoice part of
+  the one …?" (`maybeMailed.part`); the Inbox item's `typed.more` (the copies the same would add) / `typed.part`. The
+  same then counts only the copies the second one holds beyond the first (at its own prices; a line taken in part at its
+  share of the line's total): never a shared book twice, never the rest dropped. The copies the two share are kept with
+  the answer (the entry's undo record `shared`, the mail's `shared: { <entry id>: … }`), so a record is compared by what
+  of it is left (`entryLeft`, `mailLeft`): one purchase typed or mailed in three parts is asked about part by part, and
+  a record wholly counted as others is not asked about again (one from before this, or counted by its number: wholly). A
+  mail holding two typed invoices is asked about one, then, answered the same, about the other (it stays held); each one
+  it is the same as is never undone alone. An entry typed or imported that holds books of two mails is refused (409, no
+  question), to be recorded part by part: one answer cannot settle two mails. An entry kept as a mail's duplicate makes
+  its own copies, and its undo takes them back. A held mail's lines are not decided before the answer; after it, a line
+  Philobiblos cannot place waits in the Inbox, as any such line (the answer is kept apart from a dismissal).
 - **Undo** (philobiblos#45, `POST /orders/entries/{id}/undo`; `GET /orders/entries` lists the last 7 days'): an invoice
   typed or imported is undone by whoever recorded it, or an admin, within 7 days (`UNDO_DAYS`), while nothing it changed
   has changed since: its copies removed, a tap's copy it took the tap's again, its order lines as they were (a line

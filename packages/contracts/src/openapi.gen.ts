@@ -1477,7 +1477,7 @@ export interface components {
             number: string | null;
             shop: string | null;
             total: components["schemas"]["Money"];
-            /** @description copies it made (0 for one kept as a mail's duplicate) */
+            /** @description copies it made (for one kept as a mail's duplicate, only those beyond the mail's: philobiblos#64) */
             copies: number;
             /** @description answered the same as a bookshop's mail counted already (philobiblos#58): it counted nothing but the copies beyond the mail's (philobiblos#64), which copies counts */
             sameAsMail?: boolean;

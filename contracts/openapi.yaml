@@ -525,7 +525,7 @@ components:
         number: { type: [string, 'null'] }
         shop: { type: [string, 'null'] }
         total: { $ref: '#/components/schemas/Money' }
-        copies: { type: integer, description: 'copies it made (0 for one kept as a mail''s duplicate)' }
+        copies: { type: integer, description: 'copies it made (for one kept as a mail''s duplicate, only those beyond the mail''s: philobiblos#64)' }
         sameAsMail: { type: boolean, description: 'answered the same as a bookshop''s mail counted already (philobiblos#58): it counted nothing but the copies beyond the mail''s (philobiblos#64), which copies counts' }
         by: { $ref: '#/components/schemas/Person' }
         canUndo: { type: boolean }

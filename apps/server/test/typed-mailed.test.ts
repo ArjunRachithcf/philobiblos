@@ -573,7 +573,7 @@ describe('typed after its mail, holding the mail\'s books and more, or part of t
     const before = copies(db);
     for (const extra of [{}, { dryRun: true }]) {
       const e = askedOf(() => typed(db, { lines: [tide(), hedgehog()], ...extra }, LATER));
-      expect(e.message).toMatch(/books of two invoices that came by mail \(on 16 November 2026 and 16 November 2026\): record each apart/);
+      expect(e.message).toMatch(/books of two invoices that came by mail \(on 16 November 2026 and 16 November 2026\): record the books of each apart/);
       expect(e.maybeMailed).toBeUndefined();
     }
     expect(copies(db)).toEqual(before);
@@ -629,7 +629,8 @@ describe('mailed after it was typed, holding the typed books and more, or part o
     const e = typed(db);
     await mailInvoice(db, '99001122', { rows: [TIDE_ROW, UNPLACED_ROW] });
     expect(parsed(db)).toMatchObject({ maybeTyped: e.id });
-    expect(items(db).find((x) => x.kind === 'maybe_typed_invoice')).toMatchObject({ typed: { more: 1 } });
+    // The same adds no copy of it (it waits for a person): it is not among the copies more.
+    expect(items(db).find((x) => x.kind === 'maybe_typed_invoice')!.typed).not.toHaveProperty('more');
     answer(db, 'same');
     expect(copies(db)).toHaveLength(1);
     const it = items(db).find((x) => x.id === mailItemId(mailRow(db).messageId))!;
@@ -654,5 +655,127 @@ describe('mailed after it was typed, holding the typed books and more, or part o
     typed(db, {}, new Date(NOW.getTime() + 10 * 60_000));
     await mailInvoice(db, '99001122', { rows: [TIDE_ROW, HEDGEHOG_ROW] });
     expect(parsed(db)).toMatchObject({ maybeTyped: first.id });
+  });
+});
+
+// One purchase in three records (philobiblos#64 review): what two of them share is kept, so the third is asked about
+// what is left, and nothing counts twice.
+describe('one purchase split over three records: the third is asked about what is left of the others (philobiblos#64)', () => {
+  const later = (min: number) => new Date(NOW.getTime() + min * 60_000);
+  const answer = (db: W, a: 'same' | 'another') => answerTyped(db, 'p_sam', mailItemId(mailRow(db).messageId), { answer: a }, NOW);
+
+  it('typed A+B; mailed A (the same), then mailed B: B is held as maybe the typed one too, and counts once', async () => {
+    const db = world();
+    const e = typed(db, { lines: [tide(), hedgehog()] });
+    await mailInvoice(db, '99001122');
+    answer(db, 'same');
+    await mailInvoice(db, '99001133', { uid: 2, at: later(90), rows: [HEDGEHOG_ROW] });
+    expect(parsed(db)).toMatchObject({ maybeTyped: e.id });
+    answer(db, 'same');
+    expect(copies(db)).toEqual([['b_hedgehog', 'manual', 'o_nov', 1200], ['b_tide', 'manual', 'o_nov', 1990]]);
+    // Wholly counted by the two mails now: a third is never asked about it.
+    await mailInvoice(db, '99001144', { uid: 3, at: later(100) });
+    expect(parsed(db).maybeTyped).toBeUndefined();
+  });
+
+  it('mailed A; typed A+B (the same: B counted); then mailed B: held as maybe the typed one', async () => {
+    const db = world();
+    await mailInvoice(db, '99001122');
+    const r = typed(db, { lines: [tide(), hedgehog()], mailed: { mail: mailItemId(mailRow(db).messageId), answer: 'same' } }, LATER);
+    await mailInvoice(db, '99001133', { uid: 2, at: later(150), rows: [HEDGEHOG_ROW] });
+    expect(parsed(db)).toMatchObject({ maybeTyped: r.id });
+    answer(db, 'same');
+    expect(copies(db)).toEqual([['b_hedgehog', 'manual', 'o_nov', 1200], ['b_tide', 'invoice', 'o_nov', 1990]]);
+  });
+
+  it('mailed A+B; typed A (part of it: the same); then typed B: asked about what is left of the mail', async () => {
+    const db = world();
+    await mailInvoice(db, '99001122', { rows: [TIDE_ROW, HEDGEHOG_ROW] });
+    const mail = mailItemId(mailRow(db).messageId);
+    typed(db, { mailed: { mail, answer: 'same' } }, LATER);
+    const e = askedOf(() => typed(db, { lines: [hedgehog()] }, LATER));
+    expect(e.maybeMailed).toEqual({ mail, cameOn: '2026-11-16T00:00:00.000Z', number: '99001122', total: 1200 });
+    typed(db, { lines: [hedgehog()], mailed: { mail, answer: 'same' } }, LATER);
+    expect(copies(db)).toEqual([['b_hedgehog', 'invoice', 'o_nov', 1200], ['b_tide', 'invoice', 'o_nov', 1990]]);
+    // Wholly counted as the two entries: typed once more, it is not asked about.
+    expect(typed(db, { lines: [hedgehog()] }, LATER).id).toBeDefined();
+  });
+
+  it('typed A; mailed A+B (the same: B counted from the mail); then typed B: asked about what is left of the mail', async () => {
+    const db = world();
+    typed(db);
+    await mailInvoice(db, '99001122', { rows: [TIDE_ROW, HEDGEHOG_ROW] });
+    const mail = mailItemId(mailRow(db).messageId);
+    answer(db, 'same');
+    expect(askedOf(() => typed(db, { lines: [hedgehog()] }, LATER)).maybeMailed).toMatchObject({ mail, total: 1200 });
+  });
+
+  it('typed A, then typed B; mailed A+B: asked about each typed one in turn, and every book counts once', async () => {
+    for (const second of ['same', 'another'] as const) {
+      const db = world();
+      const a = typed(db);
+      const b = typed(db, { lines: [hedgehog()] }, later(10));
+      await mailInvoice(db, '99001122', { rows: [TIDE_ROW, HEDGEHOG_ROW] });
+      const first = parsed(db).maybeTyped;
+      expect([a.id, b.id]).toContain(first);
+      answer(db, 'same');
+      // Still held: now as maybe the other typed one.
+      expect(parsed(db).maybeTyped).toBe(first === a.id ? b.id : a.id);
+      expect(items(db).find((x) => x.kind === 'maybe_typed_invoice')).toMatchObject({ typed: { entryId: parsed(db).maybeTyped } });
+      expect(copies(db)).toHaveLength(2);
+      answer(db, second);
+      expect(parsed(db).maybeTyped).toBeUndefined();
+      expect(copies(db), second).toHaveLength(second === 'same' ? 2 : 3);
+      // The mail counts as each typed one it was answered the same as: those are never undone alone.
+      const linked = second === 'same' ? [a.id!, b.id!] : [first as string];
+      for (const id of linked) expectError(() => undoEntry(db, 'p_alex', id, NOW), EntryError, 409, /mail/);
+    }
+  });
+
+  it('a held mail\'s line is not decided before the answer', async () => {
+    const db = world();
+    typed(db);
+    await mailInvoice(db, '99001122', { rows: [TIDE_ROW, UNPLACED_ROW] });
+    expectError(() => decide(db, 'p_sam', mailItemId(mailRow(db).messageId), 1, { action: 'add' }, NOW), InboxError, 409, /answer it first/);
+  });
+});
+
+describe('a book billed on two lines, and a cent of rounding (philobiblos#64 review)', () => {
+  it('the mail bills one book twice at two prices; typed once at one of them: part of it', async () => {
+    const db = world();
+    await mailInvoice(db, '99001122', { rows: [['9780000000002', 'The Long Tide of Markets', '1 ST', '10.00', '10.00 CHF', '2.6 %'], ['9780000000002', 'The Long Tide of Markets', '1 ST', '15.00', '15.00 CHF', '2.6 %']] });
+    expect(askedOf(() => typed(db, { lines: [tide({ price: 1500 })] }, LATER)).maybeMailed).toMatchObject({ part: true });
+  });
+
+  it('two of three copies billed together for 29.99, typed at 10.00 each: part of it (a cent of rounding)', async () => {
+    const db = world();
+    await mailInvoice(db, '99001122', { rows: [['9780000000002', 'The Long Tide of Markets', '3 ST', '10.00', '29.99 CHF', '2.6 %']] });
+    expect(askedOf(() => typed(db, { lines: [tide({ qty: 2, price: 1000 })] }, LATER)).maybeMailed).toMatchObject({ part: true });
+    // Two cents off is another price: not asked.
+    const other = world();
+    await mailInvoice(other, '99001122', { rows: [['9780000000002', 'The Long Tide of Markets', '3 ST', '10.00', '29.97 CHF', '2.6 %']] });
+    expect(typed(other, { lines: [tide({ qty: 2, price: 1000 })] }, LATER).id).toBeDefined();
+  });
+});
+
+describe('records answered before philobiblos#64 kept no shared copies: wholly counted, never asked about again', () => {
+  it('an entry kept as a mail\'s duplicate then, and a mail answered the same as a typed one then', async () => {
+    const db = world();
+    await mailInvoice(db, '99001122');
+    db.insert(t.orderEntry).values({ id: '01JZZZZZZZZZZZZZZZZZZZZZZZ', kind: 'invoice', source: 'typed', number: null, shop: '', personId: 'p_alex', totalC: 1990, createdAt: LATER.toISOString(),
+      linesJson: JSON.stringify([{ bookId: 'b_tide', qty: 1, priceC: 1990, available: true }]), undoJson: JSON.stringify({ lines: [], orders: [], offers: [] }), duplicateOf: mailRow(db).messageId }).run();
+    await mailInvoice(db, '99001133', { uid: 2, at: new Date(LATER.getTime() + 3600_000) });
+    expect(parsed(db).maybeTyped).toBeUndefined();
+
+    const old = world();
+    const e = typed(old);
+    await mailInvoice(old, '99001122');
+    const p = parsed(old);
+    delete p.maybeTyped;
+    old.update(t.mailSeen).set({ parsedJson: JSON.stringify({ ...p, duplicateOf: `entry:${e.id}` }) }).where(eq(t.mailSeen.messageId, mailRow(old).messageId)).run();
+    // Neither the mail nor the typed one is left to ask about: typed again, or mailed again, it counts at once.
+    expect(typed(old, { dryRun: true }, LATER).maybeMailed).toBeUndefined();
+    await mailInvoice(old, '99001133', { uid: 2, at: new Date(LATER.getTime() + 3600_000) });
+    expect(parsed(old).maybeTyped).toBeUndefined();
   });
 });

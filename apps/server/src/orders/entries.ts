@@ -34,7 +34,7 @@ import { AMOUNT_CEILING_C, parseAmount } from '@philobiblos/contracts/money';
 import { amountProblem, getMoney } from '../household/money';
 import { actsFor, getPerson, household, view } from '../household/people';
 import { DAY, longDay } from '../inbox/inbox';
-import { invoiceOrders, keys, mailItemId, matchBook, maybeMailed, orderBooks, quoteOrder, receive, type BookKey, type Delivered, type MailedInvoice, type Tx } from '../mail/effects';
+import { invoiceOrders, keys, mailItemId, mailsOfEntry, matchBook, maybeMailed, orderBooks, quoteOrder, receive, type BookKey, type Delivered, type MailedInvoice, type Shared, type Tx } from '../mail/effects';
 import { safeField } from '../mail/read';
 import { norm } from '../seed/import';
 import { CsvError, parseCsv } from './csv';
@@ -319,7 +319,7 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
         // What it holds beyond the mail may be another mail's books: one question could count them twice, so it is
         // refused and recorded apart, each part asked about on its own.
         const also = fit?.overlap.rest.length ? maybeMailed(tx, { number, lines: fit.overlap.rest }, iso, [fit.key]) : null;
-        if (asked && also) throw new EntryError(409, `this invoice holds the books of two invoices that came by mail (on ${longDay(asked.cameOn)} and ${longDay(askedOf(also).cameOn)}): record each apart`);
+        if (asked && also) throw new EntryError(409, `this invoice holds books of two invoices that came by mail (on ${longDay(asked.cameOn)} and ${longDay(askedOf(also).cameOn)}): record the books of each apart`);
         // An answer about this mail answers it; none, or one about another mail, asks (a dry run only names it).
         const answered = asked && answer?.mail === asked.mail ? answer.answer : null;
         if (asked && !answered && !dryRun) throw new EntryError(409, question(asked), asked);
@@ -327,7 +327,9 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
         if (asked && !answered) maybe = asked;
         // The same purchase as the mail: kept as its duplicate, and only what it holds beyond the mail counts.
         if (asked && answered === 'same') same = { key: fit!.key, asked };
-        const counted = new Map(same ? fit!.overlap.rest.map((r) => [r.index, r.qty]) : given.map((g, i) => [i, g.qty]));
+        const counted = new Map(same ? fit!.overlap.rest.map((r) => [r.at, r.qty]) : given.map((g, i) => [i, g.qty]));
+        // The copies it shares with the mail, kept with it: the rest of the mail may be another entry's (mail/effects.ts mailLeft).
+        if (same) undo.shared = fit!.overlap.shared;
         const invoiced = new Map<string, number>();
         // What it does, kept to undo it (undoEntry): the values each row had before it, and the ones it left.
         const priced = new Map<string, OfferRow | null>();
@@ -446,6 +448,8 @@ const offerOf = (tx: Tx, bookId: string): OfferRow | null => {
  * the order was; per book, the price learnt before and after it.
  */
 interface Undo {
+  /** Kept as a mail's duplicate: the copies it shares with that mail (philobiblos#64). */
+  shared?: Shared[];
   lines: (Delivered & { bookId: string; orderId: string | null; priceC: number; acquiredAt: string; reading: string | null })[];
   orders: { id: string; c: number; was: { status: string; invoicedC: number | null } }[];
   offers: { bookId: string; was: OfferRow | null; left: OfferRow | null }[];
@@ -493,7 +497,7 @@ export function undoEntry(db: Db, me: string, id: string, now = new Date()): voi
     if (now.getTime() - Date.parse(e.createdAt) > UNDO_DAYS * DAY_MS) throw new EntryError(409, `recorded more than ${UNDO_DAYS} days ago: it stays`);
     if (!e.undoJson) throw new EntryError(409, 'recorded before an invoice could be undone: it stays');
     const mail = tx.select({ p: t.mailSeen.parsedJson }).from(t.mailSeen).where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'),
-      sql`(json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') = ${`entry:${id}`} OR json_extract(${t.mailSeen.parsedJson}, '$.maybeTyped') = ${id})`)).get();
+      sql`(${mailsOfEntry(id)} OR json_extract(${t.mailSeen.parsedJson}, '$.maybeTyped') = ${id})`)).get();
     if (mail) {
       throw new EntryError(409, JSON.parse(mail.p ?? '{}').maybeTyped === id
         ? 'a bookshop mail waits in the Inbox as maybe this invoice: answer it first'

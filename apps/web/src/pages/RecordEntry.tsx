@@ -208,7 +208,7 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
                   ? `It holds the invoice that came by mail on ${longDay(shown.sameAsMail.cameOn)}: only the ${copiesOf(shown.sameAsMail.more)} beyond it ${shown.dryRun ? 'would be' : 'are'} counted.`
                   : `${shown.sameAsMail.part ? 'Part of' : 'The same invoice as'} the one that came by mail on ${longDay(shown.sameAsMail.cameOn)}: nothing new is counted.`)
                 : shown.kind === 'invoice'
-                ? `${copies(shown)} ${copies(shown) === 1 ? 'copy' : 'copies'} for ${format(shown.total, 'always')} ${shown.dryRun ? 'would be' : 'are'} in the library.`
+                ? `${copiesOf(copies(shown))} for ${format(shown.total, 'always')} ${shown.dryRun ? 'would be' : 'are'} in the library.`
                 : `The ${monthName} order ${shown.dryRun ? 'would come' : 'comes'} to ${format(shown.total, 'always')}.`}
               {shown.ignoredColumns.length > 0 && ` Left out: the columns ${shown.ignoredColumns.join(', ')}.`}
               {shown.dryRun && shown.maybeMailed && ` It may be the invoice that came by mail on ${longDay(shown.maybeMailed.cameOn)}: Record asks first.`}
