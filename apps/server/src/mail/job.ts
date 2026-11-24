@@ -25,7 +25,7 @@ import type { Config, ImapSettings } from '../config';
 import { OAuthError } from './oauth';
 import { MAIL_LIMITS, addressParts, openVerified, type VerifiedMail } from './read';
 import { PARSERS, classify, mailRules, parseInvoice, parseMarkup, parseQuote, parseShop, type MailRules, type Parsed } from './parse';
-import { enabledConnectors } from '../connectors/enabled';
+import { enabledConnectors, shopMail } from '../connectors/enabled';
 import type { Registry } from '../connectors/load';
 import type { ShopMail } from './verify';
 import { applyMail } from './effects';
@@ -93,7 +93,7 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
   // Only the bookshops an admin enabled, as their files are now: their mail domains are the only senders that count.
   const enabled = enabledConnectors(db, cfg.connectors).filter((e) => e.connector.mail);
   if (!enabled.length) return { status: 'blocked', detail: 'no bookshop is enabled: an admin enables one in Settings (Bookshops)' };
-  const shops: ShopMail[] = enabled.map((e) => ({ id: e.id, domains: e.connector.mail!.domains, dkimDomains: e.connector.mail!.dkim_domains ?? e.connector.mail!.domains }));
+  const shops: ShopMail[] = enabled.map(shopMail);
   const rulesOf = (id: string) => mailRules(enabled.find((e) => e.id === id)!.connector);
   // The delivery address is sealed (PR #7); it is unsealed here only to find it in the mail and leave it out.
   let address: string[] = [];

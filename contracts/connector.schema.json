@@ -122,12 +122,18 @@
       "maxLength": 200,
       "pattern": "^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?/[A-Za-z0-9/._~-]*\\?(?:[A-Za-z0-9._~-]+=[A-Za-z0-9._~-]*&)*[A-Za-z0-9._~-]+=\\{query\\}(?:&[A-Za-z0-9._~-]+=[A-Za-z0-9._~-]*)*$"
     },
+    "jsonld_url": {
+      "description": "As price_url, or with {isbn} in place of {query}: a lookup by the book's ISBN-13 alone (an ISBN metadata source, a shop's ISBN search), where only books with an ISBN are asked.",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?/[A-Za-z0-9/._~-]*\\?(?:[A-Za-z0-9._~-]+=[A-Za-z0-9._~-]*&)*[A-Za-z0-9._~-]+=\\{(?:query|isbn)\\}(?:&[A-Za-z0-9._~-]+=[A-Za-z0-9._~-]*)*$"
+    },
     "jsonld_prices": {
-      "description": "A read-only price lookup on the shop's search page, read for schema.org Product markup (JSON-LD) only: the product whose title and author match, its offer in the connector's currency.",
+      "description": "A read-only price lookup read for schema.org Product markup (JSON-LD) only: asked by {query}, the product whose title and author match; asked by {isbn}, the product that carries that ISBN; its offer in the connector's currency.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "url"],
-      "properties": { "kind": { "const": "jsonld" }, "url": { "$ref": "#/$defs/price_url" } }
+      "properties": { "kind": { "const": "jsonld" }, "url": { "$ref": "#/$defs/jsonld_url" } }
     },
     "search_tiles": {
       "description": "A read-only price lookup on the shop's search page, read as text: its result tiles.",

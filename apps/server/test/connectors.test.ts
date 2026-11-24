@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { CONNECTOR_SCHEMA } from '@philobiblos/contracts/connector';
 import { buildApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import { ConnectorError, enabledConnectors, orderAddress, setConnector, shopHosts } from '../src/connectors/enabled';
@@ -86,6 +87,29 @@ describe('a connector is data, read strictly', () => {
     expect(problemOf(make())).toMatch(why);
   });
 
+  it('every object of the schema refuses keys it does not name, at every depth: a connector cannot add a setting', () => {
+    // The tests above try a few keys at a few levels; this holds for every object the schema has, now and as it grows,
+    // so no connector can carry an unsigned-mail switch, a private host or another size limit anywhere.
+    const open: string[] = [];
+    const walk = (s: unknown, at: string): void => {
+      if (Array.isArray(s)) { s.forEach((x, i) => walk(x, `${at}/${i}`)); return; }
+      if (typeof s !== 'object' || s === null) return;
+      const o = s as Record<string, unknown>;
+      const object = o.type === 'object' || (Array.isArray(o.type) && o.type.includes('object'));
+      if ((object || 'properties' in o || 'required' in o || 'dependentRequired' in o) && o.additionalProperties !== false) open.push(at || '/');
+      // A schema with no type that only points elsewhere ($ref, allOf/oneOf/anyOf) is checked where it points (walked too).
+      for (const k of ['patternProperties', 'unevaluatedProperties', 'propertyNames']) if (k in o) open.push(`${at}/${k}`);
+      for (const [k, v] of Object.entries(o)) {
+        if (k === 'properties' || k === '$defs') for (const [name, sub] of Object.entries(v as Record<string, unknown>)) walk(sub, `${at}/${k}/${name}`);
+        else walk(v, `${at}/${k}`);
+      }
+    };
+    walk(CONNECTOR_SCHEMA, '');
+    expect(open).toEqual([]);
+    // And the loader reads with this schema: a key it does not name, deep in a layout, is refused.
+    expect(problemOf(edited('    confirm_phrases: [we have now ordered]', '    confirm_phrases: [we have now ordered]\n    unsigned_ok: true'))).toMatch(/schema.*unsigned_ok/);
+  });
+
   it('a signing domain under one of its mail domains is aligned, and sound', () => {
     expect(read(edited('  domains: [quillmere.example]', '  domains: [quillmere.example]\n  dkim_domains: [mail.quillmere.example]'))).toHaveProperty('connector.mail.dkim_domains', ['mail.quillmere.example']);
   });
@@ -106,9 +130,9 @@ describe('a connector is data, read strictly', () => {
     writeFileSync(join(local, 'README.txt'), 'not a connector');
     const reg = loadConnectors({ builtin: new URL('../../../connectors', import.meta.url).pathname, local });
     const by = (id: string) => reg.get(id)!;
-    expect(reg.all.map((c) => [c.id, c.origin])).toEqual([['larkspur', 'builtin'], ['quillmere', 'builtin'], ['lindenhof', 'local'], ['linked', 'local'], ['quillmere', 'local']]);
+    expect(reg.all.map((c) => [c.id, c.origin])).toEqual([['larkspur', 'builtin'], ['marginalia', 'builtin'], ['quillmere', 'builtin'], ['lindenhof', 'local'], ['linked', 'local'], ['quillmere', 'local']]);
     expect(by('lindenhof').problem).toBeNull();
-    expect(reg.all[4]).toMatchObject({ problem: expect.stringMatching(/ships with Philobiblos/), connector: null });
+    expect(reg.all[5]).toMatchObject({ problem: expect.stringMatching(/ships with Philobiblos/), connector: null });
     expect(by('linked')).toMatchObject({ problem: expect.stringMatching(/link/), connector: null });
   });
 
@@ -283,7 +307,7 @@ describe('Settings: GET /connectors and PUT /connectors/{id}', () => {
     expect(r.statusCode).toBe(200);
     expect(r.json().connectors.filter((c: { id: string }) => c.id === 'quillmere')).toEqual([{
       id: 'quillmere', name: 'Quillmere Books', origin: 'builtin', version, usable: true, enabled: false, changed: false, currency: 'CHF', language: 'de',
-      allows: { mailFrom: ['quillmere.example'], signedBy: ['quillmere.example'], quoteSenders: ['english-orders@quillmere.example'], priceHost: 'www.quillmere.example', orderTo: 'english-orders@quillmere.example', markup: false },
+      allows: { mailFrom: ['quillmere.example'], signedBy: ['quillmere.example'], quoteSenders: ['english-orders@quillmere.example'], priceHost: 'www.quillmere.example', priceAsks: 'title', orderTo: 'english-orders@quillmere.example', markup: false },
     }]);
   });
 

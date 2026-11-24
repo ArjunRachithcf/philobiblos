@@ -3,6 +3,7 @@
 // is hostile input like the rest of the mail: bounded, parsed as data (never followed, never run, never stored), held to
 // the connector's currency, and failing closed. Every shop, book, person and number here is invented. Each guard has a
 // test that fails when the guard is removed.
+import { readFileSync } from 'node:fs';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { checkConnectorShape } from '@philobiblos/contracts/connector';
@@ -436,6 +437,65 @@ describe('the jsonld price lookup', () => {
     const src = markupPrices('larkspur', { locale: LARKSPUR.locale, prices: LARKSPUR.prices! }, egress);
     expect(await src.find({ title: 'The Long Tide of Markets', authors: ['Mira Okafor'] })).toMatchObject({ priceC: 1850 });
     expect(asked).toEqual(['https://shop.larkspur.example/search?q=The+Long+Tide+of+Markets+Mira+Okafor']);
+  });
+});
+
+describe('a price lookup by ISBN (an ISBN metadata source: `{isbn}` in a jsonld URL)', () => {
+  const TEXT = readFileSync(new URL('../../../connectors/larkspur/connector.yaml', import.meta.url), 'utf8');
+  const URL_NOW = 'url: https://shop.larkspur.example/search?q={query}';
+  const withUrl = (url: string) => { expect(TEXT).toContain(URL_NOW); return readConnector(Buffer.from(TEXT.replace(URL_NOW, `url: ${url}`)), 'larkspur'); };
+  const BY_ISBN = withUrl('https://isbn.larkspur.example/lookup?format=html&isbn={isbn}');
+  const byIsbn = () => { if (!('connector' in BY_ISBN)) throw new Error(BY_ISBN.problem); return BY_ISBN.connector; };
+  const book = (o: { name?: string; isbn?: string; gtin13?: string; price?: string } = {}) => ({
+    '@context': CTX, '@type': 'Book', name: o.name ?? 'The Long Tide of Markets', author: { '@type': 'Person', name: 'Mira Okafor' },
+    ...(o.isbn ? { isbn: o.isbn } : {}), ...(o.gtin13 ? { gtin13: o.gtin13 } : {}),
+    offers: { '@type': 'Offer', price: o.price ?? '18.50', priceCurrency: 'EUR', availability: 'https://schema.org/InStock' },
+  });
+  const egressFor = (html: string, asked: string[]): Egress => ({
+    async get(url) { asked.push(url); return { status: 200, type: 'text/html', body: Buffer.from(html), url }; },
+    post: () => Promise.reject(new EgressError('not-allowed', 'no')), push: () => Promise.reject(new EgressError('not-allowed', 'no')),
+  });
+
+  it('a jsonld URL may ask by {isbn} instead of {query}, once, in its query string; Settings says the ISBN is what it sends', () => {
+    expect(byIsbn().prices).toMatchObject({ kind: 'jsonld' });
+    expect(allows(byIsbn())).toMatchObject({ priceHost: 'isbn.larkspur.example', priceAsks: 'isbn' });
+    expect(allows(LARKSPUR)).toMatchObject({ priceHost: 'shop.larkspur.example', priceAsks: 'title' });
+    for (const bad of ['https://isbn.larkspur.example/lookup?isbn={isbn}&q={query}', 'https://isbn.larkspur.example/lookup?isbn={isbn}&again={isbn}',
+      'https://isbn.larkspur.example/{isbn}?format=html', 'https://{isbn}.larkspur.example/lookup?format=html']) expect(withUrl(bad)).toHaveProperty('problem');
+    // The tiles read a search page by its titles: they ask with the title and first author only.
+    const quill = readFileSync(new URL('../../../connectors/quillmere/connector.yaml', import.meta.url), 'utf8');
+    expect(readConnector(Buffer.from(quill.replace('sq={query}', 'sq={isbn}')), 'quillmere')).toHaveProperty('problem');
+  });
+
+  it('asks with the ISBN-13 alone (never the title), and reads the product that carries that ISBN, whatever its name', async () => {
+    const asked: string[] = [];
+    const html = `<html><body>${ld(book({ name: 'The Long Tide of Markets: A History', gtin13: '9780000000002' }))}</body></html>`;
+    const src = markupPrices('larkspur', { locale: LARKSPUR.locale, prices: byIsbn().prices! }, egressFor(html, asked));
+    expect(src.asks).toBe('isbn');
+    expect(await src.find({ title: 'The Long Tide of Markets', authors: ['Mira Okafor'], isbn13: '9780000000002' })).toEqual({ externalId: '9780000000002', priceC: 1850, availability: 'in stock' });
+    expect(asked).toEqual(['https://isbn.larkspur.example/lookup?format=html&isbn=9780000000002']);
+  });
+
+  it('never a product with another ISBN or none (another edition, a guess); a book without an ISBN is never asked', async () => {
+    const asked: string[] = [];
+    const html = `<html><body>${ld(book({ isbn: '978-0-00-000001-9', price: '9.00' }))}${ld(book({ price: '7.00' }))}</body></html>`;
+    const src = markupPrices('larkspur', { locale: LARKSPUR.locale, prices: byIsbn().prices! }, egressFor(html, asked));
+    expect(await src.find({ title: 'The Long Tide of Markets', authors: ['Mira Okafor'], isbn13: '9780000000002' })).toBeNull();
+    // The same product, by its ISBN-10 or written with dashes, is the book.
+    const ten = markupPrices('larkspur', { locale: LARKSPUR.locale, prices: byIsbn().prices! }, egressFor(ld(book({ isbn: '0-00-000000-0' })), []));
+    expect(await ten.find({ title: 'x', authors: [], isbn13: '9780000000002' })).toMatchObject({ priceC: 1850 });
+    asked.length = 0;
+    expect(await src.find({ title: 'The Long Tide of Markets', authors: ['Mira Okafor'], isbn13: null })).toBeNull();
+    expect(asked).toEqual([]);
+  });
+
+  it('only a valid ISBN-13 fills the URL: a wrong check digit, or a value carrying more of a query, asks nothing', async () => {
+    const asked: string[] = [];
+    const src = markupPrices('larkspur', { locale: LARKSPUR.locale, prices: byIsbn().prices! }, egressFor(ld(book({ gtin13: '9780000000002' })), asked));
+    for (const isbn13 of ['9780000000003', '9780000000002&x=1', '9780000000002#x', ' 9780000000002', '978000000000', '97800000000020']) {
+      expect(await src.find({ title: 'The Long Tide of Markets', authors: ['Mira Okafor'], isbn13 })).toBeNull();
+    }
+    expect(asked).toEqual([]);
   });
 });
 

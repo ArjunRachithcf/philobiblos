@@ -245,7 +245,11 @@ answers the list of its books still to buy (planned or quoted).
 the page's schema.org JSON-LD (`schemaorg/jsonld.ts`): the Book or Product (alone, in an ItemList, or in @graph) whose
 normalised name is the title and whose author's surname is the first author's, its offers in the connector's currency
 only (an Offer, a list, an AggregateOffer's lowPrice), the cheapest; the id kept is its GTIN-13, ISBN or SKU as a short
-token; its availability one of schema.org's values, in fixed words; more markup than is read (`MARKUP_LIMITS`, the page cut at 1 MB): no price. `kind: search_tiles`: GET its `url` with `{query}`
+token; its availability one of schema.org's values, in fixed words; more markup than is read (`MARKUP_LIMITS`, the page cut at 1 MB): no price. A
+jsonld `url` may hold `{isbn}` instead of `{query}` (an ISBN metadata source, or a shop's search by ISBN): it is asked
+with the book's ISBN-13 alone, only for books with one, and the product read is the one whose GTIN-13 or ISBN (an
+ISBN-10 as its ISBN-13) is that ISBN, whatever its name; a product with another ISBN or none is never the book.
+Settings says which of the two a lookup sends (`allows.priceAsks`). `kind: search_tiles`: GET its `url` with `{query}`
 replaced by the title and first author (form-encoded, in the query string only), parse result tiles (an article link
 `[https://<host>]<article.path><id_prefix><digits>`, the title, a `print_formats` phrase, an amount with a `money`
 symbol, an `availability` phrase). Choose the print edition in one of `want_languages` whose normalised title matches,

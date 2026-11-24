@@ -7,7 +7,8 @@
 // The page is read as text (no script runs, no DOM), only the fields below are kept, and no wishlist, cart or account is
 // touched. The page is hostile input; the egress client holds it to 1 MB and 10 s, on its own host, and that host is on
 // the allowlist only while an admin has the connector enabled.
-import type { Connector, SearchTiles } from '@philobiblos/contracts/connector';
+import { priceAsks, priceUrlShape, type Connector, type SearchTiles } from '@philobiblos/contracts/connector';
+import { bookIsbn } from './isbn';
 import type { Egress } from '../net/egress';
 import { norm, parsePriceC } from '../seed/import';
 import { alternation, contains, literal } from '../connectors/text';
@@ -17,8 +18,10 @@ export interface Offer { externalId: string | null; priceC: number | null; avail
 export interface PriceSource {
   /** The source's name in book_offer.source: its connector's id. */
   id: string;
+  /** What it sends: a book's title and first author (the default), or its ISBN-13 alone (only books with one are asked). */
+  asks?: 'title' | 'isbn';
   /** The offer for this book, or null when the source has no matching edition. Network and refusals are thrown. */
-  find(b: { title: string; authors: string[] }): Promise<Offer | null>;
+  find(b: { title: string; authors: string[]; isbn13?: string | null }): Promise<Offer | null>;
 }
 
 /** How a connector's search page reads: its `prices` and its `money`, as the fixed shapes below. */
@@ -27,11 +30,11 @@ export interface TileRules { host: string; article: RegExp; print: (s: string) =
 /**
  * The shapes, each built from the connector's words as literals (connectors/text.ts): an article link is
  * `href="[https://<host>]<path><prefix><digits>…"`; an amount is `<symbol> 12.90`; availability is a phrase, then
- * optionally a joiner, up to 12 digits, dots, dashes or spaces, and a unit (`Lieferbar in 2-3 Tagen`).
+ * optionally a joiner, up to 12 digits, dots, dashes or spaces, and a unit (`Ships in 2-3 days`).
  */
 export function tileRules(c: Pick<Connector, 'money'> & { prices: SearchTiles }): TileRules {
   const p = c.prices;
-  const host = new URL(p.url.replace('{query}', 'q')).hostname;
+  const host = new URL(priceUrlShape(p.url)).hostname;
   const [lo, hi] = p.article.id_digits;
   const av = p.availability;
   return {
@@ -112,9 +115,13 @@ export function pickOffer(tiles: Tile[], title: string, authors: string[], r: Ti
 }
 
 /** The search URL for a book: its title and first author, form-encoded (spaces as +), in the one place the template leaves. */
-function searchUrl(template: string, b: { title: string; authors: string[] }): string {
+function titleUrl(template: string, b: { title: string; authors: string[] }): string {
   const q = [b.title, b.authors[0] ?? ''].join(' ').replace(/\s+/g, ' ').trim().slice(0, 200);
   return template.replace('{query}', new URLSearchParams([['q', q]]).toString().slice(2));
+}
+/** The lookup URL by ISBN: the book's ISBN-13 alone, or null without a valid one (nothing is asked). */
+function isbnUrl(template: string, isbn13: string | null | undefined): string | null {
+  return isbn13 && bookIsbn(isbn13) === isbn13 ? template.replace('{isbn}', isbn13) : null;
 }
 
 /** A connector's price lookup: its search page, asked with the title and first author, through the one egress client. */
@@ -123,7 +130,7 @@ export function searchTiles(id: string, c: Pick<Connector, 'money'> & { prices: 
   return {
     id,
     async find(b) {
-      const page = await egress.get(searchUrl(c.prices.url, b), 'html');
+      const page = await egress.get(titleUrl(c.prices.url, b), 'html');
       return pickOffer(parseTiles(page.body.toString('utf8'), r), b.title, b.authors, r);
     },
   };
@@ -149,18 +156,24 @@ const idOf = (p: LdNode): string | null => {
  * The offer for this book among a page's schema.org markup: Books and Products (on their own, in an ItemList's
  * ListItems, or in @graph) whose normalised name is the title and, when an author is known, whose author holds the
  * first author's surname, never an e-book or an audiobook (`bookFormat`); their offers (an Offer, a list of them, or an AggregateOffer's lowPrice) in this currency only;
- * the cheapest of those. A price it cannot read is no price. Nothing of the page but these fields is kept.
+ * the cheapest of those. With `by.isbn13` (a lookup by ISBN), the product that carries that ISBN instead, whatever its name. A price it cannot read is no price. Nothing of the page but these fields is kept.
  */
-export function pickProduct(nodes: LdNode[], title: string, authors: string[], currency: string): Offer | null {
+export function pickProduct(nodes: LdNode[], title: string, authors: string[], currency: string, by?: { isbn13: string }): Offer | null {
   const want = norm(title);
   const surname = authors[0] ? norm(authors[0].split(/\s+/).at(-1) ?? '') : '';
   const products = nodes.flatMap((n) => (isType(n, 'ItemList') ? list(n.itemListElement, 100).map((e) => node(e)).map((e) => (e && isType(e, 'ListItem') ? node(e.item) : e)) : [n]))
     .filter((p): p is LdNode => isType(p, 'Book', 'Product'));
   let best: (Offer & { at: number }) | null = null;
   for (const p of products.slice(0, 100)) {
-    if (norm(text(p.name) ?? '') !== want) continue;
-    // The author as the tiles' lookup takes it: the surname anywhere in the name ("Okafor, Mira" too).
-    if (surname && !list(p.author, 8).some((a) => norm(text(a) ?? '').includes(surname))) continue;
+    if (by) {
+      // Asked by ISBN: the product that carries the book's ISBN (its GTIN-13 or ISBN, an ISBN-10 read as its ISBN-13),
+      // whatever its name; one with another ISBN or none is never the book.
+      if (![p.gtin13, p.isbn].some((v) => { const s = text(v); return s != null && bookIsbn(s) === by.isbn13; })) continue;
+    } else {
+      if (norm(text(p.name) ?? '') !== want) continue;
+      // The author as the tiles' lookup takes it: the surname anywhere in the name ("Okafor, Mira" too).
+      if (surname && !list(p.author, 8).some((a) => norm(text(a) ?? '').includes(surname))) continue;
+    }
     // A printed book only, as the household orders: never an e-book's or an audiobook's price.
     if (list(p.bookFormat, 4).some((f) => /(?:^|[/:])(?:EBook|AudiobookFormat)$/.test(String(f)))) continue;
     for (const o of list(p.offers, 20).map(node)) {
@@ -175,18 +188,26 @@ export function pickProduct(nodes: LdNode[], title: string, authors: string[], c
 }
 
 /** The offer for this book on a search page (pickProduct), or none when the page holds more markup than is read. */
-export function pageOffer(html: string, title: string, authors: string[], currency: string): Offer | null {
+export function pageOffer(html: string, title: string, authors: string[], currency: string, by?: { isbn13: string }): Offer | null {
   const { nodes, overflow } = schemaNodes(ldBlocks(html.slice(0, PAGE_MAX), html.length > PAGE_MAX));
-  return overflow ? null : pickProduct(nodes, title, authors, currency);
+  return overflow ? null : pickProduct(nodes, title, authors, currency, by);
 }
 
 /** A connector's price lookup through its search page's Product markup (`prices.kind: jsonld`), in its currency. */
 export function markupPrices(id: string, c: Pick<Connector, 'locale'> & { prices: { url: string } }, egress: Egress): PriceSource {
+  const asks = priceAsks(c.prices.url);
   return {
     id,
+    asks,
     async find(b) {
-      const page = await egress.get(searchUrl(c.prices.url, b), 'html');
-      return pageOffer(page.body.toString('utf8'), b.title, b.authors, c.locale.currency);
+      if (asks === 'title') {
+        const page = await egress.get(titleUrl(c.prices.url, b), 'html');
+        return pageOffer(page.body.toString('utf8'), b.title, b.authors, c.locale.currency);
+      }
+      const url = isbnUrl(c.prices.url, b.isbn13);
+      if (url === null) return null;
+      const page = await egress.get(url, 'html');
+      return pageOffer(page.body.toString('utf8'), b.title, b.authors, c.locale.currency, { isbn13: b.isbn13! });
     },
   };
 }

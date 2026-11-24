@@ -425,3 +425,11 @@ BEGIN SELECT RAISE(ABORT, 'idea_proposal.private_to must be its run''s takeaways
 CREATE TRIGGER idea_proposal_private_to_kept BEFORE UPDATE OF private_to ON idea_proposal
 WHEN NEW.private_to IS NOT OLD.private_to
 BEGIN SELECT RAISE(ABORT, 'idea_proposal.private_to never changes (delete the row instead)'); END;
+
+-- A book's isbn13 (philobiblos#59): 13 digits beginning 978 or 979, or none; it is put into a price lookup's URL.
+CREATE TRIGGER book_isbn13_check_insert BEFORE INSERT ON book
+WHEN NEW.isbn13 IS NOT NULL AND NOT (length(NEW.isbn13) = 13 AND NEW.isbn13 GLOB '97[89][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]')
+BEGIN SELECT RAISE(ABORT, 'CHECK book.isbn13: 13 digits beginning 978 or 979'); END;
+CREATE TRIGGER book_isbn13_check_update BEFORE UPDATE OF isbn13 ON book
+WHEN NEW.isbn13 IS NOT NULL AND NOT (length(NEW.isbn13) = 13 AND NEW.isbn13 GLOB '97[89][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]')
+BEGIN SELECT RAISE(ABORT, 'CHECK book.isbn13: 13 digits beginning 978 or 979'); END;

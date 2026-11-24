@@ -1,0 +1,22 @@
+# An invented catalogue page of Marginalia Index, asked by ISBN: the product carrying that ISBN is read, whatever its
+# name; another edition (another ISBN) and a product without one are never the book.
+title: The Long Tide of Markets
+authors: [Mira Okafor]
+isbn13: '9780000000002'
+page: |
+  <html><body>
+  <script type="application/ld+json">
+  {"@context": "https://schema.org", "@graph": [
+    {"@type": "Book", "name": "The Long Tide of Markets (Large Print)", "isbn": "9780000000019",
+     "offers": {"@type": "Offer", "price": "9.00", "priceCurrency": "EUR"}},
+    {"@type": "Book", "name": "The Long Tide of Markets",
+     "offers": {"@type": "Offer", "price": "7.00", "priceCurrency": "EUR"}},
+    {"@type": "Book", "name": "The Long Tide of Markets: A History", "author": {"@type": "Person", "name": "Mira Okafor"},
+     "isbn": "978-0-00-000000-2", "offers": {"@type": "Offer", "price": "21.40", "priceCurrency": "EUR", "availability": "https://schema.org/InStock"}}
+  ]}
+  </script>
+  </body></html>
+expect:
+  externalId: 978-0-00-000000-2
+  priceC: 2140
+  availability: in stock

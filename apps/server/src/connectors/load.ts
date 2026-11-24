@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseDocument } from 'yaml';
-import { checkConnectorShape, type Connector } from '@philobiblos/contracts/connector';
+import { checkConnectorShape, priceAsks, priceUrlShape, type Connector } from '@philobiblos/contracts/connector';
 import { relaxedAligned } from '../mail/verify';
 import { fold } from './text';
 import { validCurrency } from '../household/currency';
@@ -63,9 +63,12 @@ export function soundness(c: Connector, folder: string): string | null {
       if (lo > hi) return 'its article id has fewer digits at most than at least';
     }
     let u: URL;
-    try { u = new URL(c.prices.url.replace('{query}', 'q')); } catch { return 'its price URL does not read'; }
-    // The schema's pattern already holds this; checked again on the parsed URL, which is what the client will see.
-    if (u.protocol !== 'https:' || u.port || u.username || u.password || u.hash || c.prices.url.split('{query}').length !== 2) return 'its price URL must be https on the default port, with {query} once';
+    try { u = new URL(priceUrlShape(c.prices.url)); } catch { return 'its price URL does not read'; }
+    // The schema's pattern already holds this; checked again on the parsed URL, which is what the client will see. One
+    // placeholder, {query}, or {isbn} in a jsonld lookup (the tiles are read by their titles).
+    const holes = c.prices.url.split(/\{(?:query|isbn)\}/).length - 1;
+    const isbn = priceAsks(c.prices.url) === 'isbn';
+    if (u.protocol !== 'https:' || u.port || u.username || u.password || u.hash || holes !== 1 || (isbn && c.prices.kind !== 'jsonld')) return 'its price URL must be https on the default port, with {query} once (or {isbn}, for a jsonld lookup)';
   }
   return null;
 }

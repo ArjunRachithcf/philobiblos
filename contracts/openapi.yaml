@@ -381,12 +381,13 @@ components:
         language: { type: string }
         allows:
           type: object
-          required: [mailFrom, signedBy, quoteSenders, priceHost, orderTo, markup]
+          required: [mailFrom, signedBy, quoteSenders, priceHost, priceAsks, orderTo, markup]
           properties:
             mailFrom: { type: array, items: { type: string }, description: 'the From domains whose mail counts (exact)' }
             signedBy: { type: array, items: { type: string }, description: 'the DKIM signing domains that count (exact)' }
             quoteSenders: { type: array, items: { type: string } }
             priceHost: { type: [string, 'null'], description: 'the one host its price lookup asks (added to the egress allowlist)' }
+            priceAsks: { enum: [title, isbn, null], description: 'what its price lookup sends that host: a book''s title and first author, or its ISBN-13 alone (only books with one are asked); null without a lookup' }
             orderTo: { type: [string, 'null'], description: 'where Compose writes unless Settings names another address' }
             markup: { type: boolean, description: 'schema.org Order and Invoice markup (JSON-LD) in its signed mail counts: an order''s lines are kept, an invoice makes copies' }
     Money: { type: integer, description: 'hundredths of the household''s currency (HouseholdMoney)' }

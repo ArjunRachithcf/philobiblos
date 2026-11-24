@@ -9,12 +9,13 @@
 // Everything that reaches outside reads only `enabledConnectors`: the mail checks (which senders count), the parsers
 // (how their mails read), the price lookup and the egress allowlist (which host it may ask).
 import { eq } from 'drizzle-orm';
-import type { Connector } from '@philobiblos/contracts/connector';
+import { priceAsks, priceUrlShape, type Connector } from '@philobiblos/contracts/connector';
 import type { Mode } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import type { LoadedConnector, Registry } from './load';
 import { getMoney } from '../household/money';
+import type { ShopMail } from '../mail/verify';
 
 export interface Enabled { id: string; version: string; connector: Connector }
 
@@ -28,6 +29,9 @@ export function enabledConnectors(db: Db, reg: Registry): Enabled[] {
       ? [{ id: c.id, version: c.version, connector: c.connector }] : [];
   }).sort((a, b) => a.id.localeCompare(b.id));
 }
+
+/** A connector's senders as the mail checks take them (mail/verify.ts): its mail and signing domains, nothing else of it. */
+export const shopMail = (e: Pick<Enabled, 'id' | 'connector'>): ShopMail => ({ id: e.id, domains: e.connector.mail!.domains, dkimDomains: e.connector.mail!.dkim_domains ?? e.connector.mail!.domains });
 
 /** The price hosts of these connectors: the only shop hosts on the egress allowlist (net/egress.ts egressRules). */
 export const shopHosts = (enabled: Enabled[]) => enabled.flatMap((e) => (e.connector.prices ? [allows(e.connector).priceHost!] : []));
@@ -44,12 +48,14 @@ export function orderAddress(set: string | null, enabled: Enabled[]): string | n
 
 /** What a connector allows, as Settings shows it before an admin enables it. */
 export function allows(c: Connector) {
-  const priceHost = c.prices ? new URL(c.prices.url.replace('{query}', 'q')).hostname : null;
+  const priceHost = c.prices ? new URL(priceUrlShape(c.prices.url)).hostname : null;
   return {
     mailFrom: c.mail?.domains ?? [],
     signedBy: c.mail ? (c.mail.dkim_domains ?? c.mail.domains) : [],
     quoteSenders: c.mail?.quote?.senders ?? [],
     priceHost,
+    // What the lookup sends that host: a book's title and first author, or its ISBN alone.
+    priceAsks: c.prices ? priceAsks(c.prices.url) : null,
     orderTo: c.order?.to ?? null,
     // Its signed mail's schema.org Order and Invoice markup counts: an invoice there makes copies, as a PDF one does.
     markup: Boolean(c.mail?.markup),
