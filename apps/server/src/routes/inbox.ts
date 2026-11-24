@@ -3,7 +3,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { FILTERS, InboxError, PAGE, decide, dismiss, listInbox, parseCursor, type Filter } from '../inbox/inbox';
+import { FILTERS, InboxError, PAGE, answerTyped, decide, dismiss, listInbox, parseCursor, type Filter } from '../inbox/inbox';
 import { SHARE_RATE, ShareError, ownShare, receiveShare, shareView, type ShareProcessor } from '../shares/shares';
 import { Limiter, TokenError, createShareToken, revokeShareToken, tokenView } from '../shares/tokens';
 import * as t from '../db/schema';
@@ -27,6 +27,10 @@ export async function inboxRoutes(app: FastifyInstance, cfg: Config, db: Db, sha
   app.post<{ Params: { itemId: string; index: string } }>('/inbox/:itemId/books/:index', async (req, reply) => {
     const index = /^\d{1,4}$/.test(req.params.index) ? Number(req.params.index) : -1;
     try { return decide(db, req.caller!.personId, req.params.itemId, index, req.body); } catch (e) { return fail(reply, e); }
+  });
+  // A mailed invoice that may be one typed in (philobiblos#45): the same one, or another purchase.
+  app.post<{ Params: { itemId: string } }>('/inbox/:itemId/typed', async (req, reply) => {
+    try { return answerTyped(db, req.caller!.personId, req.params.itemId, req.body); } catch (e) { return fail(reply, e); }
   });
   app.post<{ Params: { itemId: string } }>('/inbox/:itemId/dismiss', async (req, reply) => {
     try { dismiss(db, req.caller!.personId, req.params.itemId); return reply.code(204).send(); } catch (e) { return fail(reply, e); }

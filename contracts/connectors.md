@@ -173,11 +173,28 @@ effects of the mail of its kind in the table above, on the same records, and not
   (`duplicateOf: entry:<id>`). A number typed for another shop, a label, or none never touches a connector's mail: two
   shops may number their invoices alike, as mail against mail already allows. Without a number, an invoice is recorded
   each time.
+- **Maybe typed already** (philobiblos#45): a verified mailed invoice whose every line names a book, with the same books
+  in the same quantities and the same books' total as an invoice typed or imported in the 30 days before the mail is
+  read (`MAYBE_TYPED_DAYS`) with no number, or with the mail's number for no shop or another (a label), changes nothing
+  when it is read: it is kept with `maybeTyped: <entry id>` and waits in the Inbox (kind `maybe_typed_invoice`, "Maybe
+  the invoice typed on …"). Any adult answers it (`POST /inbox/{itemId}/typed`): `same`, and it counts as the typed
+  one (`duplicateOf: entry:<id>`, nothing else changes); `another`, and it has its effect then, as when read. It is never
+  dismissed unanswered. A typed invoice another mail counts as, or asks about, is not asked about again; of several
+  that fit, the newest. A mail with a line Philobiblos cannot place, or a typed one with another number, counts as before.
+- **Undo** (philobiblos#45, `POST /orders/entries/{id}/undo`; `GET /orders/entries` lists the last 7 days'): an invoice
+  typed or imported is undone by whoever recorded it, or an admin, within 7 days (`UNDO_DAYS`), while nothing it changed
+  has changed since: its copies removed, a tap's copy it took the tap's again, its order lines as they were, each
+  order's invoiced total less its own (with none left, the order as before its first invoice), the price it learnt put
+  back unless another invoice changed it since, a pile it put a book on left without it unless the book was touched
+  since, and the entry gone (its number may be typed again). The book it added stays. Refused (409) when a copy, line
+  or order it changed has changed, when a mail counts as it or waits as maybe it, for a quote (typed again instead), and
+  for an entry recorded before undo existed (`undo_json` null).
 - **Text that could not be decoded** (U+FFFD, what a decoder writes for a file saved in another encoding than UTF-8) is
   refused in every field and in the header: such words would match no book and add a broken one. The page decodes a
   file strictly as UTF-8 and says how to save it again.
 - **Kept** (`order_entry`): the kind, how it came (`typed`, `csv`), the number and the shop, the quote's order, who recorded it, the
-  total and each row's book id, copies, price and availability; never the text typed or the file.
+  total and each row's book id, copies, price and availability, and an invoice's undo record (ids and amounts: the copies
+  it made, the rows it changed with what they were); never the text typed or the file.
 - Amounts are the household's currency's (Settings): with none chosen yet, nothing is recorded (409). Everything is
   checked before anything changes, in one transaction; `dryRun: true` applies it and rolls it back, so it answers
   exactly what the entry would do.

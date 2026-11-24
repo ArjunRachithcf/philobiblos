@@ -31,6 +31,10 @@ let kid: string;
 beforeAll(async () => {
   db0 = household();
   inboxItems(db0);
+  // Two invoices typed in (philobiblos#45): one to undo, and one a held mailed invoice may be (POST /inbox/{itemId}/typed).
+  const entry = (id: string) => ({ id, kind: 'invoice' as const, source: 'typed' as const, personId: 'p_alex', totalC: 0, linesJson: '[]', undoJson: '{"lines":[],"orders":[],"offers":[]}', createdAt: new Date().toISOString() });
+  db0.insert(t.orderEntry).values([entry('e_undo'), entry('e_held')]).run();
+  db0.insert(t.mailSeen).values({ messageId: '<held@bookshop.example>', kind: 'invoice', parserVersion: 'm3d-1/invoice-1', seenAt: new Date().toISOString(), accepted: 1, authJson: '{}', parsedJson: JSON.stringify({ invoiceNumber: '654321', maybeTyped: 'e_held', lines: [] }) }).run();
   seal(db0, Buffer.from(TEST_SEALING_KEY, 'base64'), 'bookshop_email', 'orders@bookshop.example');
   // A plain list made in February (no-shop mode), a book of it still to buy, for PUT /orders/{id}/lines/{bookId}.
   // (Its own book: one in a composed order is no candidate for this month's picks, which POST /orders needs.)

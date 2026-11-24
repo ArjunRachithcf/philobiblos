@@ -65,6 +65,11 @@ function fromSql(statements: string[]): Database.Database {
 }
 
 describe('migrations', () => {
+  it('each migration is dated after the one before it: drizzle applies only those newer than the last applied (philobiblos#45)', () => {
+    const journal = JSON.parse(readFileSync(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8')) as { entries: { tag: string; when: number }[] };
+    for (const [i, e] of journal.entries.entries()) if (i) expect(e.when, e.tag).toBeGreaterThan(journal.entries[i - 1]!.when);
+  });
+
   it('the migrations build the contract\'s database', () => {
     const migrated = openDb(':memory:');
     expect(describeDb(migrated.$client)).toEqual(describeDb(fromSql([contractSql])));
