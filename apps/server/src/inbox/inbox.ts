@@ -19,7 +19,7 @@ import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
-import { deliver, invoiceOrders, matchBook } from '../mail/effects';
+import { invoiceOrders, matchBook, receive } from '../mail/effects';
 import { norm } from '../seed/import';
 import { foundBooks, keptFiles, ownShare, shareAiNote, type ShareRow } from '../shares/shares';
 import { validateAiOutput, type SuggestNextOut } from '@philobiblos/contracts';
@@ -322,11 +322,11 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
   db.transaction((tx) => {
     const bookId = findOrCreateBook(tx, { title: book.title!, author: book.author, isbn, audience: target.role === 'kid' ? 'kids' : 'adult' }, iso);
     if (book.invoice) {
-      // The invoice says the household bought it: copies, as the invoice's effect would have made had the book been
-      // known (the order line it was ordered in delivered), and on the to-read pile of whoever it is for.
+      // The invoice says the household bought it: copies and the price paid, as the invoice's effect would have made
+      // had the book been known (the order line it was ordered in delivered), and on the to-read pile of whoever it is for.
       const inv = book.invoice;
       const acquired = inv.date && !Number.isNaN(Date.parse(inv.date)) ? new Date(inv.date).toISOString() : iso;
-      const orderId = deliver(tx, { bookId, qty: Math.min(inv.qty, MAX_COPIES), unitC: inv.unitC, acquiredAt: acquired, source: 'invoice' });
+      const orderId = receive(tx, { bookId, qty: Math.min(inv.qty, MAX_COPIES), unitC: inv.unitC, acquiredAt: acquired, source: 'invoice' }, iso);
       if (orderId) invoiceOrders(tx, new Map([[orderId, inv.totalC]]));
       if (forWho) tx.insert(t.reading).values({ personId: target.id, bookId, status: 'to_read', updatedAt: iso }).onConflictDoNothing().run();
     } else {

@@ -329,6 +329,8 @@ describe('invoices: copies, through the media worker only', () => {
     expect(order(db)).toMatchObject({ status: 'invoiced', invoicedC: 1990 + 3380 });
     expect(lines(db)).toMatchObject({ b_tide: { state: 'delivered' }, b_hedgehog: { state: 'delivered' }, b_value: { state: 'planned' } });
     expect(unmatchedLines(db).map((l) => l.ean)).toEqual(['9780000000026']);
+    // The price paid learnt per book (philobiblos#51: every invoice path the same).
+    expect(db.select().from(t.bookOffer).where(eq(t.bookOffer.source, 'invoice')).all().map((o) => [o.bookId, o.priceC, o.availability]).sort()).toEqual([['b_hedgehog', 1690, null], ['b_tide', 1990, null]]);
     const row = kept(db, '<i1@quillmere.example>');
     expect(row).toMatchObject({ kind: 'invoice', accepted: 1 });
     expect(row.parsedJson).not.toMatch(/Kundennummer|5550001|%PDF/);
