@@ -155,7 +155,13 @@ test('the backlog: the filter bar, labels, tabs, a score\'s parts, grouping, bul
   await page.keyboard.press('Enter');
   await expect(bar).toHaveValue('is:open sort:score for:kid2');
   await expect(forMenu).toBeFocused();
-  await page.getByRole('button', { name: 'Clear' }).click();
+  // Clear rewrites the bar in the same step as the click, not a moment later under the next typing (philobiblos#66):
+  // one task after the click, the bar is already the default query
+  expect(await bar.evaluate(async (input: HTMLInputElement) => {
+    [...(input.form?.querySelectorAll('button') ?? [])].find((b) => b.textContent === 'Clear')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return input.value;
+  })).toBe('is:open sort:score');
 
   // an empty menu: one disabled item to focus, axe passes, Escape closes it
   await bar.fill('is:open is:kids');

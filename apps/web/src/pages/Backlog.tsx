@@ -24,8 +24,11 @@ type Group = 'none' | 'for' | 'move' | 'idea';
 const GROUPS: [Group, string][] = [['none', 'No groups'], ['for', 'Group: person'], ['move', 'Group: move'], ['idea', 'Group: idea or theme']];
 
 export function Backlog({ me }: { me: Me }) {
-  const [q, setQ] = useState(() => new URLSearchParams(location.search).get('q') ?? DEFAULT_Q);
+  const [q, setQuery] = useState(() => new URLSearchParams(location.search).get('q') ?? DEFAULT_Q);
   const [draft, setDraft] = useState(q);
+  // The bar and the query change together, in one render: mirroring q into the bar from an effect would rewrite
+  // the bar a moment after a click, under whatever is being typed into it (philobiblos#66).
+  const setQ = useCallback((next: string) => { setQuery(next); setDraft(next); }, []);
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -43,7 +46,6 @@ export function Backlog({ me }: { me: Me }) {
   }, [q]);
   useEffect(() => {
     setSelected(new Set());
-    setDraft(q);
     history.replaceState(null, '', q === DEFAULT_Q ? location.pathname : `${location.pathname}?q=${encodeURIComponent(q)}`);
     void load();
   }, [q, load]);
