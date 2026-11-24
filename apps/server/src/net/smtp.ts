@@ -16,7 +16,7 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import tls from 'node:tls';
-import type { Secret } from './imap';
+import { readSecret, type Secret } from './imap';
 
 export interface SmtpSettings {
   host: string;
@@ -79,8 +79,6 @@ export function codeMessage(from: string, to: string, code: string, now = new Da
   ].join('\r\n');
 }
 
-const secret = (p: Secret) => ('value' in p ? p.value : readFileSync(p.file, 'utf8').trim());
-
 /** Sends the code to `to`, the only recipient. Throws SmtpError (never with the server's words) when it was not sent. */
 export async function sendCode(s: SmtpSettings, to: string, code: string, timeoutMs = SMTP_TIMEOUT_MS): Promise<void> {
   const rcpt = plainAddress(to);
@@ -90,7 +88,7 @@ export async function sendCode(s: SmtpSettings, to: string, code: string, timeou
   const message = codeMessage(from, rcpt, code);
   const user = s.user;
   let password: string;
-  try { password = secret(s.password); } catch { throw new SmtpError('cannot read PHILOBIBLOS_SMTP_PASSWORD_FILE'); }
+  try { password = readSecret(s.password); } catch { throw new SmtpError('cannot read PHILOBIBLOS_SMTP_PASSWORD_FILE'); }
   if (/[\0\r\n]/.test(user) || /[\0\r\n]/.test(password)) throw new SmtpError('the SMTP user or password holds a control character');
   let ca: string | undefined = s.test?.ca;
   if (!ca && s.caFile) {

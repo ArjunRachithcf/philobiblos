@@ -79,7 +79,7 @@ export function Join({ token, member, onSignedIn }: { token: string | null; memb
           <button type="submit" className="btn btn-primary btn-lg btn-block" aria-busy={busy} disabled={busy || opens !== true || !name.trim()}>
             {busy ? 'Waiting for your passkey…' : 'Ask to join'}
           </button>
-          {verified && <p className="hint" role="status">Your address is confirmed.</p>}
+          {verified && <p className="hint" role="status">Your address is confirmed for the next 30 minutes: ask to join before then.</p>}
           {error && <Notice kind="error">{error}</Notice>}
         </form>
       )}

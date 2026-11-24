@@ -16,13 +16,13 @@
 // - The address is on the request (join_code) until the passkey's enrolment, at most 30 minutes; then on the waiting
 //   person's join_request only, gone when they are decided or lapse. Someone the rule let in keeps only the domain.
 import { createHmac, hkdfSync, randomInt, timingSafeEqual } from 'node:crypto';
-import { and, count, eq, gte, isNull, lt } from 'drizzle-orm';
+import { and, count, eq, gte, isNull, lt, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { hashToken, looksLikeToken, newToken } from '../auth/tokens';
-import { domainOf, plainAddress, sendCode as smtpSend } from '../net/smtp';
+import { plainAddress, sendCode as smtpSend } from '../net/smtp';
 import { sealingKey } from './sealed';
 
 export const JOIN_CODE = {
@@ -40,7 +40,8 @@ export function codeKey(sealing: Buffer): Buffer {
 /** The code's HMAC, bound to its request's id. */
 const codeMac = (key: Buffer, requestId: string, code: string) => createHmac('sha256', key).update(`code\n${requestId}\n${code}`).digest();
 /** What the send log keeps of an address. */
-const addressMac = (key: Buffer, address: string) => createHmac('sha256', key).update(`address\n${address}`).digest('hex');
+// Case-folded whole: Jordan@ and jordan@ are one address for the limits and for "one live code".
+const addressMac = (key: Buffer, address: string) => createHmac('sha256', key).update(`address\n${address.toLowerCase()}`).digest('hex');
 
 /** A mail domain as an admin gives it: a host name of at least two labels, lowercased; null otherwise. */
 export function mailDomain(v: unknown): string | null {
@@ -61,7 +62,13 @@ export interface CodeMail {
 
 export function codeMail(cfg: Pick<Config, 'smtp' | 'sealingKey' | 'publicMailDomains'>, send?: CodeMail['send']): CodeMail {
   let key: Buffer | null = null;
-  if (cfg.smtp) { try { const k = sealingKey(cfg); key = k ? codeKey(k) : null; } catch { key = null; } }
+  // With SMTP set, a sealing key that cannot be read stops the start (SealError), as it would at the first seal:
+  // the rule is never switched off without a word.
+  if (cfg.smtp) {
+    const k = sealingKey(cfg);
+    if (!k) throw new Error('PHILOBIBLOS_SMTP_* needs a sealing key (PHILOBIBLOS_SEALING_KEY or PHILOBIBLOS_SEALING_KEY_FILE): join codes are kept as an HMAC keyed from it');
+    key = codeKey(k);
+  }
   const smtp = cfg.smtp;
   return { key, host: key && smtp ? smtp.host : null, publicDomains: cfg.publicMailDomains, send: send ?? ((to, code) => smtpSend(smtp!, to, code)) };
 }
@@ -99,7 +106,7 @@ export function askCode(db: Db, key: Buffer, o: { linkId: string | null; to: str
       if (room) {
         send = { to: o.to, code: String(randomInt(0, 1_000_000)).padStart(6, '0') };
         // One live code an address: the one before stops working.
-        tx.update(t.joinCode).set({ mac: null }).where(and(eq(t.joinCode.address, o.to), isNull(t.joinCode.verifiedAt))).run();
+        tx.update(t.joinCode).set({ mac: null }).where(and(sql`lower(${t.joinCode.address}) = ${o.to.toLowerCase()}`, isNull(t.joinCode.verifiedAt))).run();
         tx.insert(t.joinCodeSent).values({ sentAt: now.toISOString(), joinLinkId: o.linkId, addressMac: am }).run();
       }
     }
@@ -152,17 +159,7 @@ export function verifiedAddress(db: Db, hash: string | null | undefined, linkId:
 const verifiedOf = (row: typeof t.joinCode.$inferSelect, linkId: string, now: Date) =>
   row.joinLinkId === linkId && row.verifiedAt !== null && row.address !== null && row.createdAt >= new Date(now.getTime() - JOIN_CODE.keepMs).toISOString() ? row.address : null;
 
-/**
- * At the enrolment, inside its transaction: the address a request verified for this link (within JOIN_CODE.keepMs),
- * or null. The request goes either way: the address moves to the join request, or nowhere.
- */
-export function takeVerified(tx: Db, hash: string | null | undefined, linkId: string, now = new Date()): string | null {
-  if (!hash) return null;
-  const row = tx.select().from(t.joinCode).where(eq(t.joinCode.requestHash, hash)).get();
-  if (!row) return null;
-  tx.delete(t.joinCode).where(eq(t.joinCode.id, row.id)).run();
-  return verifiedOf(row, linkId, now);
+/** At the enrolment, once someone is stored (inside its transaction): the request goes; its address moved or nowhere. */
+export function dropRequest(tx: Db, hash: string | null | undefined): void {
+  if (hash) tx.delete(t.joinCode).where(eq(t.joinCode.requestHash, hash)).run();
 }
-
-/** Whether an address's domain is the rule's (exact, never a subdomain). */
-export const atDomain = (address: string, domain: string) => domainOf(address) === domain;

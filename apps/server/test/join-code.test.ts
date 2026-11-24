@@ -13,7 +13,7 @@ import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig, type Config } from '../src/config';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
-import { JOIN_CODE, askCode, checkCode, codeKey, pruneCodes, requestHash, takeVerified } from '../src/household/join-code';
+import { JOIN_CODE, askCode, checkCode, codeKey, codeMail, pruneCodes, requestHash, verifiedAddress } from '../src/household/join-code';
 import { approve, decline, lapseWaiting } from '../src/household/waiting';
 import { WAITING } from '../src/household/waiting-rows';
 import { egressRules } from '../src/net/egress';
@@ -36,9 +36,9 @@ interface Sent { to: string; code: string }
 let open: (BuiltApp | Smtpd)[] = [];
 afterEach(async () => { for (const b of open) await ('app' in b ? b.app.close() : b.close()); open = []; });
 
-async function app(cfg: Config = withSmtp(), db = household(), send?: (to: string, code: string) => Promise<void>) {
+async function app(cfg: Config = withSmtp(), db = household(), send?: (to: string, code: string) => Promise<void>, joinLinkKeys?: number) {
   const sent: Sent[] = [];
-  const b = await buildApp(cfg, db, { webauthn: fakeWebAuthn(), push: nowherePush, joinFloorMs: 0, surroundings: HOST, sendCode: send ?? (async (to, code) => { sent.push({ to, code }); }) });
+  const b = await buildApp(cfg, db, { webauthn: fakeWebAuthn(), push: nowherePush, joinFloorMs: 0, surroundings: HOST, joinLinkKeys, sendCode: send ?? (async (to, code) => { sent.push({ to, code }); }) });
   await b.app.ready();
   open.push(b);
   db.insert(t.homeNetwork).values({ cidr: HOME, addedBy: 'p_alex', addedAt: new Date().toISOString() }).run();
@@ -200,6 +200,25 @@ describe('a link with the mail-domain rule', () => {
   });
 });
 
+describe('a verified address is spent only by an enrolment that stores someone', () => {
+  it('a passkey already enrolled: the request still counts on the next try', async () => {
+    const b = await app();
+    const { token } = await makeLink(b.app, b.db);
+    const request = await prove(b, token, `jordan@${DOMAIN}`);
+    const step = async () => (await post(b.app, '/api/join/options', { token, name: 'Jordan', request })).json();
+    const s1 = await step();
+    expect((await post(b.app, '/api/join/verify', { challengeId: s1.challengeId, response: { id: 'pk1', challenge: s1.options.challenge } })).statusCode).toBe(409);
+    const s2 = await step();
+    const v = await post(b.app, '/api/join/verify', { challengeId: s2.challengeId, response: { id: 'cred-new', challenge: s2.options.challenge } });
+    expect(v.json()).toMatchObject({ waiting: false });
+  });
+
+  it('SMTP set without a readable sealing key stops the start', () => {
+    expect(() => codeMail({ ...withSmtp(), sealingKey: { file: '/nonexistent/sealing.key', create: false } })).toThrow();
+    expect(() => codeMail({ ...withSmtp(), sealingKey: null })).toThrow(/sealing key/);
+  });
+});
+
 describe('the code is bound to the request that asked for it', () => {
   it('another request\'s code, the code on another link, or another browser (no request): no match', async () => {
     const b = await app();
@@ -294,7 +313,8 @@ describe('10 minutes, 5 tries, one live code an address', () => {
     const db = setup();
     const a = askCode(db, key, { linkId: 'l1', to: `jordan@${DOMAIN}` }, at(0));
     checkCode(db, key, requestHash(a.request), a.send!.code, at(1));
-    expect(takeVerified(db, requestHash(a.request), 'l1', at(31))).toBeNull();
+    expect(verifiedAddress(db, requestHash(a.request), 'l1', at(1.5))).toBe(`jordan@${DOMAIN}`);
+    expect(verifiedAddress(db, requestHash(a.request), 'l1', at(31))).toBeNull();
     const b = askCode(db, key, { linkId: 'l1', to: `riley@${DOMAIN}` }, at(40));
     pruneCodes(db, at(71));
     expect(db.select().from(t.joinCode).all()).toEqual([]);
@@ -322,6 +342,14 @@ describe('send limits: 3 an hour and 10 a day an address, 10 a day a link, 30 a 
     const out = Array.from({ length: 11 }, (_, i) => askCode(db2, key, { linkId: `l${(i % 4) + 1}`, to }, at(i * 2)).send !== null);
     expect(out).toEqual([...Array(10).fill(true), false]);
     expect(askCode(db2, key, { linkId: 'l1', to }, at(24.01)).send).not.toBeNull();
+  });
+
+  it('an address in another case is the same address: its limits and its one live code', () => {
+    const db = setup();
+    const first = askCode(db, key, { linkId: 'l1', to: `jordan@${DOMAIN}` }, at(0));
+    const sends = ['Jordan', 'JORDAN', 'jOrdan'].map((l) => askCode(db, key, { linkId: 'l1', to: `${l}@${DOMAIN}` }, at(0.1)).send !== null);
+    expect(sends).toEqual([true, true, false]);
+    expect(checkCode(db, key, requestHash(first.request), first.send!.code, at(0.2))).toBe(false);
   });
 
   it('the send log keeps an HMAC of the address, never the address', () => {
@@ -412,6 +440,15 @@ describe('the same answer whether or not a mail went out', () => {
     for (let i = 0; i < 6; i++) tries.push((await tryCode(b.app, none, '000000', { remote: `10.20.4.${i + 1}` })).statusCode);
     // ten tries a link in ten minutes, whichever of its requests they were for
     expect(tries).toEqual([...Array(10).fill(400), 429]);
+  });
+
+  it('made-up request tokens count by client address only: they never fill the link\'s try limit', async () => {
+    // a link limiter that holds 5 keys: made-up tokens counted as keys would fill it, and the real link would be refused
+    const b = await app(withSmtp(), household(), undefined, 5);
+    const { token } = await makeLink(b.app, b.db);
+    for (let i = 0; i < 12; i++) expect((await tryCode(b.app, `${'m'.repeat(40)}${String(i).padStart(3, '0')}`, '000000', { remote: `10.20.5.${i + 1}` })).statusCode).toBe(400);
+    const real = (await ask(b.app, token, `jordan@${DOMAIN}`)).json().request;
+    expect((await tryCode(b.app, real, b.sent[0]!.code)).statusCode).toBe(204);
   });
 
   it('the mail is sent after the answer: a server that never answers does not hold it back', async () => {

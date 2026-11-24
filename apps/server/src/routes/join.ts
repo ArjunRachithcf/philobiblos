@@ -36,7 +36,7 @@ import { JOIN_LINK, JoinLinkError, RULE_ROLE, checkLink, createJoinLink, linkNet
 import { NETWORKS, NO_SURROUNDINGS, homeNetworks, isHop, parseCidr, proposeNetwork, rangeProblem, setHomeNetworks, surroundingsWarning, type Cidr, type Surroundings } from '../net/networks';
 import { addressKey, clientAddress } from '../net/proxy';
 import { domainOf, plainAddress } from '../net/smtp';
-import { askCode, checkCode, codeMail, mailDomain, pruneCodes, requestHash, requestLink, takeVerified, verifiedAddress, type CodeMail } from '../household/join-code';
+import { askCode, checkCode, codeMail, mailDomain, dropRequest, pruneCodes, requestHash, requestLink, verifiedAddress, type CodeMail } from '../household/join-code';
 
 export { addressKey };
 import { suggestHandle, view } from '../household/people';
@@ -160,7 +160,10 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (!standaloneOnly(reply) || !codesOn(reply)) return;
     const hash = requestHash(req.body?.request);
     const byAddress = trying.byAddress.hit(limitKey(req));
-    const byLink = trying.byLink.hit(requestLink(db, hash) ?? hash);
+    // Per link: the link a request names (every request of a known link keeps it, whether a mail went out or not);
+    // a request of no link counts by client address alone, so made-up tokens cannot fill the link limiter.
+    const link = requestLink(db, hash);
+    const byLink = link === null || trying.byLink.hit(link);
     if (!byAddress || !byLink) return answer(reply, start, 429, TOO_MANY);
     return checkCode(db, mail.key!, hash, req.body?.code) ? answer(reply, start, 204) : answer(reply, start, 400, WRONG_CODE);
   });
@@ -210,9 +213,9 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
         // The link is checked again here: revoked, expired, used up, the address or a full list since the options.
         lapseIn(tx, now);
         pruneCodes(tx, now);
-        // The rules are judged here, at the enrolment, not at the options; a verified address is taken (its request
-        // goes) and moves to the join request, or, for someone let in, only its domain stays.
-        const verified = takeVerified(tx, pending.codeRequest, pending.joinLinkId!, now);
+        // The rules are judged here, at the enrolment, not at the options. A verified address is spent only once
+        // someone is stored: it moves to the join request, or, for someone let in, only its domain stays.
+        const verified = verifiedAddress(tx, pending.codeRequest, pending.joinLinkId!, now);
         const admission = checkLink(tx, { id: pending.joinLinkId! }, address(req), now, where, match(verified ? domainOf(verified) : null));
         if (!admission) return;
         const { link } = admission;
@@ -231,6 +234,7 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
           }).run();
         }
         tx.insert(t.passkey).values(passkeyRow(cred, pending.personId!, label, now.toISOString())).run();
+        dropRequest(tx, pending.codeRequest);
         // The use counts here and only here, with the passkey (checkLink saw room for it in this same transaction).
         if (!spendUse(tx, link.id, now)) throw new Error('a join link use was not counted');
         outcome = admission.outcome === 'accept' ? 'accepted' : 'joined';

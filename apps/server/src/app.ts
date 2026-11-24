@@ -118,7 +118,10 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   // Waiting requests lapse after 7 days (household/waiting-rows.ts): each read of the waiting people lapses old ones,
   // and this hourly sweep the ones nobody reads.
   // Join codes asked for more than 30 minutes ago go too (household/join-code.ts), with their addresses.
-  const sweep = setInterval(() => { try { lapseWaiting(db); pruneCodes(db); } catch { /* the next sweep tries again */ } }, 3_600_000);
+  const sweep = setInterval(() => {
+    try { lapseWaiting(db); } catch { /* the next sweep tries again */ }
+    try { pruneCodes(db); } catch { /* the next sweep tries again */ }
+  }, 3_600_000);
   sweep.unref();
   app.addHook('onClose', async () => clearInterval(sweep));
   app.addHook('onReady', async () => { void shares.kick(); });
