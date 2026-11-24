@@ -44,7 +44,7 @@ beforeAll(async () => {
   // Two people who wait for approval (ADR 0011): one to approve, one to decline.
   db0.insert(t.person).values([1, 2].map((n) => ({ id: `p_wait${n}`, name: `Waiting ${n}`, role: 'adult' as const, state: 'waiting' as const, arrivedAt: new Date().toISOString() }))).run();
   // A home network and a join link of Alex's (ADR 0011), for the join links' routes.
-  db0.insert(t.homeNetwork).values({ cidr: '127.0.0.0/8', addedBy: 'p_alex', addedAt: new Date().toISOString() }).run();
+  db0.insert(t.homeNetwork).values({ cidr: '192.0.2.0/24', addedBy: 'p_alex', addedAt: new Date().toISOString() }).run();
   db0.insert(t.joinLink).values({ id: 'jl_contract', tokenHash: 'contract', createdBy: 'p_alex', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString() }).run();
   admin = sessionCookie(db0, 'p_alex');
   adult = sessionCookie(db0, 'p_sam');

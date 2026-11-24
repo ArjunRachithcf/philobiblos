@@ -102,6 +102,12 @@ export class Challenges {
     this.m.set(id, { ...p, expires: now + this.ttlMs });
     return id;
   }
+  /** The step, left in place (a rate limit reads its link before deciding whether to take it). */
+  peek(id: unknown, kind: Pending['kind'], now = Date.now()): Pending | null {
+    if (typeof id !== 'string') return null;
+    const p = this.m.get(id);
+    return p && p.kind === kind && p.expires > now ? p : null;
+  }
   take(id: unknown, kind: Pending['kind'], now = Date.now()): Pending | null {
     if (typeof id !== 'string') return null;
     const p = this.m.get(id);

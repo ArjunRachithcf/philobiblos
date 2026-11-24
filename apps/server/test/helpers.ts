@@ -108,7 +108,7 @@ const BODIES: Record<string, unknown> = {
   addToBacklog: { title: 'Gardens of the Commons', author: 'Tomas Ehrlich' },
   decideFound: { action: 'skip' }, answerTypedInvoice: { answer: 'same' },
   setConnector: { enabled: false },
-  setHomeNetworks: { networks: ['127.0.0.0/8', '192.0.2.0/24'] },
+  setHomeNetworks: { networks: ['192.0.2.0/24', '2001:db8::/48'] },
   addPushSubscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/contract-new', keys: { p256dh: RFC8291_UA_KEY, auth: 'BTBZMqHH6r4Tts7J_aSIgg' } },
   setMonthBudget: { min: 10000, max: 15000 }, changePicks: { recompute: true }, createOrderDraft: { month: THIS_MONTH },
   recordOrderEntry: { kind: 'invoice', lines: [{ title: 'Paper Boats', qty: 1, price: 900 }] },

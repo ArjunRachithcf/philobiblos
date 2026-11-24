@@ -12,8 +12,10 @@ import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { JOIN_LINK } from '../src/household/join-links';
 import { WAITING, waitingPeople } from '../src/household/waiting';
-import { inHomeNetwork, parseCidr, proposeNetwork } from '../src/net/networks';
-import { JOIN_ENROL, JOIN_OPEN, NOT_HERE, joinName } from '../src/routes/join';
+import { inHomeNetwork, parseCidr, parseRoutes, proposeNetwork, type Surroundings } from '../src/net/networks';
+import { JOIN_ENROL, JOIN_OPEN, NOT_HERE, addressKey, joinName } from '../src/routes/join';
+import { spendUse } from '../src/household/join-links';
+import { Limiter } from '../src/shares/tokens';
 import { JOIN_PUSH } from '../src/push/push';
 import type { Egress } from '../src/net/egress';
 import { ORIGIN, RFC8291_UA_KEY, TEST_SEALING_KEY, fakeWebAuthn, household, nowherePush, sessionCookie } from './helpers';
@@ -22,16 +24,18 @@ const standalone = () => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLO
 const homerslab = () => loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: '127.0.0.1', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY });
 const hlHeaders = (person: string, name: string, role: string) => ({ 'x-homerslab-person': person, 'x-homerslab-name': name, 'x-homerslab-role': role });
 
-/** The home network of these tests (inject's own address is 127.0.0.1) and an address outside it. */
-const HOME = '127.0.0.0/8';
-const HOME_ADDR = '127.0.0.1';
+/** The home network of these tests, a client in it (a direct connection, no proxy) and an address outside it. */
+const HOME = '10.20.0.0/16';
+const HOME_ADDR = '10.20.0.10';
 const AWAY = '198.51.100.7';
 const FLOOR = 60;
 const DAY = 86_400_000;
 
 let open: BuiltApp[] = [];
-async function app(cfg = standalone(), db = household(), o: { push?: Egress; floorMs?: number } = {}) {
-  const b = await buildApp(cfg, db, { webauthn: fakeWebAuthn(), push: o.push ?? nowherePush, joinFloorMs: o.floorMs ?? 0 });
+/** Where the tests' Philobiblos runs: on a host, not in a container, unless a test says otherwise. */
+const HOST: Surroundings = { container: false, gateways: [], localNets: [] };
+async function app(cfg = standalone(), db = household(), o: { push?: Egress; floorMs?: number; surroundings?: Surroundings } = {}) {
+  const b = await buildApp(cfg, db, { webauthn: fakeWebAuthn(), push: o.push ?? nowherePush, joinFloorMs: o.floorMs ?? 0, surroundings: o.surroundings ?? HOST });
   await b.app.ready();
   open.push(b);
   return { ...b, db };
@@ -152,7 +156,7 @@ describe('the home network', () => {
     for (const a of ['127.0.0.1', '172.18.0.1', '172.20.5.9', '192.168.1.1', '203.0.113.5', '2001:db8::1', 'fe80::1', '', undefined]) expect(proposeNetwork(a), String(a)).toBeNull();
     const { app: a, db } = await app();
     const res = await a.inject({ url: '/api/people/home-networks', remoteAddress: '192.168.1.23', headers: { cookie: sessionCookie(db, 'p_alex') } });
-    expect(res.json()).toEqual({ networks: [], proposal: '192.168.1.0/24' });
+    expect(res.json()).toEqual({ networks: [], proposal: '192.168.1.0/24', behindProxy: false });
     expect(db.select().from(t.homeNetwork).all()).toEqual([]);
   });
 
@@ -268,7 +272,116 @@ describe('one answer, and one timing, for every link that does not open', () => 
 
   it('a name is 1 to 60 characters, no control characters; the same 400 whatever the link', () => {
     expect(joinName('  Jordan ')).toBe('Jordan');
-    for (const bad of ['', '   ', 'x'.repeat(61), 'Jo\nrdan', 'Jo ', 42, null]) expect(joinName(bad), JSON.stringify(bad)).toBeNull();
+    for (const bad of ['', '   ', 'x'.repeat(61), 'Jo\nrdan', 'Jo\u2028', '\u202Enaj', 'Jo\u2066rdan', 'Jo\u200Brdan', 'Jo\u00ADrdan', 'Jo\uFE0F', 'Jo\u{E0041}', 'Jo\u061C', 42, null]) expect(joinName(bad), JSON.stringify(bad)).toBeNull();
+  });
+});
+
+const DOCKER: Surroundings = { container: true, gateways: ['172.17.0.1'], localNets: [parseCidr('172.17.0.0/16')!, parseCidr('192.168.16.0/20')!] };
+const putNets = (a: BuiltApp['app'], db: Db, networks: string[], remote?: string) =>
+  a.inject({ method: 'PUT', url: '/api/people/home-networks', remoteAddress: remote ?? HOME_ADDR, headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN }, payload: { networks } });
+
+describe('a hop is never home: loopback and the container\'s gateway (until slice 3\'s trusted proxy)', () => {
+  it('loopback ranges, and ranges holding the container\'s gateway or the admin\'s own hop, are refused', async () => {
+    const { app: a, db } = await app(standalone(), household(), { surroundings: DOCKER });
+    for (const bad of ['127.0.0.0/8', '127.0.0.1/32', '::1/128', '172.17.0.0/16', '172.16.0.0/12', '172.17.0.0/24']) {
+      expect((await putNets(a, db, [bad])).statusCode, bad).toBe(400);
+    }
+    const viaGateway = await putNets(a, db, ['10.0.0.0/8'], '10.89.0.1');
+    expect(viaGateway.statusCode).toBe(200); // not this container's gateway: the range holds no hop
+    const podman = await app(standalone(), household(), { surroundings: { container: true, gateways: ['10.89.0.1'], localNets: [] } });
+    expect((await putNets(podman.app, podman.db, ['10.0.0.0/8'], '10.89.0.1')).statusCode).toBe(400);
+    expect((await putNets(podman.app, podman.db, ['10.89.0.0/24'])).statusCode).toBe(400);
+    // on a host, loopback is still refused; a router's range is fine
+    const host = await app();
+    expect((await putNets(host.app, host.db, ['127.0.0.0/8'], '127.0.0.1')).statusCode).toBe(400);
+    expect((await putNets(host.app, host.db, ['192.168.1.0/24'])).statusCode).toBe(200);
+    expect(db.select().from(t.homeNetwork).all().map((n) => n.cidr)).toEqual(['10.0.0.0/8']);
+  });
+
+  it('a connection from loopback or the gateway is out of network, even when a range lists it (written by hand)', async () => {
+    const { app: a, db } = await app(standalone(), household(), { surroundings: DOCKER });
+    home(db, '127.0.0.0/8');
+    home(db, '172.17.0.0/16');
+    const { token } = await makeLink(a, db);
+    for (const remote of ['127.0.0.1', '::ffff:127.0.0.1', '172.17.0.1', '::1']) {
+      const res = await post(a, '/api/join/open', { token }, { remote });
+      expect([res.statusCode, res.json()], remote).toEqual([404, NOT_HERE]);
+    }
+    expect((await post(a, '/api/join/open', { token }, { remote: '172.17.0.5' })).statusCode).toBe(204); // a container on the bridge
+  });
+
+  it('behind a hop the admin is told join links wait, and nothing is proposed', async () => {
+    const { app: a, db } = await app(standalone(), household(), { surroundings: DOCKER });
+    const view = async (remote: string) => (await a.inject({ url: '/api/people/home-networks', remoteAddress: remote, headers: { cookie: sessionCookie(db, 'p_alex') } })).json();
+    expect(await view('172.17.0.1')).toMatchObject({ behindProxy: true, proposal: null });
+    expect(await view('127.0.0.1')).toMatchObject({ behindProxy: true, proposal: null });
+    expect(await view('192.168.16.3')).toMatchObject({ behindProxy: false, proposal: null }); // a proxy on a container network
+    expect(await view('192.168.1.23')).toMatchObject({ behindProxy: false, proposal: '192.168.1.0/24' });
+    expect(proposeNetwork('10.89.0.1', { container: true, gateways: ['10.89.0.1'], localNets: [] })).toBeNull();
+    expect(proposeNetwork('10.89.0.7', { container: true, gateways: ['10.89.0.7'], localNets: [] })).toBeNull(); // a gateway not on .1
+  });
+
+  it('the gateways and networks come from /proc/net/route', () => {
+    const text = [
+      'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT',
+      'eth0\t00000000\t010011AC\t0003\t0\t0\t0\t00000000\t0\t0\t0',
+      'eth0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0',
+      'garbage',
+    ].join('\n');
+    expect(parseRoutes(text)).toEqual({ gateways: ['172.17.0.1'], nets: [parseCidr('172.17.0.0/16')] });
+  });
+});
+
+describe('limits, the review\'s nits', () => {
+  it('the per-link limit holds at the enrolment too, before its step is taken', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    const { token } = await makeLink(a, db);
+    const first = await options(a, token, 'Jordan', '10.20.11.1');
+    for (let i = 1; i < JOIN_ENROL.max; i++) expect((await options(a, token, 'Jordan', `10.20.11.${i + 1}`)).statusCode).toBe(200);
+    expect((await verify(a, first.json(), 'cred-j', '10.20.12.1')).statusCode).toBe(429);
+    expect((await verify(a, first.json(), 'cred-j', '10.20.12.2')).statusCode).toBe(429); // still there: 429, not 'start again'
+    expect(waitingPeople(db)).toEqual([]);
+  });
+
+  it('spendUse counts only while uses < maxUses and the link is unexpired', () => {
+    const db = household();
+    const now = new Date();
+    const row = (id: string, uses: number, maxUses: number, expires: number) => db.insert(t.joinLink).values({ id, tokenHash: id, createdBy: 'p_alex', createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + expires).toISOString(), uses, maxUses }).run();
+    row('l_room', 4, 5, DAY);
+    row('l_full', 5, 5, DAY);
+    row('l_old', 0, 5, -1000);
+    expect(spendUse(db, 'l_room', now)).toBe(true);
+    expect(spendUse(db, 'l_room', now)).toBe(false); // now 5 of 5
+    expect(spendUse(db, 'l_full', now)).toBe(false);
+    expect(spendUse(db, 'l_old', now)).toBe(false);
+    expect(db.select().from(t.joinLink).all().map((l) => l.uses)).toEqual([5, 5, 0]);
+  });
+
+  it('an IPv6 /64 is one address for the limits; a mapped IPv4 address is its IPv4 one', () => {
+    expect(addressKey('2001:db8:1:2::5')).toBe(addressKey('2001:db8:1:2:ffff::9'));
+    expect(addressKey('2001:db8:1:2::5')).not.toBe(addressKey('2001:db8:1:3::5'));
+    expect(addressKey('::ffff:192.0.2.1')).toBe(addressKey('192.0.2.1'));
+  });
+
+  it('a per-link limiter that is full refuses new keys, never forgetting a count', () => {
+    const l = new Limiter(1, 60_000, 2, 'refuse');
+    expect(l.hit('link-a')).toBe(true);
+    expect(l.hit('flood-1')).toBe(true);
+    expect(l.hit('flood-2')).toBe(false); // full: refused, link-a kept
+    expect(l.hit('link-a')).toBe(false); // its count survived
+    const e = new Limiter(1, 60_000, 2);
+    e.hit('link-a'); e.hit('flood-1'); e.hit('flood-2');
+    expect(e.hit('link-a')).toBe(true); // the default evicts (what the join routes no longer use for links)
+  });
+
+  it('the join routes count a link apart from addresses: a flood of addresses never resets it', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    const { token } = await makeLink(a, db);
+    for (let i = 0; i < JOIN_OPEN.max; i++) await post(a, '/api/join/open', { token }, { remote: `10.20.13.${i + 1}` });
+    for (let i = 0; i < 300; i++) await post(a, '/api/join/open', { token: 'E'.repeat(43) }, { remote: `10.20.${14 + (i >> 8)}.${(i & 255) + 1}` });
+    expect((await post(a, '/api/join/open', { token }, { remote: '10.20.20.1' })).statusCode).toBe(429);
   });
 });
 
@@ -288,18 +401,18 @@ describe('what the review found', () => {
     const { app: a, db } = await app();
     home(db);
     const { token } = await makeLink(a, db);
-    const o = await options(a, token, 'Jordan', '127.0.8.1');
-    for (let i = 0; i < JOIN_ENROL.max; i++) await post(a, '/api/join/verify', { challengeId: 'nothing', response: {} }, { remote: '127.0.9.1' });
-    expect((await verify(a, o.json(), 'cred-j', '127.0.9.1')).statusCode).toBe(429);
+    const o = await options(a, token, 'Jordan', '10.20.8.1');
+    for (let i = 0; i < JOIN_ENROL.max; i++) await post(a, '/api/join/verify', { challengeId: 'nothing', response: {} }, { remote: '10.20.9.1' });
+    expect((await verify(a, o.json(), 'cred-j', '10.20.9.1')).statusCode).toBe(429);
     // from an address within its limit, the same step still works
-    expect((await verify(a, o.json(), 'cred-j', '127.0.8.1')).statusCode).toBe(200);
+    expect((await verify(a, o.json(), 'cred-j', '10.20.8.1')).statusCode).toBe(200);
   });
 
   it('bogus enrolments never hold back a real link\'s', async () => {
     const { app: a, db } = await app();
     home(db);
     const { token } = await makeLink(a, db);
-    for (let i = 0; i < JOIN_ENROL.max + 2; i++) await post(a, '/api/join/verify', { challengeId: `x${i}`, response: {} }, { remote: `127.0.10.${i + 1}` });
+    for (let i = 0; i < JOIN_ENROL.max + 2; i++) await post(a, '/api/join/verify', { challengeId: `x${i}`, response: {} }, { remote: `10.20.10.${i + 1}` });
     const o = await options(a, token, 'Jordan');
     expect((await verify(a, o.json(), 'cred-j')).statusCode).toBe(200);
   });
@@ -360,33 +473,33 @@ describe('rate limits: per address and per link, 429 past them', () => {
     for (let i = 0; i < JOIN_OPEN.max; i++) expect((await post(a, '/api/join/open', { token: `${'C'.repeat(40)}${String(i).padStart(3, '0')}` })).statusCode).toBe(404);
     expect((await post(a, '/api/join/open', { token })).statusCode).toBe(429);
     // another address is not held back
-    expect((await post(a, '/api/join/open', { token }, { remote: '127.0.0.2' })).statusCode).toBe(204);
+    expect((await post(a, '/api/join/open', { token }, { remote: '10.20.0.2' })).statusCode).toBe(204);
   });
 
   it('opening: per link, across addresses', async () => {
     const { app: a, db } = await app();
     home(db);
     const { token } = await makeLink(a, db);
-    for (let i = 0; i < JOIN_OPEN.max; i++) expect((await post(a, '/api/join/open', { token }, { remote: `127.0.1.${i + 1}` })).statusCode).toBe(204);
-    expect((await post(a, '/api/join/open', { token }, { remote: '127.0.2.1' })).statusCode).toBe(429);
+    for (let i = 0; i < JOIN_OPEN.max; i++) expect((await post(a, '/api/join/open', { token }, { remote: `10.20.1.${i + 1}` })).statusCode).toBe(204);
+    expect((await post(a, '/api/join/open', { token }, { remote: '10.20.2.1' })).statusCode).toBe(429);
     // and an unknown link from those addresses is limited alike, never told apart
     const other = 'D'.repeat(43);
-    for (let i = 0; i < JOIN_OPEN.max; i++) await post(a, '/api/join/open', { token: other }, { remote: `127.0.3.${i + 1}` });
-    expect((await post(a, '/api/join/open', { token: other }, { remote: '127.0.4.1' })).statusCode).toBe(429);
+    for (let i = 0; i < JOIN_OPEN.max; i++) await post(a, '/api/join/open', { token: other }, { remote: `10.20.3.${i + 1}` });
+    expect((await post(a, '/api/join/open', { token: other }, { remote: '10.20.4.1' })).statusCode).toBe(429);
   });
 
   it('joining: the options and the enrolment, per address and per link', async () => {
     const { app: a, db } = await app();
     home(db);
     const { token } = await makeLink(a, db);
-    for (let i = 0; i < JOIN_ENROL.max; i++) expect((await options(a, token, 'Jordan', `127.0.5.${i + 1}`)).statusCode).toBe(200);
-    expect((await options(a, token, 'Jordan', '127.0.6.1')).statusCode).toBe(429);
+    for (let i = 0; i < JOIN_ENROL.max; i++) expect((await options(a, token, 'Jordan', `10.20.5.${i + 1}`)).statusCode).toBe(200);
+    expect((await options(a, token, 'Jordan', '10.20.6.1')).statusCode).toBe(429);
     const other = (await makeLink(a, db)).token;
-    for (let i = 0; i < JOIN_ENROL.max - 1; i++) expect((await options(a, other, 'Jordan', '127.0.7.1')).statusCode).toBe(200);
-    const last = await options(a, other, 'Jordan', '127.0.7.1');
+    for (let i = 0; i < JOIN_ENROL.max - 1; i++) expect((await options(a, other, 'Jordan', '10.20.7.1')).statusCode).toBe(200);
+    const last = await options(a, other, 'Jordan', '10.20.7.1');
     expect(last.statusCode).toBe(200);
     // the enrolment counts with the options: this address is past its limit now
-    expect((await verify(a, last.json(), 'cred-late', '127.0.7.1')).statusCode).toBe(429);
+    expect((await verify(a, last.json(), 'cred-late', '10.20.7.1')).statusCode).toBe(429);
     expect(waitingPeople(db)).toEqual([]);
   });
 });

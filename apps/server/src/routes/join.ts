@@ -22,7 +22,7 @@ import { requestSession, startSession } from '../auth/cookie';
 import { anyPerson } from '../household/waiting';
 import { passkeyLabel, passkeyRow, type Challenges, type WebAuthn } from '../auth/webauthn';
 import { JOIN_LINK, JoinLinkError, checkLink, createJoinLink, listJoinLinks, presentedHash, revokeJoinLink, spendUse } from '../household/join-links';
-import { NETWORKS, homeNetworks, parseCidr, proposeNetwork, setHomeNetworks, type Cidr } from '../net/networks';
+import { NETWORKS, NO_SURROUNDINGS, homeNetworks, isHop, parseCidr, plainAddress, proposeNetwork, rangeProblem, setHomeNetworks, type Cidr, type Surroundings } from '../net/networks';
 import { view } from '../household/people';
 import { lapseIn, lapseWaiting } from '../household/waiting-rows';
 import { Limiter } from '../shares/tokens';
@@ -41,18 +41,33 @@ const TOO_MANY = { error: 'Too many tries with this link: wait a few minutes.' }
 /** A name as a person gives it: 1 to 60 characters, no control characters; null otherwise. */
 export function joinName(v: unknown): string | null {
   if (typeof v !== 'string') return null;
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(v)) return null;
+  // Control characters, line separators, bidi controls and default-ignorable ones (zero-width, joiners, variation
+  // selectors, tags): a name an admin reads must look like what it is.
+  if (/[\p{Cc}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u.test(v)) return null;
   const name = v.normalize('NFC').trim();
   return name.length >= 1 && name.length <= 60 ? name : null;
 }
 
-export interface JoinOptions { joined?: () => void; floorMs?: number }
+export interface JoinOptions { joined?: () => void; floorMs?: number; surroundings?: Surroundings }
+
+/**
+ * The key an address is limited by: an IPv6 address by its /64 (one household's, or one attacker's, whole block), an
+ * IPv4 one (a mapped one too) as it is.
+ */
+export function addressKey(address: string | undefined): string {
+  const a = plainAddress(address);
+  if (!a.includes(':')) return `a:${a}`;
+  const c = parseCidr(`${a}/64`);
+  return c ? `a6:${c.network}` : `a:${a}`;
+}
 
 export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, webauthn: WebAuthn, challenges: Challenges, o: JoinOptions = {}) {
   const floor = o.floorMs ?? JOIN_FLOOR_MS;
-  const opening = new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs);
-  const joining = new Limiter(JOIN_ENROL.max, JOIN_ENROL.windowMs);
+  const where = o.surroundings ?? NO_SURROUNDINGS;
+  // Per address and per link in limiters of their own: a flood of addresses never evicts a link's count, and a link's
+  // limiter refuses a new key when it is full rather than forget one (net effect: a flood of made-up links is refused).
+  const opening = { byAddress: new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs), byLink: new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs, 10_000, 'refuse') };
+  const joining = { byAddress: new Limiter(JOIN_ENROL.max, JOIN_ENROL.windowMs), byLink: new Limiter(JOIN_ENROL.max, JOIN_ENROL.windowMs, 10_000, 'refuse') };
   const standaloneOnly = (reply: FastifyReply) => {
     if (cfg.mode === 'standalone') return true;
     void reply.code(404).send({ error: 'not found' });
@@ -60,9 +75,9 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
   };
   const address = (req: FastifyRequest) => req.socket.remoteAddress;
   /** Both limits counted, whatever the first says. */
-  const within = (l: Limiter, req: FastifyRequest, hash: string) => {
-    const byAddress = l.hit(`a:${address(req) ?? ''}`);
-    const byLink = l.hit(`l:${hash}`);
+  const within = (l: typeof opening, req: FastifyRequest, hash: string) => {
+    const byAddress = l.byAddress.hit(addressKey(address(req)));
+    const byLink = l.byLink.hit(hash);
     return byAddress && byLink;
   };
   /** Waits out what is left of the floor, then sends. */
@@ -79,7 +94,7 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     const hash = presentedHash(req.body?.token);
     if (!within(opening, req, hash)) return answer(reply, start, 429, TOO_MANY);
     lapseWaiting(db);
-    const link = checkLink(db, { hash }, address(req));
+    const link = checkLink(db, { hash }, address(req), new Date(), where);
     return link ? answer(reply, start, 204) : answer(reply, start, 404, NOT_HERE);
   });
 
@@ -94,7 +109,7 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     const s = requestSession(db, req, reply);
     if (s && anyPerson(db, s.personId)?.state === 'active') return answer(reply, start, 409, { error: 'You are signed in to the household already: this link is for someone new.' });
     lapseWaiting(db);
-    const link = checkLink(db, { hash }, address(req));
+    const link = checkLink(db, { hash }, address(req), new Date(), where);
     if (!link) return answer(reply, start, 404, NOT_HERE);
     // The person to be: their id is the passkey's user handle. Nothing is stored until the passkey is enrolled.
     const personId = ulid();
@@ -105,10 +120,12 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
   app.post<{ Body: { challengeId?: unknown; response?: unknown; label?: unknown } }>('/join/verify', pub, async (req, reply) => {
     const start = performance.now();
     if (!standaloneOnly(reply)) return;
-    // The address first, so a limited request does not spend its one-time step; then its link, once it is known.
-    if (!joining.hit(`a:${address(req) ?? ''}`)) return answer(reply, start, 429, TOO_MANY);
+    // Both limits before the one-time step is taken, so a 429 does not spend it; the link's is known from the step.
+    const peeked = challenges.peek(req.body?.challengeId, 'join');
+    const byAddress = joining.byAddress.hit(addressKey(address(req)));
+    const byLink = peeked?.tokenHash ? joining.byLink.hit(peeked.tokenHash) : true;
+    if (!byAddress || !byLink) return answer(reply, start, 429, TOO_MANY);
     const pending = challenges.take(req.body?.challengeId, 'join');
-    if (pending?.tokenHash && !joining.hit(`l:${pending.tokenHash}`)) return answer(reply, start, 429, TOO_MANY);
     if (!pending?.joinLinkId || !pending.personId || !pending.name) return answer(reply, start, 401, { error: 'this step expired; start again' });
     const cred = await webauthn.verifyRegistration({ response: req.body?.response, challenge: pending.challenge });
     if (!cred) return answer(reply, start, 401, { error: 'the passkey could not be verified' });
@@ -120,7 +137,7 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
         const tx = tx0 as unknown as Db;
         // The link is checked again here: revoked, expired, used up, the address or a full list since the options.
         lapseIn(tx, now);
-        const link = checkLink(tx, { id: pending.joinLinkId! }, address(req), now);
+        const link = checkLink(tx, { id: pending.joinLinkId! }, address(req), now, where);
         if (!link) return;
         if (tx.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.id, cred.id)).get()) { outcome = 'taken'; return; }
         tx.insert(t.person).values({ id: pending.personId!, name: pending.name!, role: 'adult', state: 'waiting', handle: null, arrivedAt: now.toISOString(), settingsJson: '{}' }).run();
@@ -144,7 +161,9 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
 
   // Admins ------------------------------------------------------------------
   const admin = (req: FastifyRequest, reply: FastifyReply) => standaloneOnly(reply) && requireAdmin(req, reply);
-  const networksView = (req: FastifyRequest) => ({ networks: homeNetworks(db), proposal: proposeNetwork(address(req)) });
+  // behindProxy: the admin comes through a hop (loopback, the container's gateway), so every visitor does: no link
+  // opens until slice 3 reads the forwarded address from PHILOBIBLOS_TRUSTED_PROXY.
+  const networksView = (req: FastifyRequest) => ({ networks: homeNetworks(db), proposal: proposeNetwork(address(req), where), behindProxy: isHop(where, address(req)) });
 
   app.get('/people/home-networks', async (req, reply) => {
     if (!admin(req, reply)) return;
@@ -161,6 +180,8 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     for (const n of b.networks) {
       const c = parseCidr(n);
       if (!c) return reply.code(400).send({ error: `not a range Philobiblos takes: ${String(n).slice(0, 64)} (a CIDR such as 192.0.2.0/24, at most /${NETWORKS.minPrefix4} wide, or /${NETWORKS.minPrefix6} for IPv6)` });
+      const problem = rangeProblem(where, c);
+      if (problem) return reply.code(400).send({ error: problem });
       parsed.push(c);
     }
     setHomeNetworks(db, parsed, req.caller!.personId);

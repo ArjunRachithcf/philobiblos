@@ -84,6 +84,13 @@ function HomeNetwork({ nets, onSave }: { nets: HomeNetworks; onSave: (networks: 
           ))}
         </ul>
       )}
+      {nets.behindProxy && (
+        <Notice kind="warn" title="Join links wait for the trusted proxy.">
+          Philobiblos sees you through a proxy or a published port, so every visitor has the same address and none is
+          on the home network. Until it reads the forwarded address from PHILOBIBLOS_TRUSTED_PROXY (coming next), no join
+          link opens: invite people one by one instead.
+        </Notice>
+      )}
       {nets.proposal && !list.includes(nets.proposal) && (
         <div className="btn-row">
           <span className="hint">You are on {nets.proposal}. Is that the home network?</span>

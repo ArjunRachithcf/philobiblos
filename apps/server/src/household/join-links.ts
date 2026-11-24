@@ -9,7 +9,7 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { hashToken, looksLikeToken, newToken } from '../auth/tokens';
-import { homeNetworks, inHomeNetwork } from '../net/networks';
+import { NO_SURROUNDINGS, homeNetworks, inHomeNetwork, type Surroundings } from '../net/networks';
 import { WAITING, dropWaiting, waitingNow } from './waiting-rows';
 
 export type JoinLink = typeof t.joinLink.$inferSelect;
@@ -38,13 +38,13 @@ export const presentedHash = (token: unknown) => hashToken(looksLikeToken(token)
 
 /**
  * The one check of a presented link, for opening it, joining with it and enrolling: the link, if it is known, unexpired,
- * not used up, the address is in the household's networks and the waiting list has room; null otherwise. Every case
+ * not used up, the address is in the household's networks (never a hop: net/networks.ts isHop) and the waiting list has room; null otherwise. Every case
  * does the same work (one lookup by hash, the whole network list, the count), so neither the answer nor its time says
  * which it was. The caller lapses old requests first (household/waiting-rows.ts), so a lapsed one frees its place.
  */
-export function checkLink(tx: Db, by: { hash: string } | { id: string }, address: string | undefined, now = new Date()): JoinLink | null {
+export function checkLink(tx: Db, by: { hash: string } | { id: string }, address: string | undefined, now = new Date(), s: Surroundings = NO_SURROUNDINGS): JoinLink | null {
   const row = tx.select().from(t.joinLink).where('hash' in by ? eq(t.joinLink.tokenHash, by.hash) : eq(t.joinLink.id, by.id)).get();
-  const home = inHomeNetwork(tx, address);
+  const home = inHomeNetwork(tx, address, s);
   const room = waitingNow(tx) < WAITING.max;
   const open = row !== undefined && row.expiresAt > now.toISOString() && row.uses < row.maxUses;
   return open && home && room ? row : null;
