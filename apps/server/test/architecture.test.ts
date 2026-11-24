@@ -22,7 +22,7 @@ function files(dir: string): string[] {
 const core = () => [...CORE.flatMap((d) => files(join(ROOT, d))), ...CONTRACTS.map((f) => join(ROOT, f))];
 
 /** Mail providers: the household chooses its own (IMAP with any of them); the core names none. */
-const PROVIDERS = ['gmail', 'googlemail', 'google.com', 'outlook', 'hotmail', 'office365', 'live.com', 'fastmail', 'mailbox.org', 'protonmail', 'proton.me', 'yahoo', 'icloud', 'gmx', 'posteo'];
+const PROVIDERS = ['gmail', 'googlemail', 'google.com', 'outlook', 'hotmail', 'office365', 'live.com', 'fastmail', 'mailbox.org', 'protonmail', 'proton.me', 'yahoo', 'icloud', 'gmx', 'posteo', 'microsoft', 'proton', 'accounts.google', 'oauth2.googleapis'];
 /** The bookshop the first slices were built for, now an invented example connector (philobiblos#27). */
 const FORMER_SHOP = ['orell', 'fuessli', 'füssli', 'fussli', 'english-orders'];
 

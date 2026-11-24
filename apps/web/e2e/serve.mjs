@@ -16,6 +16,13 @@ const env = {
   PHILOBIBLOS_DATA_DIR: data, PHILOBIBLOS_KEYS_DIR: keys, PHILOBIBLOS_WEB_DIR: fileURLToPath(new URL('../dist/', import.meta.url)),
   PHILOBIBLOS_MIGRATIONS_DIR: `${serverDir}drizzle/`,
 };
+// The seeded Philobiblos's mailbox signs in with XOAUTH2 (an invented client on .invalid names, which never resolve):
+// its Settings card, the provider's return and the token endpoint's absence are tested; nothing reaches a provider.
+if (seed) Object.assign(env, {
+  PHILOBIBLOS_IMAP_HOST: 'imap.invalid', PHILOBIBLOS_IMAP_USER: 'shelf@example.org', PHILOBIBLOS_IMAP_AUTH: 'xoauth2',
+  PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID: 'e2e-client', PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL: 'https://auth.invalid/authorize',
+  PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL: 'https://auth.invalid/token', PHILOBIBLOS_IMAP_OAUTH_SCOPE: 'mail.read offline_access',
+});
 if (seed) {
   const r = spawnSync(`${serverDir}node_modules/.bin/tsx`, ['src/seed/cli.ts', fileURLToPath(new URL(`../../../${seed}`, import.meta.url))], { cwd: serverDir, env, stdio: ['ignore', 'ignore', 'inherit'] });
   if (r.status !== 0) process.exit(r.status ?? 1);

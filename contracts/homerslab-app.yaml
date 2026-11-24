@@ -31,12 +31,19 @@ audience: adults                           # adults full access; kids: no access
 secrets:
   - { key: PHILOBIBLOS_SEALING_KEY, file: true, description: Key that seals the delivery address (outside the database) }
   - { key: PHILOBIBLOS_IMAP_PASSWORD, optional: true, description: App password of the Philobiblos-only mailbox (IMAP over TLS, read-only) }
+  - { key: PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET, optional: true, description: 'XOAUTH2 only: the secret of the household''s own OAuth client for the mailbox (docs/mail-providers.md); a public client has none' }
   - { key: ANTHROPIC_API_KEY, optional: true, description: Claude provider, only after an explicit opt-in in Settings }
 config:
   - { key: PHILOBIBLOS_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
   - { key: PHILOBIBLOS_IMAP_HOST, optional: true, description: IMAP host of the Philobiblos-only mailbox (port 993, TLS only) }
   - { key: PHILOBIBLOS_IMAP_USER, optional: true, description: Its user name }
   - { key: PHILOBIBLOS_IMAP_FOLDER, optional: true, description: 'The folder the bookshop''s mail arrives in (default INBOX)' }
+  - { key: PHILOBIBLOS_IMAP_AUTH, optional: true, description: 'password (an app password, the default) or xoauth2 (a token from the household''s own OAuth client, connected by an admin in Settings; docs/mail-providers.md)' }
+  - { key: PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID, optional: true, description: 'XOAUTH2: the OAuth client the household registered with its mail provider (Philobiblos ships none)' }
+  - { key: PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL, optional: true, description: 'XOAUTH2: the provider''s authorization endpoint (https), with any parameters of its own it needs for offline access' }
+  - { key: PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL, optional: true, description: 'XOAUTH2: the provider''s token endpoint (https)' }
+  - { key: PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL, optional: true, description: 'XOAUTH2: the provider''s revocation endpoint (https, RFC 7009), if it has one' }
+  - { key: PHILOBIBLOS_IMAP_OAUTH_SCOPE, optional: true, description: 'XOAUTH2: the scopes that allow IMAP, and a refresh token where the provider needs a scope for that' }
   - { key: PHILOBIBLOS_MAIL_RECIPIENTS, optional: true, description: 'The household''s addresses the bookshop writes to, comma-separated; mail to anyone else is not taken' }
   - { key: PHILOBIBLOS_MAIL_ARC_SEALERS, optional: true, description: 'The household''s mail providers whose ARC seal vouches for a forward that broke the bookshop''s DKIM, comma-separated (none by default: docs/connectors.md lists common ones)' }
   - { key: PHILOBIBLOS_CONNECTORS_DIR, optional: true, description: 'A folder of the household''s own bookshop connectors (<id>/connector.yaml, docs/connectors.md), read-only; each waits for an admin to enable it' }
@@ -44,6 +51,9 @@ config:
 network:
   # Enforced by Philobiblos's own HTTP client as well (ADR 0009): nothing else is reachable from the app.
   egress: [openlibrary.org, covers.openlibrary.org, '${PHILOBIBLOS_IMAP_HOST}:993', '${OLLAMA_URL}']
+  # XOAUTH2 only (PHILOBIBLOS_IMAP_AUTH=xoauth2): the household's OAuth client's token and revocation endpoints, https,
+  # through the token client alone (src/mail/oauth.ts), never the book client. The authorization endpoint is the browser's.
+  oauth_egress: ['${PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL}', '${PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL}']
   # The price host of each bookshop connector an admin enabled in Settings (Bookshops), https on 443, and nothing else
   # of the shop's; none until one is enabled (connectors/enabled.ts). HomersLab cannot know them in advance.
   connector_egress: 'the priceHost of each enabled connector (GET /api/connectors)'

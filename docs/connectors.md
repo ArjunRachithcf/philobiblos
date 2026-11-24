@@ -196,15 +196,15 @@ the household as recipient, the size limits, no stored text, links never followe
 
 ## Mail providers
 
-Philobiblos reads one mailbox used for nothing else, over IMAP with TLS on port 993 and an app password
-(`PHILOBIBLOS_IMAP_HOST`, `PHILOBIBLOS_IMAP_USER`, `PHILOBIBLOS_IMAP_PASSWORD`): any provider that offers IMAP works,
-self-hosted included. Your own mail account forwards only the bookshop's mail there with a filter.
+Philobiblos reads one mailbox used for nothing else, over IMAP with TLS from the first byte, with an app password
+(`PHILOBIBLOS_IMAP_HOST`, `PHILOBIBLOS_IMAP_USER`, `PHILOBIBLOS_IMAP_PASSWORD`) or, for a provider that refuses passwords
+over IMAP, with XOAUTH2 and an OAuth client of your own (`PHILOBIBLOS_IMAP_AUTH=xoauth2`). Any provider that offers IMAP
+works, self-hosted included. Your own mail account forwards only the bookshop's mail there with a filter. Which way to
+sign in for Gmail, Microsoft, Fastmail, mailbox.org, a server of your own or Proton Mail through Bridge, and how to
+register the OAuth client: `docs/mail-providers.md`.
 
 A forward sometimes breaks the shop's DKIM signature. Philobiblos then accepts the mail only if your forwarding
 provider sealed it with ARC and you named that provider's sealing domain in `PHILOBIBLOS_MAIL_ARC_SEALERS`
 (comma-separated). No provider is assumed: by default the list is empty, and only mail whose own DKIM signature
 survives counts. The sealing domain is the `d=` of the newest `ARC-Seal` header in a forwarded mail; look it up in one
 before you set it.
-
-Providers that refuse app passwords for IMAP (OAuth 2.0 only) are not supported yet: XOAUTH2 with an admin-supplied
-OAuth client comes in a later slice of philobiblos#27.

@@ -304,6 +304,33 @@ test('the AI: Ollama by default; Claude only after the list of what leaves is ti
   done();
 });
 
+test('the mailbox: what connecting allows; the provider\'s return read once and taken out of the address bar (philobiblos#27)', async () => {
+  const card = page.getByRole('region', { name: 'Mailbox' });
+  await expect(card.getByText('What connecting allows')).toBeVisible();
+  await expect(card.getByText(/You sign in at auth\.invalid and allow the scope mail\.read offline_access/)).toBeVisible();
+  await expect(card.getByText(`${ORIGIN}/settings/mail-oauth`, { exact: true })).toBeVisible();
+  await expectAccessible(page, 'settings, the mailbox');
+  // The provider, a stand-in: it signs nobody in and sends the browser back with a code for the state it was given.
+  let asked: URL | null = null;
+  await page.route('https://auth.invalid/**', async (route) => {
+    asked = new URL(route.request().url());
+    await route.fulfill({ status: 302, headers: { location: `${ORIGIN}/settings/mail-oauth?code=e2e-code-123&state=${asked.searchParams.get('state')}` } });
+  });
+  await card.getByRole('button', { name: 'Connect the mailbox' }).click();
+  // Back on Settings, the code and the state gone from the address bar.
+  await expect(page).toHaveURL(`${ORIGIN}/settings`);
+  const a = asked as URL | null;
+  expect(a?.searchParams.get('redirect_uri')).toBe(`${ORIGIN}/settings/mail-oauth`);
+  expect(a?.searchParams.get('code_challenge_method')).toBe('S256');
+  expect(a?.searchParams.get('client_secret')).toBeNull();
+  // The server exchanges the code at a token endpoint that does not exist here: the card says so, nothing is connected.
+  const back = page.getByRole('region', { name: 'Mailbox' });
+  await expect(back.getByRole('alert')).toContainText('cannot reach auth.invalid');
+  await expect(back.getByText('Not connected.')).toBeVisible();
+  expect(await page.content()).not.toContain('e2e-code-123');
+  await page.unroute('https://auth.invalid/**');
+});
+
 test('the brain: the map, its table, views; proposals confirmed, rejected and moved to another layer', async () => {
   const done = noForeignRequests(page, ORIGIN);
   await page.getByRole('link', { name: 'Brain' }).click();

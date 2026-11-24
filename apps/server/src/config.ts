@@ -6,8 +6,28 @@ import { resolveEnv } from '@philobiblos/contracts/env';
 import { DEFAULT_PUSH_HOSTS, PUSH_HOST_ENTRY, wildcardTooBroad } from './push/hosts';
 import { validTimeZone } from './jobs/zone';
 import { validCurrency } from './household/currency';
+import type { MailboxPlace, Secret } from './net/imap';
 
 export type Mode = 'homerslab' | 'standalone';
+
+/**
+ * The OAuth client an admin registered with the mailbox's provider for XOAUTH2 (PHILOBIBLOS_IMAP_AUTH=xoauth2;
+ * docs/mail-providers.md): Philobiblos ships none of its own. Its endpoints are the provider's, from the environment
+ * only (https); the client secret is a secret like the IMAP password (null: a public client, PKCE alone).
+ */
+export interface OAuthClient {
+  clientId: string;
+  clientSecret: Secret | null;
+  /** The provider's authorization endpoint, with any parameters of the provider's own it needs (never ours). */
+  authorizeUrl: string;
+  tokenUrl: string;
+  /** RFC 7009 revocation; null when the provider has none (disconnecting then only forgets the tokens). */
+  revokeUrl: string | null;
+  scope: string;
+}
+
+/** The mailbox: where it is, and how Philobiblos signs in (an app password, or a token from the admin's OAuth client). */
+export type ImapSettings = MailboxPlace & ({ password: Secret; oauth?: undefined } | { oauth: OAuthClient; password?: undefined });
 
 export interface Config {
   mode: Mode;
@@ -42,10 +62,13 @@ export interface Config {
   /** The household's Ollama (OLLAMA_URL), the one AI host Philobiblos may reach without an opt-in; from the environment only. */
   ollamaUrl: string | null;
   /**
-   * The Philobiblos-only mailbox (ADR 0007): IMAP over TLS on 993, read-only. The password is a secret from the environment
-   * (PHILOBIBLOS_IMAP_PASSWORD or PHILOBIBLOS_IMAP_PASSWORD_FILE), never in the database, the API or a log. null: not set up.
+   * The Philobiblos-only mailbox (ADR 0007): IMAP over TLS from the first byte (port 993 unless PHILOBIBLOS_IMAP_PORT
+   * says otherwise), read-only. It signs in with an app password, a secret from the environment
+   * (PHILOBIBLOS_IMAP_PASSWORD or PHILOBIBLOS_IMAP_PASSWORD_FILE), or with XOAUTH2 (PHILOBIBLOS_IMAP_AUTH=xoauth2): a token
+   * from the admin's OAuth client, connected in Settings and sealed (mail/oauth.ts). Neither is ever in the API or a log.
+   * null: not set up.
    */
-  imap: { host: string; user: string; password: { value: string } | { file: string }; folder: string } | null;
+  imap: ImapSettings | null;
   /**
    * Mail providers whose ARC seal Philobiblos trusts for a forward that broke the bookshop's DKIM
    * (PHILOBIBLOS_MAIL_ARC_SEALERS): none unless the household names its own (no provider is assumed, philobiblos#27).
@@ -109,12 +132,7 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
     workDir: env.PHILOBIBLOS_WORK_DIR ? resolve(env.PHILOBIBLOS_WORK_DIR) : null,
     egress: env.PHILOBIBLOS_EGRESS !== 'off',
     ollamaUrl: env.OLLAMA_URL ? parseOllama(env.OLLAMA_URL) : null,
-    imap: env.PHILOBIBLOS_IMAP_HOST && env.PHILOBIBLOS_IMAP_USER && (env.PHILOBIBLOS_IMAP_PASSWORD || env.PHILOBIBLOS_IMAP_PASSWORD_FILE) ? {
-      host: parseHost(env.PHILOBIBLOS_IMAP_HOST),
-      user: env.PHILOBIBLOS_IMAP_USER,
-      password: env.PHILOBIBLOS_IMAP_PASSWORD ? { value: env.PHILOBIBLOS_IMAP_PASSWORD } : { file: env.PHILOBIBLOS_IMAP_PASSWORD_FILE! },
-      folder: env.PHILOBIBLOS_IMAP_FOLDER || 'INBOX',
-    } : null,
+    imap: parseImap(env),
     mailRecipients: (env.PHILOBIBLOS_MAIL_RECIPIENTS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter((d) => /^[^@\s]+@[^@\s]+$/.test(d)),
     pushHosts: parsePushHosts(env.PHILOBIBLOS_PUSH_HOSTS),
     arcSealers: (env.PHILOBIBLOS_MAIL_ARC_SEALERS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
@@ -164,8 +182,65 @@ function parseOllama(v: string): string {
   return u.origin;
 }
 
-/** A host name only (no scheme, port or path): the IMAP port is always 993. */
+/** A host name only (no scheme, port or path): the port is PHILOBIBLOS_IMAP_PORT's. */
 function parseHost(v: string): string {
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v)) throw new Error('PHILOBIBLOS_IMAP_HOST must be a host name, e.g. imap.example.org (the port is always 993)');
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v)) throw new Error('PHILOBIBLOS_IMAP_HOST must be a host name, e.g. imap.example.org (the port is PHILOBIBLOS_IMAP_PORT, default 993)');
   return v.toLowerCase();
+}
+
+/**
+ * The mailbox, or null while it is not set up. PHILOBIBLOS_IMAP_AUTH is `password` (the default: an app password) or
+ * `xoauth2` (the admin's OAuth client, each part named, and then no password: one way to sign in, never a fallback).
+ */
+function parseImap(env: NodeJS.ProcessEnv): ImapSettings | null {
+  const auth = env.PHILOBIBLOS_IMAP_AUTH?.trim() || 'password';
+  if (auth !== 'password' && auth !== 'xoauth2') throw new Error('PHILOBIBLOS_IMAP_AUTH must be password or xoauth2');
+  const oauthKeys = Object.keys(env).filter((k) => k.startsWith('PHILOBIBLOS_IMAP_OAUTH_') && env[k]);
+  if (auth === 'password') {
+    if (oauthKeys.length) throw new Error(`${oauthKeys[0]} is set, but PHILOBIBLOS_IMAP_AUTH is not xoauth2`);
+    if (!(env.PHILOBIBLOS_IMAP_HOST && env.PHILOBIBLOS_IMAP_USER && (env.PHILOBIBLOS_IMAP_PASSWORD || env.PHILOBIBLOS_IMAP_PASSWORD_FILE))) return null;
+    return { ...place(env), password: env.PHILOBIBLOS_IMAP_PASSWORD ? { value: env.PHILOBIBLOS_IMAP_PASSWORD } : { file: env.PHILOBIBLOS_IMAP_PASSWORD_FILE! } };
+  }
+  if (env.PHILOBIBLOS_IMAP_PASSWORD || env.PHILOBIBLOS_IMAP_PASSWORD_FILE) throw new Error('PHILOBIBLOS_IMAP_AUTH=xoauth2 signs in with a token: leave PHILOBIBLOS_IMAP_PASSWORD out');
+  for (const k of ['PHILOBIBLOS_IMAP_HOST', 'PHILOBIBLOS_IMAP_USER', 'PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID', 'PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL', 'PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL', 'PHILOBIBLOS_IMAP_OAUTH_SCOPE']) {
+    if (!env[k]?.trim()) throw new Error(`PHILOBIBLOS_IMAP_AUTH=xoauth2 needs ${k} (docs/mail-providers.md)`);
+  }
+  const clientId = env.PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID!.trim();
+  if (!/^[\x21-\x7e]{1,512}$/.test(clientId)) throw new Error('PHILOBIBLOS_IMAP_OAUTH_CLIENT_ID: printable characters without spaces, at most 512');
+  const scope = env.PHILOBIBLOS_IMAP_OAUTH_SCOPE!.trim().split(/\s+/).join(' ');
+  // RFC 6749 3.3: scope tokens are printable ASCII without space, " or \.
+  if (scope.length > 1024 || !scope.split(' ').every((w) => /^[\x21\x23-\x5b\x5d-\x7e]+$/.test(w))) throw new Error('PHILOBIBLOS_IMAP_OAUTH_SCOPE: the scopes, separated by spaces');
+  return {
+    ...place(env),
+    oauth: {
+      clientId,
+      clientSecret: env.PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET ? { value: env.PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET } : env.PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET_FILE ? { file: env.PHILOBIBLOS_IMAP_OAUTH_CLIENT_SECRET_FILE } : null,
+      authorizeUrl: oauthUrl('PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL', env.PHILOBIBLOS_IMAP_OAUTH_AUTHORIZE_URL!, true),
+      tokenUrl: oauthUrl('PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL', env.PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL!, false),
+      revokeUrl: env.PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL?.trim() ? oauthUrl('PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL', env.PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL, false) : null,
+      scope,
+    },
+  };
+}
+
+function place(env: NodeJS.ProcessEnv): MailboxPlace {
+  const port = env.PHILOBIBLOS_IMAP_PORT?.trim() ? Number(env.PHILOBIBLOS_IMAP_PORT.trim()) : 993;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PHILOBIBLOS_IMAP_PORT: a port from 1 to 65535 (TLS from the first byte on it, always)');
+  return { host: parseHost(env.PHILOBIBLOS_IMAP_HOST!), port, user: env.PHILOBIBLOS_IMAP_USER!, folder: env.PHILOBIBLOS_IMAP_FOLDER || 'INBOX', caFile: env.PHILOBIBLOS_IMAP_CA_FILE?.trim() || null };
+}
+
+/** Parameters Philobiblos sets on the authorization request itself; an admin's authorize URL may not carry them. */
+// response_mode too: the code must come back in the query, which is where the web app reads it; request and request_uri
+// would carry parameters Philobiblos did not set.
+export const OAUTH_OWN_PARAMS = ['response_type', 'response_mode', 'client_id', 'redirect_uri', 'scope', 'state', 'code_challenge', 'code_challenge_method', 'login_hint', 'request', 'request_uri'];
+
+/** An OAuth endpoint: https, no credentials or fragment; only the authorization endpoint may carry query parameters. */
+function oauthUrl(name: string, v: string, query: boolean): string {
+  let u: URL;
+  try { u = new URL(v.trim()); } catch { throw new Error(`${name}: an https URL`); }
+  if (u.protocol !== 'https:' || u.username || u.password || u.hash) throw new Error(`${name}: an https URL without credentials or #fragment`);
+  if (!query && u.search) throw new Error(`${name}: no query parameters (they go in the request's body)`);
+  const own = OAUTH_OWN_PARAMS.find((p) => u.searchParams.has(p));
+  if (own) throw new Error(`${name}: ${own} is Philobiblos's to set, leave it out`);
+  return u.toString();
 }
