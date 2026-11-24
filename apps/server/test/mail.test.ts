@@ -258,6 +258,18 @@ describe('the mail job', () => {
     expect(asked).toEqual([new Date('2026-08-18T10:00:00Z'), undefined]);
   });
 
+  it('the household\'s locale (philobiblos#60): a country name alone is kept in its region, dropped elsewhere', async () => {
+    const kept = async (locale: string | null) => {
+      const db = household();
+      seal(db, Buffer.from(TEST_SEALING_KEY, 'base64'), SEALED.deliveryAddress, 'A Reader\nSomewhere Street 1\n8000 Exampletown Schweiz');
+      const mail = await signed(message({ id: 'loc1', subject: 'Versand Schweiz' }));
+      await refreshMail(db, { ...CFG, sealingKey: { value: TEST_SEALING_KEY }, locale }, { open: async () => fakeBox([{ uid: 1, raw: mail }]), resolver });
+      return JSON.parse(db.select().from(t.mailSeen).get()!.parsedJson!).subject;
+    };
+    expect(await kept('de-CH')).toBe('Versand Schweiz');
+    expect(await kept(null)).toBeNull();
+  });
+
   it('the delivery address (sealed) is kept out of every field; a key that cannot open it reads nothing', async () => {
     const db = household();
     const key = Buffer.from(TEST_SEALING_KEY, 'base64');

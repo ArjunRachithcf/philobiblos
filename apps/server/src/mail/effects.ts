@@ -65,17 +65,21 @@ export function matchBook(books: BookKey[], l: { ean: string | null; title: stri
   return hits.length === 1 ? hits[0]!.id : null;
 }
 
-/** Each letter's subject as a pattern: its month names and a year where the placeholders stand. */
-const SUBJECTS = Object.values(LETTERS).map((l) => ({
-  months: l.months,
-  re: new RegExp(`(?<![\\p{L}\\p{N}])${l.subject.split(/(\{month\}|\{year\})/).map((p) => (p === '{month}' ? `(?<month>${l.months.map(literal).join('|')})` : p === '{year}' ? '(?<year>\\d{4})' : literal(p))).join('')}(?![\\p{L}\\p{N}])`, 'u'),
-}));
+/** Compared without case or diacritics (and NFC first: a mail client may decompose them). */
+const plain = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').normalize('NFC').toLowerCase();
+/** Each letter's subject as a pattern, plain: its month names and a year where the placeholders stand. */
+const SUBJECTS = Object.values(LETTERS).map((l) => {
+  const months = l.months.map(plain);
+  return {
+    months,
+    re: new RegExp(`(?<![\\p{L}\\p{N}])${l.subject.split(/(\{month\}|\{year\})/).map((p) => (p === '{month}' ? `(?<month>${months.map(literal).join('|')})` : p === '{year}' ? '(?<year>\\d{4})' : literal(plain(p)))).join('')}(?![\\p{L}\\p{N}])`, 'u'),
+  };
+});
 
 /** "Re: Book order, November 2026" → "2026-11", in any language Compose writes a letter in (locales/). */
 export function monthOfSubject(subject: string | null): string | null {
   for (const s of SUBJECTS) {
-    // NFC first: a mail client may send a month name with its diacritics decomposed.
-    const g = s.re.exec((subject ?? '').normalize('NFC'))?.groups;
+    const g = s.re.exec(plain(subject ?? ''))?.groups;
     if (g) return `${g.year}-${String(s.months.indexOf(g.month!) + 1).padStart(2, '0')}`;
   }
   return null;

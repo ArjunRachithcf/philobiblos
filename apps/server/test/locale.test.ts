@@ -75,6 +75,10 @@ describe('the order letter\'s language', () => {
     expect(monthOfSubject('Buchbestellung März 2026')).toBeNull();
     // A decomposed umlaut (NFD) is the same month.
     expect(monthOfSubject('AW: Buchbestellung, Ma\u0308rz 2026')).toBe('2026-03');
+    // Without case or diacritics: a client that capitalises, or a keyboard without them.
+    expect(monthOfSubject('AW: BUCHBESTELLUNG, MÄRZ 2026')).toBe('2026-03');
+    expect(monthOfSubject('aw: buchbestellung, marz 2026')).toBe('2026-03');
+    expect(monthOfSubject('RE: BOOK ORDER, DECEMBER 2026')).toBe('2026-12');
     expect(monthOfSubject('Book order, Smarch 2026')).toBeNull();
   });
 
