@@ -109,16 +109,21 @@ export function editPerson(db: Db, id: string, patch: Partial<PersonInput>): Per
       birthYear: role === 'kid' ? (patch.birthYear === undefined ? p.birthYear : patch.birthYear) : null,
     }).where(eq(t.person.id, id)).run();
     // Kids never sign in: becoming one ends every session and removes every passkey and device.
-    if (role === 'kid' && p.role !== 'kid') {
-      tx.delete(t.session).where(eq(t.session.personId, id)).run();
-      tx.delete(t.passkey).where(eq(t.passkey.personId, id)).run();
-      tx.delete(t.invite).where(eq(t.invite.personId, id)).run();
-      // Nor get notifications (push/push.ts checks the role at each send too).
-      tx.delete(t.pushSubscription).where(eq(t.pushSubscription.personId, id)).run();
-    }
+    if (role === 'kid' && p.role !== 'kid') becameKid(tx as unknown as Db, id);
     if (role !== 'admin' && p.role === 'admin') revokeInvitesBy(tx as unknown as Db, id);
   });
   return getPerson(db, id)!;
+}
+
+/**
+ * Kids never sign in: becoming one ends every session and removes every passkey, link and device (here and under
+ * HomersLab, household/waiting.ts). Nor do they get notifications (push/push.ts checks the role at each send too).
+ */
+export function becameKid(db: Db, id: string): void {
+  db.delete(t.session).where(eq(t.session.personId, id)).run();
+  db.delete(t.passkey).where(eq(t.passkey.personId, id)).run();
+  db.delete(t.invite).where(eq(t.invite.personId, id)).run();
+  db.delete(t.pushSubscription).where(eq(t.pushSubscription.personId, id)).run();
 }
 
 /** An admin's open invites, gone when the admin is removed or stops being one. */

@@ -87,7 +87,7 @@ export function App() {
           : route === '/library' ? <Library me={me} />
           : route === '/backlog' ? <Backlog me={me} />
           : route === '/settings' ? <Settings me={me} reload={loadMe} />
-          : route === '/inbox' ? <Inbox me={me} />
+          : route === '/inbox' ? <Inbox me={me} go={go} />
           : route === '/share' ? <Share go={go} />
           : <Household me={me} reload={loadMe} />}
         </MoneyContext.Provider>

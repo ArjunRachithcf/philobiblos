@@ -17,7 +17,7 @@ const KIND: Record<InboxItem['kind'], string> = {
 const SHARE_STATUS: Record<string, string> = { received: 'Waiting for the media worker', reading: 'Reading the images and videos', done: 'Received', failed: 'Failed' };
 const day = (iso?: string | null) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null; };
 
-export function Inbox({ me }: { me: Me }) {
+export function Inbox({ me, go }: { me: Me; go: (to: string) => void }) {
   const [filter, setFilter] = useState('all');
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,15 +84,15 @@ export function Inbox({ me }: { me: Me }) {
           </section>
         ) : items.map((it) => (it.kind === 'maybe_typed_invoice'
           ? <TypedItem key={it.id} it={it} busy={busy} onAnswer={answer} />
-          : <Item key={it.id} it={it} kids={kids} busy={busy} onDecide={decide} onDismiss={dismiss} />))}
+          : <Item key={it.id} it={it} kids={kids} busy={busy} onDecide={decide} onDismiss={dismiss} go={go} />))}
         {next && <div className="btn-row"><button type="button" className="btn" onClick={() => void more()}>Show more</button></div>}
       </div>
     </>
   );
 }
 
-function Item({ it, kids, busy, onDecide, onDismiss }: {
-  it: InboxItem; kids: { handle?: string | null; name: string }[]; busy: boolean;
+function Item({ it, kids, busy, onDecide, onDismiss, go }: {
+  it: InboxItem; kids: { handle?: string | null; name: string }[]; busy: boolean; go: (to: string) => void;
   onDecide: (it: InboxItem, f: Found, a: 'add' | 'skip', forWho?: { handle: string; name: string }) => void; onDismiss: (it: InboxItem) => void;
 }) {
   const h = `in-${it.id}`;
@@ -114,7 +114,7 @@ function Item({ it, kids, busy, onDecide, onDismiss }: {
         )}
         {it.kind === 'mail_failed' && <Notice kind="warn" title="Philobiblos could not read this mail, so it changed nothing.">{it.mail?.reason}{it.mail?.expected ? ` (it looked like: ${it.mail.expected.replace(/_/g, ' ')})` : ''}</Notice>}
         {it.kind === 'mail_waiting' && <Notice kind="info">{it.mail?.reason}</Notice>}
-        {it.kind === 'people_waiting' && <p className="footnote">Approve or decline them in <a href="/household">Household</a>. A name alone is no reason to let someone in.</p>}
+        {it.kind === 'people_waiting' && <p className="footnote">Approve or decline them in <a href="/household" onClick={(e) => { e.preventDefault(); go('/household'); }}>Household</a>. A name alone is no reason to let someone in.</p>}
         {it.share?.aiNote && <Notice kind="info">{it.share.aiNote}</Notice>}
         {it.kind === 'ai_suggestion' && <p className="footnote">The AI suggests these from your reading map. Nothing is added until you add it.</p>}
         {it.kind === 'share' && it.share?.status === 'done' && !it.found.length && !it.share.aiNote && <p className="footnote">The AI reads shares for books once it is set up; until then, add the books by hand in the Backlog.</p>}

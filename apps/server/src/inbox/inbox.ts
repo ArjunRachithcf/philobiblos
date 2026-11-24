@@ -18,6 +18,7 @@ import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
+import { waitingSummary } from '../household/waiting';
 import { entryLeft, invoiceLines, invoiceOrders, mailEntries, mailItemId, mailLeft, matchBook, maybeTyped, overlap, receive, type Part } from '../mail/effects';
 import { MONTHS } from '../month/order-mail';
 import { norm } from '../seed/import';
@@ -169,8 +170,8 @@ function unverifiedItem(db: Db): InboxItem | null {
 export const WAITING_ID = 'p_waiting';
 function waitingItem(db: Db, me: string): InboxItem | null {
   if (getPerson(db, me)?.role !== 'admin') return null;
-  const head = db.select({ n: count(), latest: max(t.person.arrivedAt) }).from(t.person).where(eq(t.person.state, 'waiting')).get();
-  if (!head?.n) return null;
+  const head = waitingSummary(db);
+  if (!head.n) return null;
   return { id: WAITING_ID, kind: 'people_waiting', title: `${head.n} ${head.n === 1 ? 'person waits' : 'people wait'} to join`, createdAt: head.latest ?? new Date(0).toISOString(), waiting: { count: head.n }, found: [] };
 }
 
@@ -182,8 +183,11 @@ export function listInbox(db: Db, me: string, filter: Filter = 'all', o: { curso
   const limit = Math.min(o.limit ?? PAGE.default, PAGE.max);
   const cursor = o.cursor ?? null;
   const items: InboxItem[] = [];
+  // The summary items of the first page (people waiting, unverified mail) come on top of the page's limit: counted in
+  // it, a small limit would end the page before any row is read, with no cursor to the rest.
+  let heads = 0;
   const sources: Source[] = [];
-  if (filter === 'all' && !cursor) { const w = waitingItem(db, me); if (w) items.push(w); }
+  if (filter === 'all' && !cursor) { const w = waitingItem(db, me); if (w) { items.push(w); heads++; } }
   if (filter === 'all' || filter === 'shared') {
     sources.push({ tag: 's', done: false, buf: [], last: null, read: (c) => {
       const rows = db.select().from(t.share).where(and(eq(t.share.personId, me), after(t.share.createdAt, t.share.id, 's', c)))
@@ -215,7 +219,7 @@ export function listInbox(db: Db, me: string, filter: Filter = 'all', o: { curso
     } });
   }
   if (filter === 'all' || filter === 'mail') {
-    if (!cursor) { const u = unverifiedItem(db); if (u) items.push(u); }
+    if (!cursor) { const u = unverifiedItem(db); if (u) { items.push(u); heads++; } }
     sources.push({ tag: 'm', done: false, buf: [], last: null, read: (c) => {
       const rows = db.select().from(t.mailSeen).where(and(eq(t.mailSeen.accepted, 1), inArray(t.mailSeen.kind, [...Object.keys(LINES), ...FAILED, ...WAITING]), after(t.mailSeen.seenAt, t.mailSeen.messageId, 'm', c)))
         .orderBy(desc(t.mailSeen.seenAt), desc(t.mailSeen.messageId)).limit(PAGE.batch).all();
@@ -238,7 +242,7 @@ export function listInbox(db: Db, me: string, filter: Filter = 'all', o: { curso
     }
     const live = sources.filter((x) => x.buf.length);
     if (!live.length) return { items, nextCursor: null };
-    if (items.length >= limit || scanned >= PAGE.scan) return { items, nextCursor: last ? encode(last) : null };
+    if (items.length - heads >= limit || scanned >= PAGE.scan) return { items, nextCursor: last ? encode(last) : null };
     // The newest of the sources' heads.
     const src = live.reduce((a, b) => (before(a.buf[0]!.pos, b.buf[0]!.pos) ? b : a));
     const row = src.buf.shift()!;

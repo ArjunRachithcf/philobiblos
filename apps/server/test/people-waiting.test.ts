@@ -15,6 +15,9 @@ import { WAITING_DECISIONS } from '../src/routes/people';
 import { JOIN_PUSH } from '../src/push/push';
 import { WAITING_ID } from '../src/inbox/inbox';
 import type { Egress } from '../src/net/egress';
+import { fileURLToPath } from 'node:url';
+import { openDb } from '../src/db/open';
+import { importSeed } from '../src/seed/import';
 import { ORIGIN, RFC8291_UA_KEY, TEST_SEALING_KEY, fakeWebAuthn, household, isPublic, nowherePush, ops, request, sessionCookie } from './helpers';
 
 const standalone = () => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY });
@@ -284,6 +287,15 @@ describe('Homeward\'s role is the ceiling', () => {
     expect(arrive(db, { externalId: 'hl-alex', name: 'Alex', role: 'admin', via: 'homerslab' })).toMatchObject({ kind: 'member', person: { role: 'adult' } });
   });
 
+  it('the ceiling holds even when the stored ceiling did not change (a row above it is lowered), and a waiting Homeward admin is let in once no admin is left', () => {
+    const db = household();
+    db.update(t.person).set({ ceiling: 'adult' }).where(eq(t.person.id, 'p_alex')).run(); // admin above its ceiling
+    db.update(t.person).set({ ceiling: 'adult' }).where(eq(t.person.id, 'p_sam')).run();
+    expect(arrive(db, { externalId: 'hl-alex', name: 'Alex', role: 'adult', via: 'homerslab' })).toMatchObject({ kind: 'member', person: { role: 'adult' } });
+    waiter(db, 'p_w', { externalId: 'hl-w', ceiling: 'admin' });
+    expect(arrive(db, { externalId: 'hl-w', name: 'Someone p_w', role: 'admin', via: 'homerslab' })).toMatchObject({ kind: 'member', person: { role: 'admin', state: 'active' } });
+  });
+
   it('a kid never arrives by themselves, and a waiting person Homeward makes a kid is gone', () => {
     const db = household();
     expect(arrive(db, { externalId: 'hl-tot', name: 'Tot', role: 'kid', via: 'homerslab' })).toEqual({ kind: 'refused' });
@@ -333,6 +345,27 @@ describe('the admins are told', () => {
     expect(sent).toHaveLength(JOIN_PUSH.max);
     expect(new Set(sent.map((s) => s.url))).toEqual(new Set(['https://fcm.googleapis.com/fcm/send/ps-alex']));
     expect(new Set(sent.map((s) => s.topic))).toEqual(new Set(['join']));
+  });
+});
+
+describe('nothing is written for a waiting person', () => {
+  it('the Inbox\'s summary items come on top of a page\'s limit: a small page still leads to the rest', async () => {
+    const { app: a, db } = await app();
+    const { inboxItems } = await import('./helpers');
+    inboxItems(db);
+    waiter(db, 'p_wait');
+    const page = (await a.inject({ url: '/api/inbox?limit=1', headers: { cookie: sessionCookie(db, 'p_alex') } })).json();
+    expect(page.items.map((i: { kind: string }) => i.kind)).toEqual(['people_waiting', 'mail_unverified', expect.any(String)]);
+    expect(page.nextCursor).toEqual(expect.any(String));
+  });
+
+  it('a seed import never takes a waiting person for the member of the same name', () => {
+    const db = openDb(':memory:');
+    db.insert(t.person).values({ id: 'p_wait', externalId: 'hl-x', name: 'Alex', role: 'adult', state: 'waiting', arrivedAt: new Date().toISOString() }).run();
+    importSeed(db, fileURLToPath(new URL('../../../seed-sample', import.meta.url)), '2026-11-01T00:00:00.000Z');
+    expect(db.select().from(t.person).where(eq(t.person.id, 'p_wait')).get()).toMatchObject({ state: 'waiting', handle: null });
+    expect(db.select().from(t.candidate).where(eq(t.candidate.personId, 'p_wait')).all()).toEqual([]);
+    expect(members(db).map((p) => p.name)).toContain('Alex');
   });
 });
 

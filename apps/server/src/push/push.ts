@@ -52,9 +52,9 @@ export const JOIN_PUSH = { max: 6, windowMs: 3_600_000 } as const;
 export function joinNotifier(db: Db, cfg: Pick<Config, 'sealingKey'>, egress: Egress): () => void {
   const limit = new Limiter(JOIN_PUSH.max, JOIN_PUSH.windowMs);
   return () => {
-    if (!limit.hit('join')) return;
+    // No admin to tell yet (a new HomersLab household): the hour's budget is kept for when there is one.
     const admins = household(db).filter((p) => p.role === 'admin').map((p) => p.id);
-    if (admins.length) void notify(db, cfg, egress, 'join', { people: admins }).catch(() => undefined);
+    if (admins.length && limit.hit('join')) void notify(db, cfg, egress, 'join', { people: admins }).catch(() => undefined);
   };
 }
 

@@ -9,12 +9,12 @@
 //   Philobiblos admin at once. After that the Homeward role is the ceiling: a Philobiblos role above it is lowered on the
 //   request that shows it; a Homeward promotion never raises one by itself. The one exception keeps a household from
 //   locking itself out: while no Philobiblos admin is left, a Homeward admin who arrives is made one.
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, max } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import type { Identity, Role } from '../identity';
-import { HouseholdError, revokeInvitesBy, suggestHandle, type Person } from './people';
+import { HouseholdError, becameKid, revokeInvitesBy, suggestHandle, type Person } from './people';
 
 export const WAITING = { max: 10 } as const;
 
@@ -31,7 +31,12 @@ export function waitingPeople(db: Db): Person[] {
   return db.select().from(t.person).where(eq(t.person.state, 'waiting')).orderBy(desc(t.person.arrivedAt), desc(t.person.id)).all();
 }
 
-const waitingCount = (db: Db) => db.select({ n: count() }).from(t.person).where(eq(t.person.state, 'waiting')).get()?.n ?? 0;
+/** How many wait, and when the latest came (the Inbox's item). */
+export function waitingSummary(db: Db): { n: number; latest: string | null } {
+  const r = db.select({ n: count(), latest: max(t.person.arrivedAt) }).from(t.person).where(eq(t.person.state, 'waiting')).get();
+  return { n: r?.n ?? 0, latest: r?.latest ?? null };
+}
+const waitingCount = (db: Db) => waitingSummary(db).n;
 const activeAdmins = (db: Db) => db.select({ n: count() }).from(t.person).where(and(eq(t.person.state, 'active'), eq(t.person.role, 'admin'))).get()?.n ?? 0;
 
 /** A waiting person, or 404: the same answer for an unknown id and a member's. */
@@ -76,6 +81,14 @@ export type Arrival =
  * this file for the rules.
  */
 export function arrive(db: Db, id: Identity & { role: Role }, now = new Date()): Arrival {
+  // Most requests change nothing: a plain read answers them, and only a change takes the write lock.
+  const known = db.select().from(t.person).where(eq(t.person.externalId, id.externalId)).get();
+  if (known && (id.name ?? known.name) === known.name && known.ceiling === id.role && id.role !== 'kid') {
+    if (known.state === 'waiting' && !(id.role === 'admin' && activeAdmins(db) === 0)) return { kind: 'waiting', person: known, joined: false };
+    if (known.state === 'active' && capped(known.role, id.role) === known.role && !(id.role === 'admin' && known.role !== 'admin' && activeAdmins(db) === 0)) {
+      return known.role === 'kid' ? { kind: 'refused' } : { kind: 'member', person: known };
+    }
+  }
   return db.transaction((tx0): Arrival => {
     const tx = tx0 as unknown as Db;
     const existing = tx.select().from(t.person).where(eq(t.person.externalId, id.externalId)).get();
@@ -113,11 +126,7 @@ export function arrive(db: Db, id: Identity & { role: Role }, now = new Date()):
       // A demotion seen: their admin-only links go. Admin-only pushes (`join`) stop by themselves: they go to the people
       // who are admins when one is sent (push/push.ts notifyAdmins), and a device is not tied to a kind.
       if (existing.role === 'admin' && role !== 'admin') revokeInvitesBy(tx, existing.id);
-      if (role === 'kid') {
-        tx.delete(t.session).where(eq(t.session.personId, existing.id)).run();
-        tx.delete(t.passkey).where(eq(t.passkey.personId, existing.id)).run();
-        tx.delete(t.pushSubscription).where(eq(t.pushSubscription.personId, existing.id)).run();
-      }
+      if (role === 'kid') becameKid(tx, existing.id);
     }
     const person = anyPerson(tx, existing.id)!;
     return person.role === 'kid' ? { kind: 'refused' } : { kind: 'member', person };
