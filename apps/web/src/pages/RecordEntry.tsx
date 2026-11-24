@@ -3,16 +3,18 @@
 // imports a CSV of it; Check shows what it would do (the server's dry run: which book each row names, which are new), and
 // Record does it, with a verified mail's effects (copies owned, the order's lines delivered or quoted). The file is read
 // in the browser as text and sent as it is; the server reads its columns and keeps none of its text. Typing only holds
-// values (WCAG 3.2.2): a check shows only while it is the check of what is entered now.
-import { useEffect, useId, useState } from 'react';
+// values (WCAG 3.2.2): a check shows only while it is the check of what is entered now. An invoice that may be one the
+// bookshop's mail counted already is asked about before it counts (philobiblos#58): the same invoice, or another purchase.
+import { useEffect, useId, useRef, useState } from 'react';
 import type { components } from '@philobiblos/contracts/openapi';
-import { api, message } from '../api';
+import { ApiError, api, message } from '../api';
 import { Choice, Notice } from '../ui';
 import { amountExample, typed, unit, useMoney } from '../money';
 import { CSV_MAX, TOO_LONG, decodeCsv } from '../csvfile';
 
 type Result = components['schemas']['OrderEntryResult'];
 type Recent = components['schemas']['OrderEntrySummary'];
+type MaybeMailed = components['schemas']['MaybeMailed'];
 type Kind = 'invoice' | 'quote';
 interface Row { title: string; author: string; isbn: string; qty: string; price: string; available: boolean }
 const EMPTY: Row = { title: '', author: '', isbn: '', qty: '1', price: '', available: true };
@@ -39,6 +41,8 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
   const [check, setCheck] = useState<{ key: string; result: Result } | null>(null);
   const [done, setDone] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The server's question about a mail it may be, while it is about what is entered now.
+  const [ask, setAsk] = useState<{ key: string; question: string; mail: MaybeMailed } | null>(null);
   // One request at a time: a second tap on Record while the first runs would record an invoice without a number twice.
   const [busy, setBusy] = useState(false);
   const k: Kind = quotable ? kind : 'invoice';
@@ -82,19 +86,29 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
   const key = JSON.stringify(now);
   const shown = check && check.key === key ? check.result : done;
 
-  const send = async (dryRun: boolean) => {
+  const send = async (dryRun: boolean, mailed?: { mail: string; answer: 'same' | 'another' }) => {
     if (busy) return;
-    setError(null); setDone(null);
+    setError(null); setDone(null); setAsk(null);
     if (typeof now === 'string') return setError(now);
     setBusy(true);
     try {
-      const r = await api<Result>('/orders/entries', { method: 'POST', body: { ...now, dryRun } });
+      const r = await api<Result>('/orders/entries', { method: 'POST', body: { ...now, dryRun, ...(mailed ? { mailed } : {}) } });
       if (dryRun) return setCheck({ key, result: r });
       setCheck(null); setDone(r); setSaid(''); void loadRecent();
       setRows([{ ...EMPTY }]); setCsv(''); setNumber(''); setDate(''); setShopPick(''); setShopName('');
       onRecorded();
-    } catch (e) { setCheck(null); setError(message(e)); } finally { setBusy(false); }
+    } catch (e) {
+      setCheck(null);
+      const asked = e instanceof ApiError && e.status === 409 ? (e.body as { maybeMailed?: MaybeMailed } | null)?.maybeMailed : undefined;
+      if (asked) setAsk({ key, question: e instanceof Error ? e.message : '', mail: asked });
+      else setError(message(e));
+    } finally { setBusy(false); }
   };
+  const asking = ask && ask.key === key ? ask : null;
+  // The question takes the focus when it appears, so a screen reader reads it and its two answers come next.
+  const askRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (ask) askRef.current?.focus(); }, [ask]);
+  const longDay = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
   const readFile = async (f: File | undefined) => {
     setError(null);
     if (!f) return;
@@ -172,15 +186,29 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
         <button type="button" className="btn btn-primary" aria-disabled={busy || undefined} onClick={() => void send(false)}>Record {k === 'invoice' ? 'the invoice' : 'the quote'}</button>
       </div>
       {error && <Notice kind="error">{error}</Notice>}
+      {asking && (
+        <div className="stack" role="group" aria-label={asking.question} tabIndex={-1} ref={askRef}>
+          <Notice kind="info" title={asking.question}>
+            {`The bookshop’s invoice${asking.mail.number ? ` ${asking.mail.number}` : ''} came by mail and counts already, with the same books for ${format(asking.mail.total, 'always')}. The same invoice records nothing new; another purchase records these copies too.`}
+          </Notice>
+          <div className="btn-row">
+            <button type="button" className="btn btn-primary" aria-disabled={busy || undefined} onClick={() => void send(false, { mail: asking.mail.mail, answer: 'same' })}>The same invoice</button>
+            <button type="button" className="btn" aria-disabled={busy || undefined} onClick={() => void send(false, { mail: asking.mail.mail, answer: 'another' })}>Another purchase</button>
+          </div>
+        </div>
+      )}
       <div role="status">{said && <Notice kind="ok">{said}</Notice>}</div>
       <div className="stack" role="status">
         {shown && (
           <>
             <Notice kind={shown.dryRun ? 'info' : 'ok'} title={shown.dryRun ? 'Nothing is recorded yet.' : 'Recorded.'}>
-              {shown.kind === 'invoice'
+              {shown.sameAsMail
+                ? `The same invoice as the one that came by mail on ${longDay(shown.sameAsMail.cameOn)}: nothing new is counted.`
+                : shown.kind === 'invoice'
                 ? `${copies(shown)} ${copies(shown) === 1 ? 'copy' : 'copies'} for ${format(shown.total, 'always')} ${shown.dryRun ? 'would be' : 'are'} in the library.`
                 : `The ${monthName} order ${shown.dryRun ? 'would come' : 'comes'} to ${format(shown.total, 'always')}.`}
               {shown.ignoredColumns.length > 0 && ` Left out: the columns ${shown.ignoredColumns.join(', ')}.`}
+              {shown.dryRun && shown.maybeMailed && ` It may be the invoice that came by mail on ${longDay(shown.maybeMailed.cameOn)}: Record asks first.`}
             </Notice>
             <ul className="footnote">
               {shown.lines.map((l) => (
@@ -201,7 +229,7 @@ export function RecordEntry({ month, monthName, orderStatus, onRecorded }: { mon
               <li key={x.id} className="row">
                 <span className="row-main">
                   <span className="row-title wrap">{[new Date(x.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), x.number ? `invoice ${x.number}` : 'no number', x.shop].filter(Boolean).join(' · ')}</span>
-                  <span className="row-sub wrap">{`${x.copies} ${x.copies === 1 ? 'copy' : 'copies'}, ${format(x.total, 'always')}${x.by ? `, by ${x.by.name}` : ''}`}</span>
+                  <span className="row-sub wrap">{`${x.sameAsMail ? 'the invoice that came by mail' : `${x.copies} ${x.copies === 1 ? 'copy' : 'copies'}`}, ${format(x.total, 'always')}${x.by ? `, by ${x.by.name}` : ''}`}</span>
                 </span>
                 {x.canUndo && <span className="row-trail"><button type="button" className="btn btn-sm" aria-disabled={busy || undefined} aria-label={`Undo the invoice of ${new Date(x.createdAt).toLocaleDateString('en-GB')}${x.number ? `, ${x.number}` : ''}`} onClick={() => void undo(x)}>Undo</button></span>}
               </li>

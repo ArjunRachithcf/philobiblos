@@ -18,6 +18,11 @@
 //
 // An invoice entry keeps what it did (undo_json), so whoever recorded it, or an admin, may undo it for UNDO_DAYS while
 // nothing it changed has changed since (undoEntry; philobiblos#45).
+//
+// An invoice that may be one a bookshop's mail brought and counted already (mail/effects.ts maybeMailed; philobiblos#58)
+// is asked about before it counts: 409 with the mail ("Is this the invoice that came by mail on …?"), and the person
+// sends it again with the answer (`mailed`). The same: it is kept as that mail's duplicate (duplicate_of) and counts
+// nothing; another purchase: it counts. A dry run names the question and asks nothing.
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
@@ -26,7 +31,8 @@ import { bookIsbn } from '../books/isbn';
 import { AMOUNT_CEILING_C, parseAmount } from '@philobiblos/contracts/money';
 import { amountProblem, getMoney } from '../household/money';
 import { actsFor, getPerson, household, view } from '../household/people';
-import { invoiceOrders, keys, matchBook, orderBooks, quoteOrder, receive, type BookKey, type Delivered, type Tx } from '../mail/effects';
+import { DAY, longDay } from '../inbox/inbox';
+import { invoiceOrders, keys, mailItemId, matchBook, maybeMailed, orderBooks, quoteOrder, receive, type BookKey, type Delivered, type MailedInvoice, type Tx } from '../mail/effects';
 import { safeField } from '../mail/read';
 import { norm } from '../seed/import';
 import { CsvError, parseCsv } from './csv';
@@ -35,8 +41,11 @@ import { unguardCell } from './list';
 /** At most 100 lines (a parser's books a mail), 20 copies a line (the Inbox's), a price at most any amount's ceiling. */
 export const ENTRY_LIMITS = { lines: 100, qty: 20, price: AMOUNT_CEILING_C, number: 40, shop: 80, title: 300, author: 200 } as const;
 
+/** The bookshop's mail an invoice may be (philobiblos#58): its Inbox item id, the day it names, its number, its books' total. */
+export interface MaybeMailed { mail: string; cameOn: string; number: string | null; total: number }
+
 export class EntryError extends Error {
-  constructor(readonly status: 400 | 403 | 404 | 409, message: string) { super(message); }
+  constructor(readonly status: 400 | 403 | 404 | 409, message: string, readonly maybeMailed?: MaybeMailed) { super(message); }
 }
 
 export type EntryKind = 'quote' | 'invoice';
@@ -67,6 +76,10 @@ export interface EntryResult {
   total: number;
   lines: EntryLine[];
   ignoredColumns: string[];
+  /** A dry run's: the bookshop's mail it would be asked about. */
+  maybeMailed?: MaybeMailed;
+  /** Answered the same as this mail: kept as its duplicate, nothing counted. */
+  sameAsMail?: MaybeMailed;
 }
 
 /** A line as it was given, checked: what it names and its amounts. */
@@ -203,7 +216,7 @@ function titleNames(books: BookKey[], g: Given): number {
  */
 export function recordEntry(db: Db, me: string, body: unknown, now = new Date(), connectors?: string[]): EntryResult {
   if (!isObject(body)) return bad('a JSON object is needed');
-  for (const k of Object.keys(body)) if (!['kind', 'month', 'number', 'shop', 'date', 'lines', 'csv', 'dryRun'].includes(k)) return bad(`unknown field ${k.slice(0, 40)}`);
+  for (const k of Object.keys(body)) if (!['kind', 'month', 'number', 'shop', 'date', 'lines', 'csv', 'dryRun', 'mailed'].includes(k)) return bad(`unknown field ${k.slice(0, 40)}`);
   const kind = body.kind;
   if (kind !== 'quote' && kind !== 'invoice') return bad('kind: quote or invoice');
   if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') return bad('dryRun: true or false');
@@ -217,7 +230,9 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
     if (body.date !== undefined) return bad('date: only an invoice has one');
     if (body.number !== undefined) return bad('number: only an invoice has one');
     if (body.shop !== undefined) return bad('shop: only an invoice names one (a quote is its order\'s)');
+    if (body.mailed !== undefined) return bad('mailed: only an invoice is asked about a mail');
   } else if (body.month !== undefined) return bad('month: only a quote names its order\'s month');
+  const answer = body.mailed === undefined ? null : answerOf(body.mailed);
   const acquiredAt = kind === 'invoice' && body.date !== undefined ? checkDate(body.date, now) : now.toISOString();
 
   let number: string | null = null;
@@ -264,6 +279,9 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
       const added = new Set<string>();
       let orderId: string | undefined;
       let quotedTotal = 0;
+      const invoiceTotal = kind === 'invoice' ? given.reduce((n, g) => n + g.price! * g.qty, 0) : 0;
+      let maybe: MaybeMailed | undefined;
+      let same: { key: string; asked: MaybeMailed } | undefined;
       const undo: Undo = { lines: [], orders: [], offers: [] };
       const lineView = (g: Given, b: BookKey | null, isNew: boolean): EntryLine => ({
         row: g.row, bookId: b && !(dryRun && added.has(b.id)) ? b.id : null, new: isNew, title: b?.title ?? g.title!, authors: b?.authors ?? (g.author ? [g.author] : []),
@@ -285,12 +303,27 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
           if (mailed) throw new EntryError(409, `invoice ${number} came in the bookshop's mail already, and counts from there`);
         }
         const books = keys(tx);
+        // The bookshop's mail it may be (philobiblos#58): only when every row names a book Philobiblos has already.
+        const ids = given.map((g) => matchBook(books, { ean: g.isbn, title: g.title, author: g.author }));
+        const fit = ids.every((x) => x !== null) ? maybeMailed(tx, { number, lines: given.map((g, i) => ({ bookId: ids[i]!, qty: g.qty })), total: invoiceTotal }, iso) : null;
+        const asked = fit && askedOf(fit, invoiceTotal);
+        // An answer about this mail answers it; none, or one about another mail, asks (a dry run only names it).
+        const answered = asked && answer?.mail === asked.mail ? answer.answer : null;
+        if (asked && !answered && !dryRun) throw new EntryError(409, `Is this the invoice that came by mail on ${longDay(asked.cameOn)}?`, asked);
+        if (!asked && answer?.answer === 'same') throw new EntryError(409, 'no mail fits this invoice now: record it as it is, or check it again');
+        if (asked && !answered) maybe = asked;
+        if (asked && answered === 'same') {
+          // The same invoice as the mail: nothing new counted; kept as the mail's duplicate.
+          same = { key: fit.key, asked };
+          for (const [i, g] of given.entries()) out.push(lineView(g, books.find((b) => b.id === ids[i])!, false));
+        }
         const invoiced = new Map<string, number>();
         // What it does, kept to undo it (undoEntry): the values each row had before it, and the ones it left.
         const priced = new Map<string, OfferRow | null>();
-        for (const g of given) {
+        for (const [i, g] of (same ? [] : given).entries()) {
           const person = g.for ? target.get(g.for)! : null;
-          let id = matchBook(books, { ean: g.isbn, title: g.title, author: g.author });
+          // A row of a book an earlier row of this entry added names it now.
+          let id = ids[i] ?? matchBook(books, { ean: g.isbn, title: g.title, author: g.author });
           const isNew = !id;
           if (!id) {
             if (!g.title) throw new EntryError(400, `row ${g.row}: no book has this ISBN yet: add its title`);
@@ -338,14 +371,17 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
       }
 
       // An invoice's total is its own rows'; a quote's is the order's, as quoted now (a correction of one book included).
-      const total = kind === 'quote' ? quotedTotal : given.reduce((n, g) => n + g.price! * g.qty, 0);
-      const result: EntryResult = { kind, source, dryRun, ...(month ? { month } : {}), ...(orderId ? { orderId } : {}), number, shop, total, lines: out, ignoredColumns: ignored };
+      const total = kind === 'quote' ? quotedTotal : invoiceTotal;
+      const result: EntryResult = {
+        kind, source, dryRun, ...(month ? { month } : {}), ...(orderId ? { orderId } : {}), number, shop, total, lines: out, ignoredColumns: ignored,
+        ...(maybe ? { maybeMailed: maybe } : {}), ...(same ? { sameAsMail: same.asked } : {}),
+      };
       if (dryRun) throw new DryRun(result);
       const id = ulid();
       tx.insert(t.orderEntry).values({
         id, kind, source, number, shop: shop ?? '', orderId: orderId ?? null, personId: me, totalC: total, createdAt: iso,
         linesJson: JSON.stringify(out.map((l) => ({ bookId: l.bookId, qty: l.qty, priceC: l.price, available: l.available }))),
-        undoJson: kind === 'invoice' ? JSON.stringify(undo) : null,
+        undoJson: kind === 'invoice' ? JSON.stringify(undo) : null, duplicateOf: same?.key ?? null,
       }).run();
       return { id, ...result };
     });
@@ -353,6 +389,22 @@ export function recordEntry(db: Db, me: string, body: unknown, now = new Date(),
     if (e instanceof DryRun) return e.result;
     throw e;
   }
+}
+
+/** The answer to "Is this the invoice that came by mail on …?", sent with the entry again (`mailed`). */
+function answerOf(v: unknown): { mail: string; answer: 'same' | 'another' } {
+  if (!isObject(v)) return bad('mailed: { mail, answer }');
+  for (const k of Object.keys(v)) if (k !== 'mail' && k !== 'answer') return bad(`mailed: unknown field ${k.slice(0, 40)}`);
+  if (typeof v.mail !== 'string' || !/^m_[0-9a-f]{32}$/.test(v.mail)) return bad('mailed.mail: the mail it was asked about');
+  if (v.answer !== 'same' && v.answer !== 'another') return bad('mailed.answer: same or another');
+  return { mail: v.mail, answer: v.answer };
+}
+
+/** The question's mail: its Inbox item id, the day it names (its Date header's, else the day it was read), number and total. */
+function askedOf(m: MailedInvoice, total: number): MaybeMailed {
+  const at = m.date ? Date.parse(m.date) : Number.NaN;
+  const cameOn = m.day && DAY.test(m.day) ? m.day : `${(Number.isNaN(at) ? m.seenAt : new Date(at).toISOString()).slice(0, 10)}T00:00:00.000Z`;
+  return { mail: mailItemId(m.key), cameOn, number: m.number, total };
 }
 
 /** An invoice's price learnt for a book (book_offer, source invoice), or none. */
@@ -501,7 +553,9 @@ export function recentEntries(db: Db, me: string, now = new Date()) {
       const by = e.personId ? getPerson(db, e.personId) : null;
       return {
         id: e.id, createdAt: e.createdAt, source: e.source, number: e.number, shop: e.shop || null, total: e.totalC,
-        copies: (JSON.parse(e.linesJson) as { qty: number | null }[]).reduce((n, l) => n + (l.qty ?? 0), 0),
+        // One answered the same as a mail made no copies: the mail did.
+        copies: e.duplicateOf ? 0 : (JSON.parse(e.linesJson) as { qty: number | null }[]).reduce((n, l) => n + (l.qty ?? 0), 0),
+        sameAsMail: e.duplicateOf != null,
         ...(by ? { by: view(db, by) } : {}),
         // Who and when only: whether nothing has changed since is answered by the undo itself.
         canUndo: e.undoJson != null && mayUndo(db, me, e),

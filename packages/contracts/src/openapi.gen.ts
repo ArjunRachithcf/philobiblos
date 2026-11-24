@@ -935,7 +935,7 @@ export interface paths {
         /** Any adult: the invoices typed in or imported in the last 7 days (philobiblos#45), newest first, at most 50: when, the number and shop, the total, how many copies, who recorded it, and whether you may undo it (canUndo: you recorded it or are an admin, and it was recorded since undo exists; whether nothing has changed since is answered by the undo). */
         get: operations["listOrderEntries"];
         put?: never;
-        /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop's connector's mail. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
+        /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop's connector's mail. An invoice that may be a bookshop's mail counted in the last 30 days is asked about first (philobiblos#58): 409 with maybeMailed, then sent again with mailed (same: kept as the mail's duplicate, nothing counted; another: it counts); a dry run names it (maybeMailed) and asks nothing. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
         post: operations["recordOrderEntry"];
         delete?: never;
         options?: never;
@@ -1470,7 +1470,10 @@ export interface components {
             number: string | null;
             shop: string | null;
             total: components["schemas"]["Money"];
+            /** @description copies it made (0 for one kept as a mail's duplicate) */
             copies: number;
+            /** @description answered the same as a bookshop's mail counted already (philobiblos#58): it counted nothing */
+            sameAsMail?: boolean;
             by?: components["schemas"]["Person"];
             canUndo: boolean;
         };
@@ -1529,6 +1532,27 @@ export interface components {
             /** @description A CSV (comma, semicolon or tab; RFC 4180 quoting; at most 100 rows, 20 columns, 1,000 characters a cell): a header row naming isbn (isbn13, ean), title, author, qty (quantity), price, available and for, in any order and case, then a row a book. Other columns are ignored and named back. price is an amount such as 18.90; available yes or no. */
             csv?: string;
             dryRun?: boolean;
+            /** @description an invoice: the answer to "Is this the invoice that came by mail on …?" (a 409 with maybeMailed), sent with the entry again (philobiblos#58). same: kept as the mail's duplicate, nothing counted; another: another purchase, it counts. An answer about another mail than the one that fits now is asked again (409; a dry run names it); same with no mail that fits is 409. */
+            mailed?: {
+                /** @description maybeMailed.mail */
+                mail: string;
+                /** @enum {unknown} */
+                answer: "same" | "another";
+            };
+        };
+        /** @description A bookshop's invoice mail counted in the last 30 days that a typed or imported invoice may be (philobiblos#58): the same books in the same quantities, the same books' total, and the entry's number (if any) the mail's. */
+        MaybeMailed: {
+            /** @description its Inbox item id */
+            mail: string;
+            /** @description the day its Date header names (UTC midnight), else the day it was read */
+            cameOn: string;
+            number: string | null;
+            total: components["schemas"]["Money"];
+        };
+        EntryAsked: {
+            /** @description "Is this the invoice that came by mail on 16 November 2026?", or why it is refused */
+            error: string;
+            maybeMailed?: components["schemas"]["MaybeMailed"];
         };
         /** @description A book by its isbn (ISBN-13 or ISBN-10, the check digit holding) or its title (and author). A quote line has no qty and no for; an invoice line no available. */
         OrderEntryLine: {
@@ -1560,6 +1584,10 @@ export interface components {
             total: components["schemas"]["Money"];
             /** @description CSV columns it does not read (their cells never read) */
             ignoredColumns: string[];
+            /** @description a dry run's: the mail it would be asked about */
+            maybeMailed?: components["schemas"]["MaybeMailed"];
+            /** @description answered the same as this mail: kept as its duplicate, nothing counted */
+            sameAsMail?: components["schemas"]["MaybeMailed"];
             lines: {
                 row: number;
                 /** @description null in a dry run for a book it would add */
@@ -4332,13 +4360,13 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that shop's invoice number counts already */
+            /** @description The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that shop's invoice number counts already; or an invoice that may be a bookshop's mail counted already, asked about (maybeMailed: send it again with mailed) */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Error"];
+                    "application/json": components["schemas"]["EntryAsked"];
                 };
             };
         };

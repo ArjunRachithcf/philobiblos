@@ -323,6 +323,9 @@ export const orderEntry = sqliteTable('order_entry', {
   // What an invoice did, to undo it (philobiblos#45; orders/entries.ts undoEntry): the copies it made and the rows it
   // changed, as ids and the values it found and left. Null: a quote, or an invoice recorded before undo existed.
   undoJson: text('undo_json'),
+  // An invoice a person answered is the same as a bookshop's mail counted already (philobiblos#58): that mail's
+  // mail_seen.message_id. It counted nothing: the mail did.
+  duplicateOf: text('duplicate_of'),
 }, (t) => [
   check('order_entry_kind', sql`${t.kind} IN ('quote','invoice')`),
   check('order_entry_source', sql`${t.source} IN ('typed','csv')`),
@@ -330,6 +333,8 @@ export const orderEntry = sqliteTable('order_entry', {
   check('order_entry_shop_invoice', sql`${t.kind} = 'invoice' OR ${t.shop} = ''`),
   // An invoice number counts once per shop, whatever its case (a shop's and no shop's are apart).
   uniqueIndex('order_entry_number').on(sql`upper(${t.shop})`, sql`upper(${t.number})`),
+  // Whether a mail is taken already (mail/effects.ts maybeMailed): looked up for each mail that may fit.
+  index('order_entry_duplicate_of').on(t.duplicateOf),
 ]);
 
 // Sources ----------------------------------------------------------------

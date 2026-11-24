@@ -264,10 +264,12 @@ CREATE TABLE order_entry (
   lines_json  TEXT NOT NULL,               -- [{ bookId, qty, priceC, available }]
   created_at  TEXT NOT NULL,
   undo_json   TEXT,                        -- an invoice's: what it did, to undo it (philobiblos#45); NULL for a quote or before then
+  duplicate_of TEXT,                       -- an invoice answered "the same" as a mailed one (mail_seen.message_id): it counted nothing (philobiblos#58)
   CHECK (kind = 'invoice' OR number IS NULL),
   CHECK (kind = 'invoice' OR shop = '')
 );
 CREATE UNIQUE INDEX order_entry_number ON order_entry(upper(shop), upper(number));
+CREATE INDEX order_entry_duplicate_of ON order_entry(duplicate_of); -- whether a mail is taken already (philobiblos#58)
 
 -- Sources ----------------------------------------------------------------
 CREATE TABLE share (

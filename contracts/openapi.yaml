@@ -325,9 +325,9 @@ paths:
     post:
       tags: [orders]
       operationId: recordOrderEntry
-      summary: 'Any adult: an order''s quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice''s copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote''s lines of the month''s composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household''s currency (a CSV''s as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop''s connector''s mail. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing.'
+      summary: 'Any adult: an order''s quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice''s copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote''s lines of the month''s composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household''s currency (a CSV''s as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop''s connector''s mail. An invoice that may be a bookshop''s mail counted in the last 30 days is asked about first (philobiblos#58): 409 with maybeMailed, then sent again with mailed (same: kept as the mail''s duplicate, nothing counted; another: it counts); a dry run names it (maybeMailed) and asks nothing. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing.'
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OrderEntry' } } } }
-      responses: { '400': { description: 'Bad request (a row it cannot read names its row number)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: 'No order that month (a quote); no one with that handle', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that shop''s invoice number counts already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '200': { description: 'A dry run: what the entry would do', content: { application/json: { schema: { $ref: '#/components/schemas/OrderEntryResult' } } } }, '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/OrderEntryResult' } } } } }
+      responses: { '400': { description: 'Bad request (a row it cannot read names its row number)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: 'No order that month (a quote); no one with that handle', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The household has no currency yet; the order is not with a bookshop (picked) or is past its quote; that shop''s invoice number counts already; or an invoice that may be a bookshop''s mail counted already, asked about (maybeMailed: send it again with mailed)', content: { application/json: { schema: { $ref: '#/components/schemas/EntryAsked' } } } }, '401': { $ref: '#/components/responses/Unauthorized' }, '200': { description: 'A dry run: what the entry would do', content: { application/json: { schema: { $ref: '#/components/schemas/OrderEntryResult' } } } }, '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/OrderEntryResult' } } } } }
     get:
       tags: [orders]
       operationId: listOrderEntries
@@ -525,7 +525,8 @@ components:
         number: { type: [string, 'null'] }
         shop: { type: [string, 'null'] }
         total: { $ref: '#/components/schemas/Money' }
-        copies: {type: integer}
+        copies: { type: integer, description: 'copies it made (0 for one kept as a mail''s duplicate)' }
+        sameAsMail: { type: boolean, description: 'answered the same as a bookshop''s mail counted already (philobiblos#58): it counted nothing' }
         by: { $ref: '#/components/schemas/Person' }
         canUndo: { type: boolean }
     Order:
@@ -561,6 +562,29 @@ components:
         lines: { type: array, minItems: 1, maxItems: 100, items: { $ref: '#/components/schemas/OrderEntryLine' } }
         csv: { type: string, maxLength: 65536, description: 'A CSV (comma, semicolon or tab; RFC 4180 quoting; at most 100 rows, 20 columns, 1,000 characters a cell): a header row naming isbn (isbn13, ean), title, author, qty (quantity), price, available and for, in any order and case, then a row a book. Other columns are ignored and named back. price is an amount such as 18.90; available yes or no.' }
         dryRun: { type: boolean }
+        mailed:
+          type: object
+          additionalProperties: false
+          required: [mail, answer]
+          description: 'an invoice: the answer to "Is this the invoice that came by mail on …?" (a 409 with maybeMailed), sent with the entry again (philobiblos#58). same: kept as the mail''s duplicate, nothing counted; another: another purchase, it counts. An answer about another mail than the one that fits now is asked again (409; a dry run names it); same with no mail that fits is 409.'
+          properties:
+            mail: { type: string, pattern: '^m_[0-9a-f]{32}$', description: 'maybeMailed.mail' }
+            answer: { enum: [same, another] }
+    MaybeMailed:
+      type: object
+      required: [mail, cameOn, number, total]
+      description: 'A bookshop''s invoice mail counted in the last 30 days that a typed or imported invoice may be (philobiblos#58): the same books in the same quantities, the same books'' total, and the entry''s number (if any) the mail''s.'
+      properties:
+        mail: { type: string, description: 'its Inbox item id' }
+        cameOn: { type: string, description: 'the day its Date header names (UTC midnight), else the day it was read' }
+        number: { type: [string, 'null'] }
+        total: { $ref: '#/components/schemas/Money' }
+    EntryAsked:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: '"Is this the invoice that came by mail on 16 November 2026?", or why it is refused' }
+        maybeMailed: { $ref: '#/components/schemas/MaybeMailed' }
     OrderEntryLine:
       type: object
       additionalProperties: false
@@ -587,6 +611,8 @@ components:
         shop: { type: [string, 'null'] }
         total: { $ref: '#/components/schemas/Money' }
         ignoredColumns: { type: array, items: { type: string }, description: 'CSV columns it does not read (their cells never read)' }
+        maybeMailed: { allOf: [ { $ref: '#/components/schemas/MaybeMailed' } ], description: 'a dry run''s: the mail it would be asked about' }
+        sameAsMail: { allOf: [ { $ref: '#/components/schemas/MaybeMailed' } ], description: 'answered the same as this mail: kept as its duplicate, nothing counted' }
         lines:
           type: array
           items:

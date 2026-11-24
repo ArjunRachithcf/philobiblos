@@ -181,6 +181,19 @@ effects of the mail of its kind in the table above, on the same records, and not
   one (`duplicateOf: entry:<id>`, nothing else changes); `another`, and it has its effect then, as when read. It is never
   dismissed unanswered. A typed invoice another mail counts as, or asks about, is not asked about again; of several
   that fit, the newest. A mail with a line Philobiblos cannot place, or a typed one with another number, counts as before.
+- **Maybe mailed already** (philobiblos#58): the same rule the other way round. An invoice typed or imported whose
+  every row names a book Philobiblos has, with the same books in the same quantities and the same total as a verified
+  mailed invoice that counted (read in the last 30 days; not one sent again, counted as a typed one, or waiting as maybe
+  one; a line added from the Inbox since counts as the book it was added as), and with no number or the mail's, is asked about before it counts, at entry time: 409 with `maybeMailed` (the
+  mail's Inbox item id, the day its Date header names, its number, its books' total), "Is this the invoice that came by
+  mail on …?". The person sends the entry again with `mailed: { mail, answer }`: `same`, and the entry is kept as the
+  mail's duplicate (`order_entry.duplicate_of`): no copy, price, order line or pile changes; `another`, and it counts.
+  An answer about another mail than the one that fits now is asked again; `same` with none that fits is 409. A dry run
+  names the mail (`maybeMailed`) and asks nothing. A mail an entry is the same as is not asked about again; of several,
+  the newest. An entry kept as a mail's duplicate stands for that mail: a mail read later never waits as maybe it nor
+  counts as it by its number, and
+  its undo removes only the entry (the mail may then be asked about again). Typed for the mail's own connector with its
+  number, it is refused by the number, as before.
 - **Undo** (philobiblos#45, `POST /orders/entries/{id}/undo`; `GET /orders/entries` lists the last 7 days'): an invoice
   typed or imported is undone by whoever recorded it, or an admin, within 7 days (`UNDO_DAYS`), while nothing it changed
   has changed since: its copies removed, a tap's copy it took the tap's again, its order lines as they were (a line
@@ -196,8 +209,8 @@ effects of the mail of its kind in the table above, on the same records, and not
   refused in every field and in the header: such words would match no book and add a broken one. The page decodes a
   file strictly as UTF-8 and says how to save it again.
 - **Kept** (`order_entry`): the kind, how it came (`typed`, `csv`), the number and the shop, the quote's order, who recorded it, the
-  total and each row's book id, copies, price and availability, and an invoice's undo record (ids and amounts: the copies
-  it made, the rows it changed with what they were); never the text typed or the file.
+  total and each row's book id, copies, price and availability, an invoice's undo record (ids and amounts: the copies
+  it made, the rows it changed with what they were), and the mail it is the same as, if any; never the text typed or the file.
 - Amounts are the household's currency's (Settings): with none chosen yet, nothing is recorded (409). Everything is
   checked before anything changes, in one transaction; `dryRun: true` applies it and rolls it back, so it answers
   exactly what the entry would do.

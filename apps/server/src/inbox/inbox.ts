@@ -11,7 +11,6 @@
 //
 // Everything shown is data, sent as JSON and rendered as text: no field is ever HTML. Deciding a book is recorded once
 // (inbox_decision); adding acts for yourself or a kid, never for another adult (the Backlog's rule).
-import { createHash } from 'node:crypto';
 import { and, count, desc, eq, gt, inArray, isNotNull, lt, lte, max, sql } from 'drizzle-orm';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { ulid } from 'ulid';
@@ -19,7 +18,7 @@ import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
-import { invoiceLines, invoiceOrders, matchBook, receive } from '../mail/effects';
+import { invoiceLines, invoiceOrders, mailItemId, matchBook, receive } from '../mail/effects';
 import { MONTHS } from '../month/order-mail';
 import { norm } from '../seed/import';
 import { foundBooks, keptFiles, ownShare, shareAiNote, type ShareRow } from '../shares/shares';
@@ -41,7 +40,7 @@ const WAITING = ['pending_pdf'];
 const LINES: Record<string, InboxItem['kind']> = { invoice: 'unmatched_invoice_line', bookshop_quote: 'unmatched_quote_line', online_order: 'unmatched_shop_line', click_collect: 'unmatched_shop_line' };
 const MAIL_TITLE: Record<string, string> = { invoice: 'Invoice', bookshop_quote: 'Quote', online_order: 'Online order', click_collect: 'Click & collect' };
 
-export const mailItemId = (key: string) => `m_${createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 32)}`;
+export { mailItemId };
 export const shareItemId = (id: string) => `s_${id}`;
 export const aiItemId = (runId: string) => `a_${runId}`;
 type AiRow = typeof t.aiRun.$inferSelect;
@@ -344,7 +343,7 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
 }
 
 /** A mail's day as read.ts `mailDay` keeps it (a mail read before it was kept has none: the UTC day of its date). */
-const DAY = /^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/;
+export const DAY = /^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/;
 
 /** Copies an invoice line added from the Inbox makes at most (a line's quantity is two digits). */
 export const MAX_COPIES = 20;
@@ -377,7 +376,7 @@ export function dismiss(db: Db, me: string, id: string, now = new Date()): void 
 const waitsForAnswer = (r: MailRow) => r.accepted === 1 && r.kind === 'invoice' && typeof json(r.parsedJson).maybeTyped === 'string';
 
 /** "2026-11-16T10:00:00.000Z" → "16 November 2026" (its UTC day). */
-const longDay = (iso: string) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
+export const longDay = (iso: string) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 
 /**
  * A mailed invoice that may be the one typed in on that day (philobiblos#45): its books and the typed entry, for a
