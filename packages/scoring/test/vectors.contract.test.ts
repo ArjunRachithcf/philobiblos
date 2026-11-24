@@ -17,6 +17,15 @@ const inHousehold = (h: Household) => (amount: number) => {
   return Math.round((amount * h.factor * 100) / unit) * unit;
 };
 
+/**
+ * Throws unless `amount`, in the vectors' household, is whole in `h` before any rounding: a case whose factor makes a
+ * vector's price a fraction its currency cannot write would test rounding, not the scores (philobiblos#62).
+ */
+function assertWhole(amount: number, h: Pick<Household, 'name' | 'factor' | 'fractionDigits'>): void {
+  const units = (amount * h.factor * 100) / 10 ** (2 - h.fractionDigits);
+  if (Math.abs(units - Math.round(units)) > 1e-6) throw new Error(`${amount} is not whole in ${h.name}`);
+}
+
 function adultFacts(v: AdultVector, toC: (amount: number) => number): AdultCandidateFacts {
   const fillsLayer = layerOf[v.layerFill];
   if (fillsLayer === undefined) throw new Error(`no layer gives layerFill ${v.layerFill}`);
@@ -31,9 +40,7 @@ function suite(vectors: Vectors, h: Household) {
   const toC = inHousehold(h);
   // The household's own money: its unknown price, and the price limits that follow it (none of its own in the vectors).
   const w = householdWeights({ unknownPriceC: toC(vectors.household.unknownPrice), priceLimits: null });
-  for (const amount of [...vectors.adult, ...vectors.kids].map((v) => v.price)) {
-    if (!Number.isInteger(toC(amount) / 10 ** (2 - h.fractionDigits))) throw new Error(`${amount} is not whole in ${h.name}`);
-  }
+  for (const amount of [vectors.household.unknownPrice, vectors.basket.budget.min, vectors.basket.budget.max, ...[...vectors.adult, ...vectors.kids].map((v) => v.price)]) assertWhole(amount, h);
   it('the default weights are the vectors\' weights', () => {
     for (const [k, w] of Object.entries(vectors.weights)) expect(DEFAULT_ADULT_WEIGHTS[k as keyof typeof DEFAULT_ADULT_WEIGHTS]).toBe(w);
   });
@@ -58,6 +65,15 @@ function suite(vectors: Vectors, h: Household) {
     expect(pickAdults(pool, { count: 2, mix: 'deepen_connect' })).toEqual(vectors.basket.expectAdult);
   });
 }
+
+describe('the households\' guard can fail', () => {
+  it('a price that is a fraction of a unit in the household\'s currency is refused, not rounded away', () => {
+    expect(() => assertWhole(16.9, { name: 'no decimals at factor 1', factor: 1, fractionDigits: 0 })).toThrow(/16\.9 is not whole/);
+    expect(() => assertWhole(16.9, { name: 'a tenth', factor: 0.1, fractionDigits: 1 })).toThrow(/not whole/);
+    expect(() => assertWhole(16.9, { name: 'the vectors\' own', factor: 1, fractionDigits: 2 })).not.toThrow();
+    expect(() => assertWhole(16.9, { name: 'a low-nominal one', factor: 0.1, fractionDigits: 2 })).not.toThrow();
+  });
+});
 
 describe.each(publicVectors.households.cases.map((h) => [h.name, h] as const))('contracts/scoring-vectors.json in %s', (_name, h) => suite(publicVectors, h));
 

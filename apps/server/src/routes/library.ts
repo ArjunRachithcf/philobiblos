@@ -14,6 +14,7 @@ import * as ex from '../stubs/examples';
 import { SealKeyMissing, aiView, checkAi } from '../ai/settings';
 import { CycleError, cycleView, setCycle } from '../jobs/schedule';
 import { MoneyError, checkMoney, getMoney } from '../household/money';
+import { currencyList } from '../household/currency';
 import { enabledConnectors } from '../connectors/enabled';
 import type { Registry } from '../connectors/load';
 import { mailView } from '../mail/oauth';
@@ -76,7 +77,7 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db, c
       // The mailbox as configured in the environment (its password never leaves it), and with XOAUTH2 what connecting
       // allows and whether it is connected (never a token).
       const mail = mailView(db, cfg);
-      return { ...ex.settings, budget: getBudget(db), cycle: cycleView(db, 'monthly'), person: personSettings(getPerson(db, req.caller!.personId)!), order, mail, ai: aiView(db, cfg), money: getMoney(db) };
+      return { ...ex.settings, budget: getBudget(db), cycle: cycleView(db, 'monthly'), person: personSettings(getPerson(db, req.caller!.personId)!), order, mail, ai: aiView(db, cfg), money: { ...getMoney(db), currencies: currencyList() } };
     } catch (e) { return fail(reply, e); }
   });
   app.patch<{ Body: { person?: unknown; budget?: unknown; order?: unknown; ai?: unknown; cycle?: unknown; money?: unknown } }>('/settings', async (req, reply) => {

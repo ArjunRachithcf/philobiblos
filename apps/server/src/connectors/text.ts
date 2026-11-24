@@ -3,6 +3,7 @@
 // literal. Every shape is an alternation of literals with at most one bounded or single-character quantifier around it,
 // so matching is linear in the text (and the words are few and short: contracts/connector.schema.json). Nothing a
 // connector says can add a quantifier, a group or a backreference.
+import { toHundredths } from '@philobiblos/contracts/money';
 
 // The syntax characters of a pattern (the only ones the u flag lets be escaped).
 const SPECIAL = /[\\^$.*+?()[\]{}|/]/g;
@@ -57,17 +58,58 @@ export function subjectMatcher(template: string): (subject: string) => string | 
 /** Money as the connector writes it: a symbol before the amount (`<symbol> 19.90`) or after it (`19.90 <symbol>`). */
 export interface Money { before: string[]; after: string[] }
 
-/** Hundredths (up to 9999.99) of the first amount in a line, or null. */
-export function amountFinder(m: Money): (s: string) => number | null {
-  const re = new RegExp(`${alternation(m.before)}\\s?(\\d{1,4})[.,](\\d{2})(?!\\d)|(?<![\\d.,])(\\d{1,4})[.,](\\d{2})\\s?${alternation(m.after)}${NOT_WORD_AFTER}`, 'iu');
+/**
+ * An amount's number in a currency with `digits` decimals (philobiblos#62), as a pattern with two captures: its whole
+ * units, grouped by thousands (with `,`, `.` or `'`, the same one throughout, up to 10,000,000,000) or not grouped, and
+ * its decimals: exactly the currency's, after a point or a comma that is not the grouping's (`1,234.50`, `1.234,50`), or
+ * none in a currency without decimals (`1,980`). It never stops inside a number: a digit, or a separator and a digit,
+ * after it is no amount (`1,98` in a currency without decimals, `19.905` in one with two). Bounded alternatives only:
+ * linear.
+ */
+export function amountNumber(digits: number): string {
+  const grouped = (sep: string) => `\\d{1,3}(?:${sep}\\d{3}){1,3}`;
+  const units = digits > 0
+    ? `(${grouped(',')}(?=\\.)|${grouped('\\.')}(?=,)|${grouped("'")}|\\d{1,11})[.,](\\d{${digits}})`
+    : `(${grouped(',')}|${grouped('\\.')}|${grouped("'")}|\\d{1,11})()`;
+  return `${units}(?![.,']?\\d)`;
+}
+
+/** The two captures of `amountNumber` in hundredths; `below` when its decimals have a thousandth (not kept); else null. */
+export function readNumber(units: string, decimals: string, digits: number): number | 'below' | null {
+  if (/[1-9]/.test(decimals.slice(2))) return 'below';
+  return toHundredths(units.replace(/[,.']/g, ''), decimals, digits);
+}
+
+/** The first amount in a line, a symbol before it or after it, read by `readNumber`. */
+function amountReader(m: Money, digits: number): (s: string) => number | 'below' | null {
+  const n = amountNumber(digits);
+  // A side without symbols has no branch (an empty alternation would match any number).
+  const before = m.before.length ? `${alternation(m.before)}\\s?${n}` : '(?!)()()';
+  const after = m.after.length ? `(?<![\\d.,'])${n}\\s?${alternation(m.after)}${NOT_WORD_AFTER}` : '(?!)()()';
+  const re = new RegExp(`${before}|${after}`, 'iu');
   return (s) => {
     const x = re.exec(s);
-    return x ? Number(x[1] ?? x[3]) * 100 + Number(x[2] ?? x[4]) : null;
+    return x ? readNumber(x[1] ?? x[3]!, x[2] ?? x[4]!, digits) : null;
   };
 }
 
-/** Whether a line holds an amount at all (a symbol and a digit, or an amount and a symbol after it). */
-export function amountTest(m: Money): (s: string) => boolean {
-  const re = new RegExp(`${alternation(m.before)}\\s?\\d|\\d[.,]\\d{2}\\s?${alternation(m.after)}${NOT_WORD_AFTER}`, 'iu');
+/**
+ * Hundredths of the first amount in a line, written with the currency's `digits` decimals (household/currency.ts), at
+ * most any amount's ceiling; or null. An amount with a thousandth is null too (`amountBelow` says so).
+ */
+export function amountFinder(m: Money, digits: number): (s: string) => number | null {
+  const read = amountReader(m, digits);
+  return (s) => { const c = read(s); return c === 'below' ? null : c; };
+}
+
+/** Whether the first amount in a line has a thousandth (`1.255` in a currency with three decimals): why it is not read, said as such. */
+export function amountBelow(m: Money, digits: number): (s: string) => boolean {
+  const read = amountReader(m, digits);
+  return (s) => read(s) === 'below';
+}
+
+/** Whether a line holds an amount at all (a symbol and a digit, or an amount with the currency's decimals and a symbol after it). */
+export function amountTest(m: Money, digits: number): (s: string) => boolean {
+  const re = new RegExp(`${alternation(m.before)}\\s?\\d|\\d${digits > 0 ? `[.,]\\d{${digits}}` : ''}\\s?${alternation(m.after)}${NOT_WORD_AFTER}`, 'iu');
   return (s) => re.test(s);
 }

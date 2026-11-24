@@ -122,7 +122,7 @@ schema: 1
 id: quillmere                 # its folder's name
 name: Quillmere Books
 locale: { currency: CHF, language: de }     # ISO 4217: it counts only while this is the household's currency
-money: { before: [CHF, Fr.], after: [CHF] }    # how amounts are written: "CHF 19.90", "19.90 CHF"
+money: { before: [CHF, Fr.], after: [CHF] }    # how amounts are written: "CHF 19.90", "19.90 CHF" (its currency's decimals, grouped or not)
 mail:
   domains: [quillmere.example]                 # From (and Sender) domains, exact
   dkim_domains: [quillmere.example]            # optional: the signing domains that count (default: domains)

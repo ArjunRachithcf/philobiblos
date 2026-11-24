@@ -35,7 +35,7 @@ export async function jobRoutes(app: FastifyInstance, cfg: Config, db: Db, deps:
     const sources = deps.prices ? [deps.prices] : enabledConnectors(db, deps.connectors).flatMap((e) => {
       const p = e.connector.prices;
       if (!p) return [];
-      return [p.kind === 'search_tiles' ? searchTiles(e.id, { money: e.connector.money, prices: p }, deps.egress) : markupPrices(e.id, { locale: e.connector.locale, prices: p }, deps.egress)];
+      return [p.kind === 'search_tiles' ? searchTiles(e.id, { money: e.connector.money, locale: e.connector.locale, prices: p }, deps.egress) : markupPrices(e.id, { locale: e.connector.locale, prices: p }, deps.egress)];
     });
     if (!sources.length) return { status: 'blocked', detail: 'no enabled bookshop has a price lookup: prices stay as they are' };
     const outs: Outcome[] = [];

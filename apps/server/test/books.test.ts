@@ -52,7 +52,7 @@ const noSleep = async () => {};
 // The search page of the invented example bookshop (connectors/quillmere/connector.yaml `prices`).
 const { textOf } = prices;
 type PriceSource = prices.PriceSource;
-const SHOP = { money: QUILLMERE.money, prices: QUILLMERE.prices as SearchTiles };
+const SHOP = { money: QUILLMERE.money, locale: QUILLMERE.locale, prices: QUILLMERE.prices as SearchTiles };
 const TILES = prices.tileRules(SHOP);
 const parseTiles = (html: string) => prices.parseTiles(html, TILES);
 const pickOffer = (tiles: prices.Tile[], title: string, authors: string[]) => prices.pickOffer(tiles, title, authors, TILES);
@@ -73,6 +73,20 @@ describe('the price page, read as text', () => {
     const tiles = parseTiles(html);
     expect(tiles.map((x) => x.externalId)).toEqual(['A1000000001', 'A1000000002', 'A1000000003', 'A1000000004']);
     expect(pickOffer(tiles, 'The Long Tide of Markets', ['Mira Okafor'])).toEqual({ externalId: 'A1000000003', priceC: 2490, availability: 'Lieferbar in 2-3 Tagen' });
+  });
+
+  it('a tile\'s price has its currency\'s decimals, of any size (philobiblos#62)', () => {
+    const tile = (price: string) => page([{ id: 'A1000000003', title: 'The Long Tide of Markets', author: 'Mira Okafor', format: 'Buch (Taschenbuch)', lang: 'Englisch', price }]);
+    const priceIn = (currency: string, price: string) => {
+      const rules = prices.tileRules({ ...SHOP, locale: { ...SHOP.locale, currency } });
+      return prices.pickOffer(prices.parseTiles(tile(price), rules), 'The Long Tide of Markets', ['Mira Okafor'], rules)?.priceC;
+    };
+    expect(priceIn('CHF', 'Fr. 12345.00')).toBe(1234500);
+    expect(priceIn('CHF', "Fr. 1'234.50")).toBe(123450);
+    expect(priceIn('JPY', 'Fr. 2,480')).toBe(248000);
+    expect(priceIn('JPY', 'Fr. 2,480.50')).toBeNull();
+    expect(priceIn('KWD', 'Fr. 1.250')).toBe(125);
+    expect(priceIn('KWD', 'Fr. 1.255')).toBeNull();
   });
 
   it('another author, or no print edition: no offer', () => {

@@ -290,8 +290,15 @@ test('price limits in the household\'s currency, and a currency without decimals
   await expect(page.getByText(/^Amounts are in/)).toContainText('JPY');
   await expect(page.getByText(/^Amounts are in/)).toContainText(/2,500\b(?![.,]\d)/);
   await expect(page.getByText(/^Amounts are in/)).toContainText(/4,000\b(?![.,]\d).*6,000\b(?![.,]\d)/);
+  // Three decimals are kept as hundredths (philobiblos#62): Settings says so, and a thousandth is refused, never rounded.
+  await page.getByLabel('The household’s currency').selectOption('KWD');
+  await expect(page.getByText(/written with three decimals/)).toBeVisible();
+  await page.getByLabel(/^An unknown price counts as/).fill('1.255');
+  await page.getByRole('button', { name: 'Save the currency' }).click();
+  await expect(page.getByRole('alert')).toContainText('kept to hundredths');
   // Back as it was, for the tests after this one.
   await page.getByLabel('The household’s currency').selectOption('CHF');
+  await expect(page.getByText(/written with three decimals/)).toHaveCount(0);
   await page.getByLabel(/^An unknown price counts as/).fill('25');
   await page.getByRole('button', { name: 'Save the currency' }).click();
   await expect(page.getByText(/^Amounts are in/)).toContainText(/CHF\s25/);

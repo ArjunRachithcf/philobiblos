@@ -10,8 +10,9 @@
 import { priceAsks, priceUrlShape, type Connector, type SearchTiles } from '@philobiblos/contracts/connector';
 import { bookIsbn } from './isbn';
 import type { Egress } from '../net/egress';
-import { norm, parsePriceC } from '../seed/import';
-import { alternation, contains, literal } from '../connectors/text';
+import { norm } from '../seed/import';
+import { alternation, amountFinder, contains, literal } from '../connectors/text';
+import { currencyDigits } from '../household/currency';
 import { hundredths, isType, ldBlocks, list, node, schemaNodes, text, type LdNode } from '../schemaorg/jsonld';
 
 export interface Offer { externalId: string | null; priceC: number | null; availability: string | null }
@@ -25,14 +26,14 @@ export interface PriceSource {
 }
 
 /** How a connector's search page reads: its `prices` and its `money`, as the fixed shapes below. */
-export interface TileRules { host: string; article: RegExp; print: (s: string) => boolean; want: (s: string) => boolean; other: (s: string) => boolean; price: RegExp; availability: RegExp }
+export interface TileRules { host: string; article: RegExp; print: (s: string) => boolean; want: (s: string) => boolean; other: (s: string) => boolean; price: (s: string) => number | null; availability: RegExp }
 
 /**
  * The shapes, each built from the connector's words as literals (connectors/text.ts): an article link is
  * `href="[https://<host>]<path><prefix><digits>…"`; an amount is `<symbol> 12.90`; availability is a phrase, then
  * optionally a joiner, up to 12 digits, dots, dashes or spaces, and a unit (`Ships in 2-3 days`).
  */
-export function tileRules(c: Pick<Connector, 'money'> & { prices: SearchTiles }): TileRules {
+export function tileRules(c: Pick<Connector, 'money' | 'locale'> & { prices: SearchTiles }): TileRules {
   const p = c.prices;
   const host = new URL(priceUrlShape(p.url)).hostname;
   const [lo, hi] = p.article.id_digits;
@@ -41,7 +42,8 @@ export function tileRules(c: Pick<Connector, 'money'> & { prices: SearchTiles })
     host,
     article: new RegExp(`href="(?:https://${literal(host)})?${literal(p.article.path)}(${literal(p.article.id_prefix)}\\d{${lo},${hi}})[^"<>]{0,200}"`, 'g'),
     print: contains(p.print_formats), want: contains(p.want_languages), other: contains(p.other_languages),
-    price: new RegExp(`${alternation(c.money.before)}\\s{0,3}(\\d{1,4}[.,]\\d{2})`, 'iu'),
+    // The currency's own decimals (philobiblos#62); one with a thousandth is no price Philobiblos keeps.
+    price: amountFinder({ before: c.money.before, after: [] }, currencyDigits(c.locale.currency)),
     availability: new RegExp(`(?<![\\p{L}\\p{N}])(${alternation(av.phrases)}(?: ${alternation(av.joiners)} [\\d.\\- ]{1,12}${alternation(av.units)}?)?)`, 'u'),
   };
 }
@@ -110,8 +112,7 @@ export function pickOffer(tiles: Tile[], title: string, authors: string[], r: Ti
   const matching = tiles.filter((t) => norm(t.title) === want && r.print(t.text) && (!surname || norm(t.text).includes(surname)) && !r.other(t.text));
   const best = matching.find((t) => r.want(t.text)) ?? matching[0];
   if (!best) return null;
-  const price = r.price.exec(best.text);
-  return { externalId: best.externalId, priceC: price ? parsePriceC(price[1]) : null, availability: r.availability.exec(best.text)?.[1]?.trim() ?? null };
+  return { externalId: best.externalId, priceC: r.price(best.text), availability: r.availability.exec(best.text)?.[1]?.trim() ?? null };
 }
 
 /** The search URL for a book: its title and first author, form-encoded (spaces as +), in the one place the template leaves. */
@@ -125,7 +126,7 @@ function isbnUrl(template: string, isbn13: string | null | undefined): string | 
 }
 
 /** A connector's price lookup: its search page, asked with the title and first author, through the one egress client. */
-export function searchTiles(id: string, c: Pick<Connector, 'money'> & { prices: SearchTiles }, egress: Egress): PriceSource {
+export function searchTiles(id: string, c: Pick<Connector, 'money' | 'locale'> & { prices: SearchTiles }, egress: Egress): PriceSource {
   const r = tileRules(c);
   return {
     id,

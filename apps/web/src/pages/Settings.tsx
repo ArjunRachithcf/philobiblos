@@ -10,10 +10,8 @@ import { AiSettings } from './AiSettings';
 import { Bookshops } from './Bookshops';
 import { Mailbox } from './Mailbox';
 import { Notifications } from './Notifications';
-import { amountExample, asTyped, typed, unit, useMoney } from '../money';
+import { asTyped, budgetPatch, moneyPatch, unit, useMoney, wholeUnits } from '../money';
 
-/** A budget's end as its field shows it: whole units of the household's currency. */
-const whole = (c: number) => String(Math.round(c / 100));
 /** The most digits a whole amount may have (packages/contracts money.ts AMOUNT_CEILING_C: 10,000,000,000). */
 const WHOLE_DIGITS = 11;
 
@@ -26,24 +24,28 @@ export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }
   const [max, setMax] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState('');
+  // Every currency the server knows, with the decimals it counts (philobiblos#62): Settings' one source for them.
+  // Null until GET /settings answers; empty if it could not (the choice is then a field for the code).
+  const [known, setKnown] = useState<{ code: string; digits: number }[] | null>(null);
 
   useEffect(() => {
     api<S>('/settings').then((s) => {
       const b = { min: s.budget?.min ?? 0, max: s.budget?.max ?? 0 };
-      setBudget(b); setMin(whole(b.min)); setMax(whole(b.max));
-    }, (e) => setError(message(e)));
+      setBudget(b); setMin(wholeUnits(b.min)); setMax(wholeUnits(b.max));
+      setKnown(s.money?.currencies ?? []);
+    }, (e) => { setError(message(e)); setKnown([]); });
   }, []);
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null); setOk('');
-    const next = { min: typed(min, null), max: typed(max, null) };
-    if (!/^\d+$/.test(min) || !/^\d+$/.test(max)) return setError('Enter whole amounts, for example 100.');
-    if (next.min === null || next.max === null) return setError('Enter at most 10,000,000,000.');
-    if (next.min > next.max) return setError('The lower end is above the upper end.');
+    if (!budget) return;
+    // Only an end that was changed is sent: one kept from before is never rounded (philobiblos#62).
+    const p = budgetPatch(min, max, budget);
+    if ('error' in p) return setError(p.error);
     try {
-      await api('/settings', { method: 'PATCH', body: { budget: next } });
-      setBudget(next as { min: number; max: number }); setOk('The budget is saved. It applies from the next month’s order.');
+      if (Object.keys(p.body).length) await api('/settings', { method: 'PATCH', body: { budget: p.body } });
+      setBudget({ ...budget, ...p.body }); setOk('The budget is saved. It applies from the next month’s order.');
     } catch (err) { setError(message(err)); }
   };
 
@@ -80,7 +82,7 @@ export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }
             </>
           )}
         </section>
-        <HouseholdMoney admin={admin} reload={reload} />
+        {known && <HouseholdMoney admin={admin} reload={reload} known={known} />}
         <Bookshops admin={admin} />
         <Mailbox admin={admin} />
         <OrderPlaces admin={admin} />
@@ -94,61 +96,58 @@ export function Settings({ me, reload }: { me: Me; reload: () => Promise<void> }
 }
 
 /**
- * Every code this browser can write amounts in, with its name in the reader's language (for the choice), and always the
- * household's own. A browser without the list gets a field for the code instead (the server checks it either way).
+ * Every code the server knows (GET /settings), with its name in the reader's language where this browser has one (for
+ * the choice), and always the household's own. Before the list arrives there is a field for the code instead (the
+ * server checks it either way).
  */
-function currencies(own: string | null | undefined): { code: string; name: string }[] {
-  try {
-    const names = new Intl.DisplayNames(undefined, { type: 'currency' });
-    const codes = Intl.supportedValuesOf('currency');
-    return [...(own && !codes.includes(own) ? [own] : []), ...codes].map((code) => ({ code, name: names.of(code) ?? code }));
-  } catch { return []; }
+function currencies(known: { code: string }[], own: string | null | undefined): { code: string; name: string }[] {
+  if (!known.length) return [];
+  let names: Intl.DisplayNames | null = null;
+  try { names = new Intl.DisplayNames(undefined, { type: 'currency' }); } catch { /* codes alone */ }
+  const codes = known.map((c) => c.code);
+  return [...(own && !codes.includes(own) ? [own] : []), ...codes].map((code) => ({ code, name: names?.of(code) ?? code }));
 }
 
 /**
  * The household's currency and what a price nobody knows counts as (philobiblos#27). Every amount is in the currency;
  * a bookshop counts only in it, so it is chosen before one is enabled. Changing it converts nothing.
  */
-function HouseholdMoney({ admin, reload }: { admin: boolean; reload: () => Promise<void> }) {
+function HouseholdMoney({ admin, reload, known }: { admin: boolean; reload: () => Promise<void>; known: { code: string; digits: number }[] }) {
   const id = useId();
-  const { currency, unknownPrice, priceLimits, format } = useMoney();
+  const { currency, digits, unknownPrice, priceLimits, format } = useMoney();
+  const shown = (c: number | null | undefined) => (c == null ? '' : asTyped(c, digits));
   const [code, setCode] = useState(currency ?? '');
-  const [unknown, setUnknown] = useState(unknownPrice == null ? '' : asTyped(unknownPrice, currency));
+  const [unknown, setUnknown] = useState(shown(unknownPrice));
   // The scores' price limits (philobiblos#40): the household's own, or following the unknown price.
   const [own, setOwn] = useState(priceLimits?.own ?? false);
-  const [high, setHigh] = useState(priceLimits?.high == null ? '' : asTyped(priceLimits.high, currency));
-  const [max, setMax] = useState(priceLimits?.max == null ? '' : asTyped(priceLimits.max, currency));
+  const [high, setHigh] = useState(shown(priceLimits?.high));
+  const [max, setMax] = useState(shown(priceLimits?.max));
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState('');
-  const [list] = useState(() => (admin ? currencies(currency) : []));
+  const list = admin ? currencies(known, currency) : [];
   useEffect(() => { setCode(currency ?? ''); }, [currency]);
-  useEffect(() => { if (unknownPrice != null) setUnknown(asTyped(unknownPrice, currency)); }, [unknownPrice, currency]);
+  useEffect(() => { if (unknownPrice != null) setUnknown(asTyped(unknownPrice, digits)); }, [unknownPrice, digits]);
   useEffect(() => {
     if (!priceLimits) return;
     setOwn(priceLimits.own ?? false);
-    setHigh(priceLimits.high == null ? '' : asTyped(priceLimits.high, currency));
-    setMax(priceLimits.max == null ? '' : asTyped(priceLimits.max, currency));
-  }, [priceLimits?.own, priceLimits?.high, priceLimits?.max, currency]);
+    setHigh(shown(priceLimits.high));
+    setMax(shown(priceLimits.max));
+  }, [priceLimits?.own, priceLimits?.high, priceLimits?.max, digits]);
+  // The decimals of a currency as the server counts them: the household's from /me, any other from Settings' list.
+  const digitsOf = (c: string | null | undefined) => (c === currency ? digits : known.find((k) => k.code === c)?.digits ?? 2);
+  const three = digitsOf(code || currency) > 2;
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null); setOk('');
-    // Typed in the currency being saved: its own decimals, none in one without them (money.ts).
-    const cur = code || currency;
-    const u = typed(unknown, cur);
-    if (u === null) return setError(`Enter the unknown price as an amount, for example ${amountExample(cur)}.`);
-    const body: { currency?: string; unknownPrice: number; priceLimits: { high: number; max: number } | null } = { unknownPrice: u, priceLimits: null };
-    if (own) {
-      const h = typed(high, cur);
-      const m = typed(max, cur);
-      if (h === null || m === null) return setError(`Enter both price limits as amounts, for example ${amountExample(cur)}.`);
-      if (h > m) return setError('The price above which a book is dear is above the one that leaves it out.');
-      body.priceLimits = { high: h, max: m };
-    }
-    if (code && code !== currency) body.currency = code;
+    // Only what was changed is sent, typed in the currency being saved with its own decimals (money.ts moneyPatch).
+    const p = moneyPatch({ code, unknown, own, high, max }, { currency, unknownPrice, priceLimits }, digitsOf);
+    if ('error' in p) return setError(p.error);
     try {
-      await api('/settings', { method: 'PATCH', body: { money: body } });
-      await reload();
+      if (Object.keys(p.body).length) {
+        await api('/settings', { method: 'PATCH', body: { money: p.body } });
+        await reload();
+      }
       setOk('Saved.');
     } catch (err) { setError(message(err)); }
   };
@@ -199,6 +198,7 @@ function HouseholdMoney({ admin, reload }: { admin: boolean; reload: () => Promi
               </div>
             )}
           </fieldset>
+          {three && <p className="footnote">{code || currency} is written with three decimals; Philobiblos keeps amounts to hundredths, so an amount’s third decimal is 0 (1.250). One with a thousandth (1.255) is refused here, in a CSV, and in a bookshop’s mail or markup: it is never rounded.</p>}
           {error && <Notice kind="error">{error}</Notice>}
           {ok && <Notice kind="ok">{ok}</Notice>}
           <div className="btn-row"><button type="submit" className="btn btn-primary">Save the currency</button></div>

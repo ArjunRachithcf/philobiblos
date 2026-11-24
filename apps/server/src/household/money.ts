@@ -10,14 +10,15 @@ import { AMOUNT_CEILING_C, wholeIn } from '@philobiblos/contracts/money';
 import { derivedPriceLimits } from '@philobiblos/scoring';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { validCurrency } from './currency';
+import { currencyDigits, validCurrency } from './currency';
 
 /** What an unknown price counts as until an admin says otherwise: 25 of the household's currency (ADR 0008). */
 export const DEFAULT_UNKNOWN_PRICE_C = 2500;
 
 /** The limits in force (null = none) and whether they are the household's own or follow its unknown price. */
 export interface PriceLimitsView { high: number | null; max: number | null; own: boolean }
-export interface Money { currency: string | null; unknownPrice: number; priceLimits: PriceLimitsView }
+/** `digits`: the decimals amounts in its currency are written with (household/currency.ts, the screens' one source). */
+export interface Money { currency: string | null; unknownPrice: number; priceLimits: PriceLimitsView; digits: number }
 
 export class MoneyError extends Error {
   constructor(readonly status: 400 | 409, message: string) { super(message); }
@@ -29,7 +30,8 @@ export function getMoney(db: Db): Money {
   const unknownPrice = r?.unknownPrice ?? DEFAULT_UNKNOWN_PRICE_C;
   const own = r?.high != null && r.max != null ? { highC: r.high, maxC: r.max } : null;
   const l = own ?? derivedPriceLimits(unknownPrice);
-  return { currency: r?.currency ?? null, unknownPrice, priceLimits: { high: l.highC, max: l.maxC, own: own !== null } };
+  const currency = r?.currency ?? null;
+  return { currency, unknownPrice, priceLimits: { high: l.highC, max: l.maxC, own: own !== null }, digits: currencyDigits(currency) };
 }
 
 /** The household's own price limits for packages/scoring (householdWeights), or null when they follow its unknown price. */
@@ -40,7 +42,7 @@ export function ownPriceLimits(m: Money): { highC: number; maxC: number } | null
 /** An amount an admin sets: whole hundredths from 0 to the ceiling, and whole in the household's currency (none: any). */
 export function amountProblem(v: unknown, currency: string | null): string | null {
   if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > AMOUNT_CEILING_C) return `whole hundredths from 0 to ${AMOUNT_CEILING_C}`;
-  if (!wholeIn(v as number, currency)) return `an amount ${currency} can write: whole units, or only the decimals it has`;
+  if (!wholeIn(v as number, currencyDigits(currency))) return `an amount ${currency} can write: whole units, or only the decimals it has`;
   return null;
 }
 

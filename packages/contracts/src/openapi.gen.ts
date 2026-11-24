@@ -1094,7 +1094,7 @@ export interface components {
                 markup: boolean;
             };
         };
-        /** @description hundredths of the household's currency (HouseholdMoney), 0 to 1,000,000,000,000 (10,000,000,000 of any currency: arithmetic's ceiling, not a typo guard). Hundredths are a fixed scale, not the currency's minor unit: in a currency without decimals an amount is whole units (a multiple of 100), written and typed without decimals (Intl's digits for the currency, at most two); one an admin sets that is not is refused (400) */
+        /** @description hundredths of the household's currency (HouseholdMoney), 0 to 1,000,000,000,000 (10,000,000,000 of any currency: arithmetic's ceiling, not a typo guard). Hundredths are a fixed scale, not the currency's minor unit: in a currency without decimals an amount is whole units (a multiple of 100), written and typed without decimals (HouseholdMoney.digits: the server's Intl count for the currency); one an admin sets that is not is refused (400). In a currency with three decimals, amounts are still hundredths: one written with a thousandth is refused, never rounded */
         Money: number;
         Me: {
             person?: components["schemas"]["Person"];
@@ -1117,6 +1117,13 @@ export interface components {
                 /** @description the household's own limits; false while they follow its unknown price */
                 readonly own?: boolean;
             } | null;
+            /** @description the decimals amounts in its currency are written and typed with, as this server's Intl counts them (2 without a currency): the screens' one source, never their own Intl, whose count can differ (philobiblos#62). Amounts are kept in hundredths whatever it is: with 0, whole units; with 3, an amount's third decimal is 0 (a thousandth is refused everywhere, never rounded) */
+            readonly digits: number;
+            /** @description GET /settings only: every currency this server knows, with its digits, for Settings' choice of the household's (philobiblos#62) */
+            readonly currencies?: {
+                code: string;
+                digits: number;
+            }[];
         };
         Person: {
             id: string;

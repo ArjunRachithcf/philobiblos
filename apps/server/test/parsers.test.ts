@@ -15,7 +15,7 @@ import { SEALED } from '../src/routes/month';
 import type { MediaOutcome } from '../src/media/client';
 import { MediaUnavailable } from '../src/media/client';
 import { TEST_SEALING_KEY, household } from './helpers';
-import { CFG, CONNECTORS, HOUSEHOLD, RULES, SEALERS, SHOPS, fakeBox, message, resolver, signed } from './mailkit';
+import { CFG, CONNECTORS, HOUSEHOLD, QUILLMERE, RULES, SEALERS, SHOPS, fakeBox, message, resolver, signed } from './mailkit';
 
 // The parsers with the invented example bookshop's rules (connectors/quillmere/connector.yaml).
 const { PARSERS } = parse;
@@ -201,6 +201,47 @@ describe('the shop\'s order mails and invoices', () => {
     expect(Date.now() - t0).toBeLessThan(1500);
     expect(htmlLines('a<br>b</p>c<brx>d<BR/>e')).toBe('a\nb\nc d\ne');
     expect(ownLines(`CHF 1.00 ${'x'.repeat(1001)}`)).toBeNull();
+  });
+});
+
+describe('amounts with the connector\'s currency\'s own decimals (philobiblos#62)', () => {
+  /** The example bookshop's rules with its amounts in another currency, written with these symbols. */
+  const inCurrency = (currency: string, before: string[], after: string[]) =>
+    parse.mailRules({ ...QUILLMERE, locale: { ...QUILLMERE.locale, currency }, money: { before, after } });
+  const YEN = inCurrency('JPY', ['¥', 'JPY'], ['JPY']);
+  const DINAR = inCurrency('KWD', ['KWD'], ['KWD']);
+  const quote = (price: string, r: parse.MailRules) => parse.parseQuote(`Author: Mira Okafor\nTitle: The Long Tide of Markets\nPrice: ${price}\n`, [], r);
+
+  it('a quote in a currency without decimals: whole units, grouped or not; a fraction fails closed', () => {
+    expect(quote('¥1,980', YEN)).toMatchObject({ kind: 'bookshop_quote', lines: [{ priceC: 198000 }] });
+    expect(quote('JPY 24800', YEN)).toMatchObject({ kind: 'bookshop_quote', lines: [{ priceC: 2480000 }] });
+    expect(quote('¥1,980.50', YEN)).toMatchObject({ kind: 'unknown_layout' });
+    // A bullet line's commas between a book's parts never cut its amount.
+    expect(parse.parseQuote('- Reed, A Map of Small Rivers, ¥2,400, delivery time 1-3 days\n', [], YEN)).toMatchObject({ kind: 'bookshop_quote', lines: [{ title: 'A Map of Small Rivers', priceC: 240000, delivery: '1-3 days' }] });
+  });
+
+  it('two decimals past the old cap of 9999.99, grouped; a group a currency with two decimals cannot place fails closed', () => {
+    expect(parseQuote('Author: Mira Okafor\nTitle: The Long Tide of Markets\nPrice: CHF 12\'345.00\n', [])).toMatchObject({ kind: 'bookshop_quote', lines: [{ priceC: 1234500 }] });
+    expect(parseQuote('Author: Mira Okafor\nTitle: The Long Tide of Markets\nPrice: CHF 1,980\n', [])).toMatchObject({ kind: 'unknown_layout' });
+  });
+
+  it('three decimals: 1.250 reads as hundredths; a thousandth fails closed, and says it is below hundredths', () => {
+    expect(quote('KWD 1.250', DINAR)).toMatchObject({ kind: 'bookshop_quote', lines: [{ priceC: 125 }] });
+    expect(quote('KWD 1.255', DINAR)).toMatchObject({ kind: 'unknown_layout', reason: parse.BELOW_HUNDREDTHS });
+    expect(parse.parseShop('online_order', '1', 'Buch The Quiet Hedgehog von Lena Paulsen | KWD 3.105', [], DINAR)).toMatchObject({ kind: 'unknown_layout', reason: parse.BELOW_HUNDREDTHS });
+    const rows = (price: string, total: string) => [['9780000000002', 'The Long Tide of Markets', '1 ST', price, `${price} KWD`, '0 %'], ['Total', `${total} KWD`]];
+    expect(parse.parseInvoice('1', rows('3.100', '3.100'), false, [], DINAR)).toMatchObject({ kind: 'invoice', totalC: 310, lines: [{ priceC: 310, totalC: 310 }] });
+    expect(parse.parseInvoice('1', rows('3.105', '3.105'), false, [], DINAR)).toMatchObject({ kind: 'unknown_layout', reason: parse.BELOW_HUNDREDTHS });
+    // A stated total with a thousandth is never passed over for the rows' sum.
+    expect(parse.parseInvoice('1', rows('3.100', '3.105'), false, [], DINAR)).toMatchObject({ kind: 'unknown_layout', reason: parse.BELOW_HUNDREDTHS });
+  });
+
+  it('an online order and an invoice in a currency without decimals, of any size', () => {
+    expect(parse.parseShop('online_order', '1', 'Buch The Quiet Hedgehog von Lena Paulsen | 2 x ¥ 12,800', [], YEN)).toMatchObject({ kind: 'online_order', lines: [{ qty: 2, priceC: 1280000 }] });
+    expect(parse.parseShop('online_order', '1', 'Buch The Quiet Hedgehog von Lena Paulsen | ¥ 12,80', [], YEN)).toMatchObject({ kind: 'unknown_layout' });
+    const rows = [['9780000000002', 'The Long Tide of Markets', '1 ST', '12,800', '12,800 JPY', '10 %'], ['Versandkosten', '500 JPY'], ['Total', '13,300 JPY']];
+    expect(parse.parseInvoice('1', rows, false, [], YEN)).toMatchObject({ kind: 'invoice', totalC: 1330000, lines: [{ priceC: 1280000, totalC: 1280000 }] });
+    expect(parseInvoice('1', [['9780000000002', 'The Long Tide of Markets', '1 ST', '12345.00', '12345.00 CHF', '2.6 %']], false, [])).toMatchObject({ kind: 'invoice', totalC: 1234500 });
   });
 });
 

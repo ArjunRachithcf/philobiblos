@@ -77,7 +77,7 @@ export function App() {
       </header>
       <main className="page" id="main">
         {/* The household's currency for every amount on the screens (money.ts); Settings changes it, then /me is read again. */}
-        <MoneyContext.Provider value={{ currency: me?.money?.currency ?? null, unknownPrice: me?.money?.unknownPrice ?? null, priceLimits: me?.money?.priceLimits ?? null }}>
+        <MoneyContext.Provider value={{ currency: me?.money?.currency ?? null, digits: me?.money?.digits ?? 2, unknownPrice: me?.money?.unknownPrice ?? null, priceLimits: me?.money?.priceLimits ?? null }}>
         {!me ? <p className="sr-only" role="status">Loading</p>
           : route === '/month' ? <ThisMonth me={me} go={go} />
           : route === '/brain' ? <Brain me={me} go={go} />

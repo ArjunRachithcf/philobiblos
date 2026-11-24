@@ -102,7 +102,7 @@ describe.each(shipped.map((c) => [c.id, c] as const))('connector %s', (id, loade
       expect(pickProduct(schemaNodes(ldBlocks(f.page!)).nodes, f.title!, f.authors ?? [], c.locale.currency, by)).toEqual(f.expect);
       return;
     }
-    const rules = tileRules({ money: c.money, prices: p });
+    const rules = tileRules({ money: c.money, locale: c.locale, prices: p });
     expect(pickOffer(parseTiles(f.page!, rules), f.title!, f.authors ?? [], rules)).toEqual(f.expect);
   });
 
@@ -118,7 +118,7 @@ describe.each(shipped.map((c) => [c.id, c] as const))('connector %s', (id, loade
       classify(r, 'x@example.org', `${'a'.repeat(250)} ${'1 '.repeat(5000)}`);
     }
     if (c.prices?.kind === 'search_tiles') {
-      const rules = tileRules({ money: c.money, prices: c.prices });
+      const rules = tileRules({ money: c.money, locale: c.locale, prices: c.prices });
       parseTiles(`<a href="${c.prices.article.path}${c.prices.article.id_prefix}${'1'.repeat(40)}`.repeat(20_000), rules);
       rules.availability.exec(`${'1'.repeat(100)} `.repeat(10_000));
     }
