@@ -882,3 +882,37 @@ describe('a typed purchase mailed in two shipments: each mail waits as its part 
     }
   });
 });
+
+describe('a mail still waiting decides only whether another is held, never what is counted or offered (philobiblos#64, round 2)', () => {
+  const at = (db: W, n: number) => mailItemId(db.select().from(t.mailSeen).where(eq(t.mailSeen.kind, 'invoice')).all()[n]!.messageId);
+  const tides = (db: W) => copies(db).filter((c) => c[0] === 'b_tide').length;
+  async function world2() {
+    const db = world();
+    typed(db, { lines: [tide(), hedgehog()] });
+    await mailInvoice(db, '99001122');
+    await mailInvoice(db, '99001133', { uid: 2, at: new Date(NOW.getTime() + 2 * 3600_000), rows: [TIDE_ROW, HEDGEHOG_ROW] });
+    return db;
+  }
+
+  it('typed T+H; mailed T, then T+H: both wait; the second\'s card is the same invoice; the same to it, then another purchase to the first: two copies of T', async () => {
+    const db = await world2();
+    const card = (n: number) => items(db).find((x) => x.id === at(db, n))!;
+    expect(card(1).typed).toMatchObject({ totalC: 3190 });
+    expect(card(1).typed).not.toHaveProperty('more');
+    expect(card(0).typed).toMatchObject({ totalC: 3190, part: true });
+    answerTyped(db, 'p_sam', at(db, 1), { answer: 'same' }, LATER);
+    expect(tides(db)).toBe(1);
+    expectError(() => answerTyped(db, 'p_sam', at(db, 0), { answer: 'same' }, LATER), InboxError, 409, /no longer fits/);
+    answerTyped(db, 'p_sam', at(db, 0), { answer: 'another' }, LATER);
+    expect(tides(db)).toBe(2);
+  });
+
+  it('the other order: the same to the first (T), then the same to the second: only its other copy of T counts, two copies of T', async () => {
+    const db = await world2();
+    answerTyped(db, 'p_sam', at(db, 0), { answer: 'same' }, LATER);
+    expect(items(db).find((x) => x.id === at(db, 1))!.typed).toMatchObject({ totalC: 1200, more: 1 });
+    answerTyped(db, 'p_sam', at(db, 1), { answer: 'same' }, LATER);
+    expect(tides(db)).toBe(2);
+    expect(copies(db).filter((c) => c[0] === 'b_hedgehog')).toHaveLength(1);
+  });
+});

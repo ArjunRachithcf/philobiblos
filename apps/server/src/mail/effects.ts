@@ -375,6 +375,8 @@ export function maybeTyped(tx: Tx, m: { connector: string; number: string | null
 /**
  * What of a typed entry is left (`entryLeft`) less what each mail waiting in the Inbox as maybe it, other than `key`,
  * would share with it if answered the same (philobiblos#64): a purchase mailed in two parts waits as two parts of it.
+ * For deciding whether a mail is held only: what is counted, and what a question offers, is against `entryLeft` (an
+ * unanswered mail counts nothing yet).
  */
 export function entryWaitLeft(tx: Tx, e: { id: string; linesJson: string; duplicateOf: string | null; undoJson: string | null }, key: string, links: MailLinks = mailLinks(tx)): Part[] {
   let lines = entryLeft(tx, e, links);

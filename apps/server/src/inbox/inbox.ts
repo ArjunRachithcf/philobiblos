@@ -18,7 +18,7 @@ import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
-import { entryWaitLeft, invoiceLines, invoiceOrders, mailEntries, mailItemId, mailLeft, matchBook, maybeTyped, overlap, receive, type Part } from '../mail/effects';
+import { entryLeft, invoiceLines, invoiceOrders, mailEntries, mailItemId, mailLeft, matchBook, maybeTyped, overlap, receive, type Part } from '../mail/effects';
 import { MONTHS } from '../month/order-mail';
 import { norm } from '../seed/import';
 import { foundBooks, keptFiles, ownShare, shareAiNote, type ShareRow } from '../shares/shares';
@@ -391,7 +391,8 @@ function maybeTypedItem(db: Db, r: MailRow, p: Record<string, unknown>, entryId:
   // What of each is left to ask about: a mail answered the same as another typed one already (philobiblos#64) shows
   // only the books that one does not count, and the typed one only what no other mail counts.
   const mine = mailLeft(db as unknown as Tx, r) ?? [];
-  const left = e ? entryWaitLeft(db as unknown as Tx, e, r.messageId) : [];
+  // Against what answered mails count only: a mail still waiting decides nothing here, only whether a mail is held.
+  const left = e ? entryLeft(db as unknown as Tx, e) : [];
   const o = e ? overlap(left, mine) : null;
   // The copies the same would add: a line it cannot place waits in the Inbox after the answer, and is not one of them.
   const more = o?.rest.reduce((n, l) => n + (l.bookId ? l.qty : 0), 0) ?? 0;
@@ -441,7 +442,8 @@ export function answerTyped(db: Db, me: string, id: string, body: unknown, now =
       // Only what it holds beyond the typed one counts; with nothing beyond it (the same, or part of it), nothing. The
       // copies they share are kept, so the rest may be asked about as another entry, never counted twice.
       const e = tx.select().from(t.orderEntry).where(eq(t.orderEntry.id, entry)).get();
-      const o = e ? overlap(entryWaitLeft(tx, e, row.messageId), mine) : null;
+      // What answered mails count only (mail/effects.ts entryLeft): a mail still waiting counts nothing yet.
+      const o = e ? overlap(entryLeft(tx, e), mine) : null;
       // With copies of the mail left that the typed one no longer fits, the same would count them twice, or drop them.
       if (!o && mine.some((l) => l.bookId)) throw new InboxError(409, 'the typed invoice no longer fits this mail: answer another purchase, or check the typed one');
       if (typeof p.duplicateOf !== 'string') p.duplicateOf = `entry:${entry}`;
