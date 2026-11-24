@@ -32,6 +32,14 @@ export interface Connector {
   prices?: SearchTiles | { kind: 'jsonld'; url: string };
 }
 
+/**
+ * What a price lookup sends its host: a book's title and first author (`{query}`), or its ISBN-13 alone (`{isbn}`, a
+ * jsonld lookup only), the one placeholder its URL has.
+ */
+export const priceAsks = (url: string): 'title' | 'isbn' => (url.includes('{isbn}') ? 'isbn' : 'title');
+/** The URL with its placeholder filled by a harmless word: what it reads as, to check or to show its host. */
+export const priceUrlShape = (url: string): string => url.replace(/\{(?:query|isbn)\}/, 'q');
+
 /** A price lookup on the shop's search page, read as text: its result tiles. */
 export interface SearchTiles {
   kind: 'search_tiles';

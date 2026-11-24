@@ -143,6 +143,18 @@ describe('the prices job', () => {
     expect(booksNeedingPrices(db, 'quillmere', new Date(NOW.getTime() + 8 * 86_400_000)).length).toBe(books.length);
   });
 
+  it('a source that asks by ISBN is asked only for books with one; the rest are left for another source', async () => {
+    const db = household();
+    db.update(t.book).set({ isbn13: '9780000000002' }).where(eq(t.book.id, 'b_tide')).run();
+    const at = NOW.toISOString();
+    db.insert(t.book).values({ id: 'b_plain', title: 'A Map of Small Rivers', authorsJson: '["A. Reed"]', audience: 'adult', normKey: 'rivers', createdAt: at }).run();
+    db.insert(t.candidate).values({ personId: 'p_alex', bookId: 'b_plain', origin: 'wishlist', addedAt: at, touchedAt: at }).run();
+    const asked: (string | null | undefined)[] = [];
+    await refreshPrices(db, { id: 'larkspur', asks: 'isbn', find: async (b) => { asked.push(b.isbn13); return null; } }, { now: () => NOW, sleep: noSleep });
+    expect(asked).toEqual(['9780000000002']);
+    expect(db.select().from(t.bookOffer).all().map((o) => o.bookId)).toEqual(['b_tide']);
+  });
+
   it('not found this time: a price seen before stays', async () => {
     const db = household();
     db.insert(t.bookOffer).values({ bookId: 'b_tide', source: 'quillmere', externalId: 'A5', priceC: 1990, seenAt: '2026-01-01T00:00:00Z' }).run();

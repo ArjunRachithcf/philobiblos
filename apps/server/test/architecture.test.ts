@@ -54,17 +54,42 @@ describe('no core module names a bookshop or a mail provider', () => {
   });
 
   it('no core module names a currency: amounts are in the household\'s (Settings), a connector\'s are its own', () => {
-    // ISO 4217 codes as words (case as written), and the signs a currency is written with.
-    const code = new RegExp(`\\b(?:${Intl.supportedValuesOf('currency').join('|')})\\b`);
+    // ISO 4217 codes, in any case, as a word or as a part of a name (`priceEur`, `CHF_LIMIT`, `const eur`), and the
+    // signs a currency is written with.
+    const codes = new Set(Intl.supportedValuesOf('currency').map((c) => c.toLowerCase()));
     const signs = /[€£¥₹₩₽₺₪]|\bFr\.|\bUS\$/;
-    // Codes that are also ordinary words (a JPEG's start of scan, SQL's ALL, TRY): never taken for money.
-    const notMoney = new Set(['ALL', 'BOB', 'CUP', 'GEL', 'MAD', 'MOP', 'PEN', 'SOS', 'TOP', 'TRY']);
-    // And a currency inside a name (`pricePerChf`), whatever its case, for the codes that are never a word.
-    const inName = /chf|usd|gbp|jpy/i;
+    // Codes that are also ordinary words or names (a JPEG's start of scan, SQL's ALL, TRY, a token's `aud`, a CSS `btn`):
+    // never taken for money.
+    const notMoney = new Set(['all', 'aud', 'bob', 'btn', 'cup', 'gel', 'mad', 'mop', 'pen', 'sos', 'top', 'try']);
+    const parts = (name: string) => name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').split(/[\s_$]+/).map((p) => p.toLowerCase());
     const hits = core().flatMap((f) => readFileSync(f, 'utf8').split('\n').flatMap((line, i) => {
-      const m = [...line.matchAll(new RegExp(code, 'g'))].find((x) => !notMoney.has(x[0])) ?? signs.exec(line) ?? inName.exec(line);
-      return m ? [`${relative(ROOT, f)}:${i + 1}: ${m[0]}`] : [];
+      const named = (line.match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []).flatMap(parts).find((p) => codes.has(p) && !notMoney.has(p));
+      const m = named ?? signs.exec(line)?.[0];
+      return m ? [`${relative(ROOT, f)}:${i + 1}: ${m}`] : [];
     }));
+    expect(hits).toEqual([]);
+  });
+
+  it('no core module holds the words of a language\'s mail: reply markers, shop words and month names are a connector\'s', () => {
+    // The parsers' words are each connector's (`mail.reply`, `summary`, `unavailable`, its layouts), so no list of them
+    // lives in the core: neither the shops' (every shipped connector's reply separators) nor these, in the languages
+    // shops write in. The order letter Compose writes is the household's, in the app's language (English): its month
+    // names are the one list of words of a language the core has, so English month names are not looked for.
+    const LANGUAGES = ['de', 'fr', 'it', 'es', 'nl', 'pt', 'sv', 'da', 'nb', 'pl'];
+    const monthsIn = (l: string) => Array.from({ length: 12 }, (_, m) => new Intl.DateTimeFormat(l, { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, m, 15))).toLowerCase());
+    const english = new Set(monthsIn('en'));
+    const MARKERS = ['original message', 'ursprüngliche nachricht', "message d'origine", 'messaggio originale', 'mensaje original', 'oorspronkelijk bericht',
+      'mensagem original', 'schrieb', 'a écrit', 'ha scritto', 'escribió', 'schreef', 'escreveu', 'gesendet', 'envoyé', 'inviato', 'enviado', 'verzonden',
+      'betreff', 'oggetto', 'asunto', 'onderwerp'];
+    const SHOP_WORDS = ['gesamt', 'summe', 'zwischensumme', 'rechnung', 'bestellung', 'lieferbar', 'vergriffen', 'versand', 'porto', 'mwst', 'rabatt',
+      'facture', 'commande', 'livraison', 'fattura', 'ordine', 'spedizione', 'factura', 'pedido', 'envío', 'bestelling', 'factuur', 'verzending'];
+    const separators = CONNECTORS.all.flatMap((c) => c.connector?.mail?.reply?.separators ?? []);
+    const words = [...new Set([...MARKERS, ...SHOP_WORDS, ...separators, ...LANGUAGES.flatMap(monthsIn).filter((m) => !english.has(m))].map((w) => w.toLowerCase()))];
+    const res = words.map((w) => [w, new RegExp(`(?<![\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u')] as const);
+    const hits = core().flatMap((f) => {
+      const text = readFileSync(f, 'utf8').toLowerCase();
+      return res.filter(([, re]) => re.test(text)).map(([w]) => `${relative(ROOT, f)}: ${w}`);
+    });
     expect(hits).toEqual([]);
   });
 

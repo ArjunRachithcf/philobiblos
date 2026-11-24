@@ -25,28 +25,29 @@ const refusedBy = (e: unknown) => e instanceof EgressError && (e.reason === 'off
 const why = (e: unknown) => (e instanceof EgressError ? e.message : 'unexpected answer');
 
 /** Books worth a price: candidates the household does not own, without an offer from this source in the last 7 days. */
-export function booksNeedingPrices(db: Db, source: string, now: Date) {
+export function booksNeedingPrices(db: Db, source: string, now: Date, asks: PriceSource['asks'] = 'title') {
   const owned = db.selectDistinct({ id: t.copy.bookId }).from(t.copy).all().map((r) => r.id);
   const ids = [...new Set(db.select({ id: t.candidate.bookId }).from(t.candidate).all().map((r) => r.id))].filter((id) => !owned.includes(id));
   if (!ids.length) return [];
   const cutoff = new Date(now.getTime() - PRICE_FRESH_DAYS * 86_400_000).toISOString();
   const fresh = new Set(db.select({ id: t.bookOffer.bookId, seen: t.bookOffer.seenAt }).from(t.bookOffer)
     .where(and(eq(t.bookOffer.source, source), inArray(t.bookOffer.bookId, ids))).all().filter((o) => o.seen >= cutoff).map((o) => o.id));
-  return db.select().from(t.book).where(inArray(t.book.id, ids.filter((id) => !fresh.has(id)))).all()
+  // A source that asks by ISBN has nothing to ask about a book without one.
+  return db.select().from(t.book).where(inArray(t.book.id, ids.filter((id) => !fresh.has(id)))).all().filter((b) => asks !== 'isbn' || b.isbn13)
     .sort((a, b) => a.id.localeCompare(b.id)).slice(0, PER_RUN.prices);
 }
 
 export async function refreshPrices(db: Db, source: PriceSource, env: JobEnv = {}): Promise<Outcome> {
   const now = env.now ?? (() => new Date());
   const sleep = env.sleep ?? realSleep;
-  const books = booksNeedingPrices(db, source.id, now());
+  const books = booksNeedingPrices(db, source.id, now(), source.asks);
   let found = 0, missing = 0, errors = 0;
   for (const [i, b] of books.entries()) {
     if (i > 0) await sleep(PRICE_PAUSE_MS);
     if (env.deadline && now() >= env.deadline) return { status: 'failed', detail: `stopped at the time limit after ${i} of ${books.length}` };
     let offer;
     try {
-      offer = await source.find({ title: b.title, authors: JSON.parse(b.authorsJson) as string[] });
+      offer = await source.find({ title: b.title, authors: JSON.parse(b.authorsJson) as string[], isbn13: b.isbn13 });
     } catch (e) {
       if (refusedBy(e)) return { status: 'blocked', detail: `stopped after ${i} of ${books.length}: ${why(e)}` };
       errors++;

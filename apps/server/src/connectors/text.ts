@@ -14,7 +14,7 @@ export const fold = (s: string) => s.normalize('NFKC').replace(/\p{Cf}/gu, '').r
 
 /**
  * The phrases as one alternation, longest first (so "delivery time" wins over "delivery"). A word ending in `*`
- * (only the summary's and invoice's word lists allow it) stands for any word that begins so: `gesamt*` is Gesamtbetrag.
+ * (only the summary's and invoice's word lists allow it) stands for any word that begins so: `subtotal*` is subtotals.
  */
 export function alternation(phrases: readonly string[]): string {
   const sorted = [...phrases].sort((a, b) => b.length - a.length || a.localeCompare(b));

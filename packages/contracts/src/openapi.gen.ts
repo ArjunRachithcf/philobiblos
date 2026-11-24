@@ -1083,6 +1083,11 @@ export interface components {
                 quoteSenders: string[];
                 /** @description the one host its price lookup asks (added to the egress allowlist) */
                 priceHost: string | null;
+                /**
+                 * @description what its price lookup sends that host: a book's title and first author, or its ISBN-13 alone (only books with one are asked); null without a lookup
+                 * @enum {unknown}
+                 */
+                priceAsks: "title" | "isbn" | null;
                 /** @description where Compose writes unless Settings names another address */
                 orderTo: string | null;
                 /** @description schema.org Order and Invoice markup (JSON-LD) in its signed mail counts: an order's lines are kept, an invoice makes copies */

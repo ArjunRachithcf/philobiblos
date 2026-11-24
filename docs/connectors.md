@@ -2,7 +2,9 @@
 
 Philobiblos works with any bookshop and any mail provider (philobiblos#27). A bookshop is a **connector**: a file of
 data that says who the shop mails from, how its mails read and where its prices are. Nothing in Philobiblos's code
-names a shop or a mail provider (an architecture test, `apps/server/test/architecture.test.ts`, keeps it so).
+names a shop, a mail provider or a currency, nor holds the words a shop's mail is written in (its reply markers, its
+totals, its month names): those are the connector's, and the currency is the household's (an architecture test,
+`apps/server/test/architecture.test.ts`, keeps it so).
 
 ## Choosing a bookshop
 
@@ -13,7 +15,7 @@ and the household's own (`PHILOBIBLOS_CONNECTORS_DIR`, a read-only folder). For 
   another sender; a signing domain must share its organizational domain with one of the mail domains, so
   `mail.quillmere.example` may sign for `quillmere.example`, but a shared sending service's domain never can);
 - the addresses its quotes and confirmations come from;
-- the one host its price lookup asks, with a book's title and first author;
+- the one host its price lookup asks, and what it sends there: a book's title and first author, or its ISBN alone;
 - the address Compose writes to, unless *Where orders go* names another.
 
 A connector counts for nothing until an **admin enables** it there, with a sign-in of the last few minutes. Only then
@@ -92,8 +94,22 @@ A new shop is a folder `connectors/<id>/` with:
 
 `apps/server/test/connector-fixtures.test.ts` runs every fixture through the same path a real mail takes: signed as
 the shop with a test key, the strict header block, the sender and DKIM checks against that connector alone, the size
-limits, then the parsers with the connector's words, and its words over hostile text to keep every match linear. A
-connector pull request is data and fixtures only; it needs no code.
+limits, then the parsers with the connector's words, and its words over hostile text to keep every match linear. For
+each connector it also checks what no connector can loosen: each of its mails unsigned, with one byte changed, signed by
+another domain, signed over part of its body (`l=`), with a line in its headers that is no header field, addressed to
+someone else, or over the size limit is refused; its price host is never asked at a private address. A connector pull
+request is data and fixtures only; it needs no code, and these tests run on it unchanged.
+
+A connector pull request, step by step:
+
+1. Copy `connectors/quillmere/` (a shop with its own mail layouts) or `connectors/larkspur/` (a shop read through its
+   markup) to `connectors/<id>/`, and write its `connector.yaml` in the shop's words.
+2. Write a fixture for each kind of mail and page it reads, **invented**: the shop's layout, made-up names, titles,
+   addresses and numbers (never a real mail). Each fixture names the sender, the subject,
+   the text (or HTML, or an invoice's rows) and what Philobiblos should read from it (`expect`).
+3. Run `pnpm test:unit`. Besides the fixtures, `architecture.test.ts` checks that the shop's names and hosts appear
+   nowhere in the core, and `connectors.test.ts` that the schema still refuses every key it does not name, at every
+   depth: a pull request that needs a change outside `connectors/<id>/` is not a connector pull request.
 
 For a shop only your household uses, put the folder in your own `PHILOBIBLOS_CONNECTORS_DIR` instead (in Docker:
 mount it read-only, e.g. `./connectors:/connectors:ro,Z`, and set `PHILOBIBLOS_CONNECTORS_DIR=/connectors`). Its id
@@ -168,16 +184,25 @@ context count; nothing in them is followed, run or stored.
 Product whose name is the title and whose author holds the first author's surname, never an e-book or an audiobook,
 its offers in the connector's currency, the cheapest; a page with more markup than is read gives no price. Its availability is one of schema.org's values, shown in a few fixed words.
 
+**By ISBN.** A jsonld URL may hold `{isbn}` instead of `{query}`, for an ISBN metadata source with prices or a shop that
+looks books up by ISBN: `url: https://isbn.lookup.example/book?isbn={isbn}`. It is then asked with a book's ISBN-13 and
+nothing else (a book without an ISBN is not asked), and the product read is the one that carries that ISBN (its GTIN-13
+or ISBN; an ISBN-10 counts as its ISBN-13), whatever its name: another edition's ISBN, or none, is never the book. Such a
+connector may have no `mail` and no `order` at all: it is a price source and nothing else, enabled like any connector,
+and Settings says that it sends the ISBN.
+
 ### What a connector cannot do
 
 A connector is **data only**, and it cannot loosen a rule of the core:
 
 - **No code and no regular expressions.** Every word is a literal; the patterns are fixed shapes in
   `apps/server/src/connectors/text.ts`, each word escaped into them, so matching stays linear whatever the words are.
-  A `*` is allowed only at the end of a summary or invoice word, and `{number}` and `{query}` only where the schema
-  puts them.
+  A `*` is allowed only at the end of a summary or invoice word, and `{number}`, `{query}` and `{isbn}` only where the
+  schema puts them.
 - **Exact hosts.** Domains and hosts are lowercase names with at least two labels, never an address, a wildcard, a
-  port or credentials. The price URL is https on the default port, and the search words fill only its query string.
+  port or credentials. The price URL is https on the default port, and the search words (or the ISBN) fill only its
+  query string. Its host is asked only at public addresses, every address it resolves to checked, even when it is the
+  name of the household's own Ollama.
 - **No new settings.** Every object of the schema refuses keys it does not name: a connector cannot allow unsigned
   mail, a private address, a redirect to another host or another mail size.
 - **Plain YAML.** No aliases, anchors, tags, merge keys or duplicate keys; at most 64 KB; a plain file in a plain
