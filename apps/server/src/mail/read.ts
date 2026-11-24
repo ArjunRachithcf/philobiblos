@@ -61,7 +61,8 @@ export const normal = (s: string) => SAME.reduce((v, [re, to]) => v.replace(re, 
  */
 export function addressParts(address: string | null, locale: string | null = null): string[] {
   if (!address) return [];
-  const common = commonAddressWords(locale);
+  // Compared as the address is: through normal() (a data word written with ue or a diacritic is respelled there).
+  const common = new Set([...commonAddressWords(locale)].map(normal));
   const parts = address.split(/[\n,;]+/).map(normal);
   const words = parts.flatMap((p) => p.split(' ')).filter((w) => /^\p{L}{5,}$/u.test(w) && !common.has(w));
   return [...new Set([...parts.filter((p) => p.replace(/ /g, '').length >= 5), ...words])];

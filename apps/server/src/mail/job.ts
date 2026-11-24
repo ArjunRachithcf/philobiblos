@@ -54,7 +54,7 @@ export interface MailDeps {
 
 const hash = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 
-export type MailJobConfig = Pick<Config, 'arcSealers' | 'mailRecipients' | 'sealingKey'> & Partial<Pick<Config, 'locale'>> & { imap: ImapSettings | null; workDir?: string | null; connectors: Registry };
+export type MailJobConfig = Pick<Config, 'arcSealers' | 'mailRecipients' | 'sealingKey' | 'locale'> & { imap: ImapSettings | null; workDir?: string | null; connectors: Registry };
 
 /** The kind and fields of a verified mail; an invoice's PDFs through the media worker (null: not now, try later). */
 async function parse(m: VerifiedMail, address: string[], pdfText: (pdf: Uint8Array) => Promise<MediaOutcome>, r: MailRules): Promise<Parsed | null> {
@@ -98,7 +98,7 @@ export async function refreshMail(db: Db, cfg: MailJobConfig, deps: MailDeps = {
   // The delivery address is sealed (PR #7); it is unsealed here only to find it in the mail and leave it out.
   let address: string[] = [];
   if (isSealed(db, SEALED.deliveryAddress)) {
-    try { address = addressParts(unseal(db, sealingKey(cfg), SEALED.deliveryAddress), cfg.locale ?? null); } catch (e) {
+    try { address = addressParts(unseal(db, sealingKey(cfg), SEALED.deliveryAddress), cfg.locale); } catch (e) {
       if (!(e instanceof SealError)) throw e;
       return { status: 'blocked', detail: 'the sealing key cannot open the delivery address, so it could not be kept out of the mail: nothing read' };
     }

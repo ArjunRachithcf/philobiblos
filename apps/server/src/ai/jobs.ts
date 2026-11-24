@@ -53,8 +53,8 @@ export interface AiJobOptions extends ModelDeps {
 }
 
 /** The delivery address's pieces, for safeField on every answer; none when nothing is sealed or it does not open. */
-function address(db: Db, cfg: Pick<Config, 'sealingKey'> & Partial<Pick<Config, 'locale'>>): string[] {
-  try { return addressParts(unseal(db, sealingKey(cfg), SEALED.deliveryAddress), cfg.locale ?? null); } catch (e) { if (e instanceof SealError) return []; throw e; }
+function address(db: Db, cfg: Pick<Config, 'sealingKey' | 'locale'>): string[] {
+  try { return addressParts(unseal(db, sealingKey(cfg), SEALED.deliveryAddress), cfg.locale); } catch (e) { if (e instanceof SealError) return []; throw e; }
 }
 
 /** A kept JPEG, read without following links, regular files only, within its size. */
@@ -104,7 +104,7 @@ const stopped = (e: unknown, did: string): Outcome | null => (e instanceof AiErr
 export class AiJobs {
   private reading: Promise<Outcome> | null = null;
   private again = false;
-  constructor(private readonly db: Db, private readonly cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sealingKey' | 'dataDir'> & Partial<Pick<Config, 'locale'>>, private readonly o: AiJobOptions = {}) {}
+  constructor(private readonly db: Db, private readonly cfg: Pick<Config, 'ollamaUrl' | 'egress' | 'sealingKey' | 'dataDir' | 'locale'>, private readonly o: AiJobOptions = {}) {}
 
   private start(job: 'read' | 'link' | 'suggest' | 'explain'): { why: string } | { why?: undefined; model: Model; budget: AiBudget; address: string[]; wildcards: boolean } {
     const s = getAi(this.db);

@@ -13,7 +13,6 @@ export interface OrderLineText { title: string; authors: string[]; isbn13?: stri
 
 /** English month names: the app's own screens write dates in English (inbox.ts). */
 export const MONTHS = LETTERS.en!.months;
-export const monthName = (month: string, letter: Letter = LETTERS.en!) => `${letter.months[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
 
 /** The letter's subject for a month, in its language: what a reply's subject is matched with (mail/effects.ts). */
 export const orderSubject = (month: string, letter: Letter = LETTERS.en!) =>
