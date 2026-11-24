@@ -9,7 +9,7 @@ import { validCurrency } from './household/currency';
 import { parseLocale } from './household/locale';
 import type { MailboxPlace, Secret } from './net/imap';
 import type { Cidr } from './net/networks';
-import { parseTrustedProxy } from './net/proxy';
+import { edgeAddress, parseTrustedProxy } from './net/proxy';
 
 export type Mode = 'homerslab' | 'standalone';
 
@@ -125,6 +125,8 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
   }
   const trustedProxy = parseTrustedProxy(env.PHILOBIBLOS_TRUSTED_PROXY);
   if (mode === 'homerslab' && !trustedProxy) throw new Error('PHILOBIBLOS_TRUSTED_PROXY must be set in homerslab mode');
+  // Under HomersLab it names who may send X-HomersLab-Person: the edge's one address, never a range a neighbour is in.
+  if (mode === 'homerslab' && !edgeAddress(trustedProxy)) throw new Error('PHILOBIBLOS_TRUSTED_PROXY must be the edge\'s one address in homerslab mode (no range, no list)');
   const origin = parseOrigin(env.PHILOBIBLOS_ORIGIN ?? `http://localhost:${port}`);
   return {
     mode,

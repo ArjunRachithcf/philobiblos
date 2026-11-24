@@ -30,6 +30,8 @@ export function view(db: Db, p: Person): PersonView {
     birthYear: p.role === 'kid' ? p.birthYear : null,
     ageBand: p.role === 'kid' ? ageBand(p.birthYear) : null,
     signsIn: keys > 0,
+    // Let in by a join link's rules: when, and whose link (the admin's name; null once they are gone).
+    letInByLink: p.admittedLink ? { linkId: p.admittedLink, by: p.admittedBy ? db.select({ name: t.person.name }).from(t.person).where(eq(t.person.id, p.admittedBy)).get()?.name ?? null : null, at: p.arrivedAt } : null,
   };
 }
 

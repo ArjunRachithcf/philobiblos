@@ -29,7 +29,9 @@ import { anyPerson } from '../household/waiting';
 import { passkeyLabel, passkeyRow, type Challenges, type WebAuthn } from '../auth/webauthn';
 import { JOIN_LINK, JoinLinkError, RULE_ROLE, checkLink, createJoinLink, linkNetworks, listJoinLinks, presentedHash, revokeJoinLink, rulesView, spendUse, type LinkRules } from '../household/join-links';
 import { NETWORKS, NO_SURROUNDINGS, homeNetworks, isHop, parseCidr, plainAddress, proposeNetwork, rangeProblem, setHomeNetworks, surroundingsWarning, type Cidr, type Surroundings } from '../net/networks';
-import { clientAddress } from '../net/proxy';
+import { addressKey, clientAddress } from '../net/proxy';
+
+export { addressKey };
 import { suggestHandle, view } from '../household/people';
 import { lapseIn, lapseWaiting } from '../household/waiting-rows';
 import { Limiter } from '../shares/tokens';
@@ -59,17 +61,6 @@ export interface JoinOptions { joined?: () => void; floorMs?: number; surroundin
 
 /** How many links (presented tokens) a per-link limiter counts at once; past it, new ones are refused. */
 export const JOIN_LINK_KEYS = 10_000;
-
-/**
- * The key an address is limited by: an IPv6 address by its /64 (one household's, or one attacker's, whole block), an
- * IPv4 one (a mapped one too) as it is.
- */
-export function addressKey(address: string | null | undefined): string {
-  const a = plainAddress(address);
-  if (!a.includes(':')) return `a:${a}`;
-  const c = parseCidr(`${a}/64`);
-  return c ? `a6:${c.network}` : `a:${a}`;
-}
 
 export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, webauthn: WebAuthn, challenges: Challenges, o: JoinOptions = {}) {
   const floor = o.floorMs ?? JOIN_FLOOR_MS;
@@ -164,7 +155,7 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
         const accepted = admission.outcome === 'accept';
         tx.insert(t.person).values({
           id: pending.personId!, name: pending.name!, role: RULE_ROLE, state: accepted ? 'active' : 'waiting', handle: accepted ? suggestHandle(tx, pending.name!) : null,
-          arrivedAt: now.toISOString(), settingsJson: '{}',
+          arrivedAt: now.toISOString(), settingsJson: '{}', ...(accepted ? { admittedLink: link.id, admittedBy: link.createdBy } : {}),
         }).run();
         if (!accepted) tx.insert(t.joinRequest).values({ personId: pending.personId!, joinLinkId: link.id, fromHomeNetwork: 1, matchesRules: admission.matches === null ? null : admission.matches ? 1 : 0 }).run();
         tx.insert(t.passkey).values(passkeyRow(cred, pending.personId!, label, now.toISOString())).run();

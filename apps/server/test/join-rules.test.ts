@@ -7,11 +7,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
+import { resolveIdentity } from '../src/identity';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { RULE_ROLE } from '../src/household/join-links';
 import { waitingPeople } from '../src/household/waiting';
-import { readSurroundings, surroundingsFrom, surroundingsWarning, type Surroundings, type System } from '../src/net/networks';
+import { isHop, plainAddress, readSurroundings, surroundingsFrom, surroundingsWarning, type Surroundings, type System } from '../src/net/networks';
 import { TRUSTED_PROXY, clientAddress, parseTrustedProxy } from '../src/net/proxy';
 import { JOIN_OPEN, NOT_HERE } from '../src/routes/join';
 import type { Egress } from '../src/net/egress';
@@ -491,5 +492,73 @@ describe('the review\'s findings', () => {
     for (let i = 0; i < 100 && last !== 429; i++) last = (await wrong(AWAY)).statusCode;
     expect(last).toBe(429);
     expect((await wrong('198.51.100.8')).statusCode).toBe(401);
+  });
+});
+
+describe('the independent review', () => {
+  const hl = (proxy: string) => loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: proxy, PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_DATA_DIR: '/nonexistent' });
+
+  it('under HomersLab the trusted proxy is the edge\'s one address: a range or a list does not start', () => {
+    for (const ok of ['172.30.0.2', '172.30.0.2/32', 'fd00::2', 'fd00::2/128', '::ffff:172.30.0.2']) expect(hl(ok).trustedProxy, ok).toHaveLength(1);
+    for (const bad of ['172.30.0.0/24', '172.30.0.2/31', 'fd00::/64', '172.30.0.2, 172.30.0.3']) expect(() => hl(bad), bad).toThrow(/edge's one address/);
+    // standalone may still name a range of proxies
+    expect(standalone('172.30.0.0/24').trustedProxy).toHaveLength(1);
+  });
+
+  it('a neighbour inside a range is never the edge, even if a range got past the start', () => {
+    const h = { 'x-homerslab-person': 'hl-alex', 'x-homerslab-role': 'admin' };
+    const range = { mode: 'homerslab' as const, trustedProxy: parseTrustedProxy('172.30.0.0/24') };
+    expect(resolveIdentity(range, '172.30.0.7', h)).toBeNull();
+    expect(resolveIdentity(range, '172.30.0.0', h)).toBeNull();
+    expect(resolveIdentity({ mode: 'homerslab', trustedProxy: parseTrustedProxy('172.30.0.2') }, '172.30.0.7', h)).toBeNull();
+    expect(resolveIdentity({ mode: 'homerslab', trustedProxy: parseTrustedProxy('172.30.0.2') }, '172.30.0.2', h)).toMatchObject({ role: 'admin' });
+  });
+
+  it('a hex-spelled IPv4-mapped address is its IPv4 one everywhere: forwarded, a hop, a range', async () => {
+    expect(plainAddress('::ffff:a14:105')).toBe(IN_KITCHEN);
+    expect(plainAddress('0:0:0:0:0:ffff:7f00:1')).toBe('127.0.0.1');
+    expect(clientAddress(parseTrustedProxy(PROXY), PROXY, '::ffff:a14:105')).toBe(IN_KITCHEN);
+    expect(clientAddress(parseTrustedProxy(PROXY), '::ffff:7f00:1', IN_KITCHEN)).toBe(IN_KITCHEN);
+    expect(isHop(HOST, '::ffff:7f00:1')).toBe(true);
+    const { app: a, db } = await app(standalone(PROXY));
+    home(db);
+    const { token } = await makeLink(a, db);
+    expect((await post(a, '/api/join/open', { token }, { remote: PROXY, xff: '::ffff:7f00:1' })).statusCode).toBe(404);
+    expect((await post(a, '/api/join/open', { token }, { remote: PROXY, xff: '::ffff:a14:105' })).statusCode).toBe(204);
+  });
+
+  it('share-token failures count an IPv6 client by its /64', async () => {
+    const { app: a } = await app();
+    let n = 0;
+    const wrong = (remote: string) => a.inject({ method: 'POST', url: '/api/shares', remoteAddress: remote, headers: { authorization: `Bearer ${String(n++).padStart(26, 'y')}` } });
+    let last = 0;
+    for (let i = 0; i < 100 && last !== 429; i++) last = (await wrong(`2001:db8:1:2::${(i + 1).toString(16)}`)).statusCode;
+    expect(last).toBe(429);
+    expect((await wrong('2001:db8:1:2:ffff::1')).statusCode).toBe(429);
+    expect((await wrong('2001:db8:1:3::1')).statusCode).toBe(401);
+  });
+
+  it('a person a link let in keeps which link and whose it was, shown to admins, after the link and its admin go', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    db.update(t.person).set({ role: 'admin' }).where(eq(t.person.id, 'p_sam')).run();
+    const res = await post(a, '/api/people/join-links', { accept: 'automatic' }, { cookie: sessionCookie(db, 'p_sam') });
+    const { id, url } = res.json();
+    const v = await join(a, url.split('#')[1], 'Jordan');
+    const jordan = v.json().person.id as string;
+    expect(personNamed(db, 'Jordan')[0]).toMatchObject({ admittedLink: id, admittedBy: 'p_sam' });
+    const seen = async () => ((await a.inject({ url: '/api/me', headers: { cookie: sessionCookie(db, 'p_alex') } })).json().household as { id: string; letInByLink: unknown }[]).find((p) => p.id === jordan)!.letInByLink;
+    expect(await seen()).toEqual({ linkId: id, by: 'Sam', at: expect.any(String) });
+    // the link revoked: still known
+    expect((await a.inject({ method: 'DELETE', url: `/api/people/join-links/${id}`, headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN } })).statusCode).toBe(204);
+    expect(await seen()).toEqual({ linkId: id, by: 'Sam', at: expect.any(String) });
+    // the admin removed: the link's id stays, the name goes
+    db.delete(t.session).where(eq(t.session.personId, 'p_sam')).run();
+    db.update(t.joinLink).set({ createdBy: 'p_alex' }).run();
+    db.delete(t.person).where(eq(t.person.id, 'p_sam')).run();
+    expect(await seen()).toEqual({ linkId: id, by: null, at: expect.any(String) });
+    // someone an admin approved, or who was there before, has none
+    const others = ((await a.inject({ url: '/api/me', headers: { cookie: sessionCookie(db, 'p_alex') } })).json().household as { id: string; letInByLink: unknown }[]).filter((p) => p.id !== jordan);
+    expect(others.every((p) => p.letInByLink === null)).toBe(true);
   });
 });

@@ -22,6 +22,10 @@ export const person = sqliteTable('person', {
   // Under HomersLab: when the edge last sent them (at most an hour off), so `join` pushes stop for an admin Homeward
   // removed (philobiblos#34 slice 2; push/push.ts joinNotifier). Null standalone.
   seenAt: text('seen_at'),
+  // Let in by a join link's rules (philobiblos#34 slice 3): the link and the admin who made it, kept after the link or
+  // the admin goes (plain ids, no keys), so an admin can find whom a link let in. Null for everyone else.
+  admittedLink: text('admitted_link'),
+  admittedBy: text('admitted_by'),
 }, (t) => [
   check('person_role', sql`${t.role} IN ('admin','adult','kid')`), uniqueIndex('person_handle').on(t.handle),
   check('person_state', sql`${t.state} IN ('waiting','active') AND (${t.state} = 'active' OR (${t.role} = 'adult' AND ${t.handle} IS NULL))`),

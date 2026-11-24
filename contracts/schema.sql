@@ -17,7 +17,9 @@ CREATE TABLE person (
   state         TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('waiting','active') AND (state = 'active' OR (role = 'adult' AND handle IS NULL))),
   ceiling       TEXT CHECK (ceiling IN ('admin','adult','kid')), -- HomersLab: the Homeward role sent last; the Philobiblos role is never above it
   arrived_at    TEXT,                     -- when they first came
-  seen_at       TEXT                      -- HomersLab: when the edge last sent them (to the hour); `join` pushes stop for an admin it no longer sends
+  seen_at       TEXT,                     -- HomersLab: when the edge last sent them (to the hour); `join` pushes stop for an admin it no longer sends
+  admitted_link TEXT,                     -- slice 3: the join link whose rules let them in (kept after it goes)
+  admitted_by   TEXT                      -- slice 3: the admin who made that link (kept after they go)
 );
 CREATE UNIQUE INDEX person_handle ON person(handle);
 

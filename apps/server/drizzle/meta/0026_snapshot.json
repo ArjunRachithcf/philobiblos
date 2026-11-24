@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "90dde93c-f4dc-4696-9e53-21cacffa4f3d",
+  "id": "83953256-ed23-464c-b2c1-8dbb8f1c2212",
   "prevId": "3aeb215c-81c6-40fb-abe2-53cc2402734b",
   "tables": {
     "ai_run": {
@@ -2900,6 +2900,20 @@
         },
         "seen_at": {
           "name": "seen_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "admitted_link": {
+          "name": "admitted_link",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "admitted_by": {
+          "name": "admitted_by",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

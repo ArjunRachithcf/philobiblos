@@ -11,7 +11,7 @@
 // address (a port, brackets, a zone, a name) before that one, gives no client address (null): such a visitor is in no
 // household network (fail closed).
 import { BlockList, isIP, isIPv4 } from 'node:net';
-import { parseCidrAnyWidth, plainAddress, type Cidr } from './networks';
+import { parseCidr, parseCidrAnyWidth, plainAddress, type Cidr } from './networks';
 
 /** At most `max` entries, none wider than a /24 (IPv4) or a /64 (IPv6); X-Forwarded-For past `headerMax` is not read. */
 export const TRUSTED_PROXY = { max: 10, minPrefix4: 24, minPrefix6: 64, headerMax: 2048 } as const;
@@ -71,4 +71,23 @@ export function clientAddress(list: Cidr[] | null, peer: string | undefined, for
   }
   // Every entry a proxy of ours: no client named.
   return null;
+}
+
+/**
+ * The key a client is limited by: an IPv6 address by its /64 (one household's, or one attacker's, whole block), an
+ * IPv4 one (a mapped one too) as it is.
+ */
+export function addressKey(address: string | null | undefined): string {
+  const a = plainAddress(address);
+  if (!a.includes(':')) return `a:${a}`;
+  const c = parseCidr(`${a}/64`);
+  return c ? `a6:${c.network}` : `a:${a}`;
+}
+
+/**
+ * PHILOBIBLOS_TRUSTED_PROXY under HomersLab: the edge's one address (ADR 0009, contracts/homerslab-app.yaml), never a
+ * range or a list, since whoever is in it may name any person and role.
+ */
+export function edgeAddress(list: Cidr[] | null): boolean {
+  return list !== null && list.length === 1 && list[0]!.prefix === (list[0]!.family === 'ipv4' ? 32 : 128);
 }

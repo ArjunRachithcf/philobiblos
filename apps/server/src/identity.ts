@@ -1,7 +1,7 @@
 // The HomersLab forwarded identity (ADR 0001, ADR 0009). The headers count only when the request comes straight from
 // the configured proxy (PHILOBIBLOS_TRUSTED_PROXY, net/proxy.ts); from anywhere else they are ignored.
 import type { Config } from './config';
-import { isTrustedProxy } from './net/proxy';
+import { edgeAddress, isTrustedProxy } from './net/proxy';
 
 export const PERSON_HEADER = 'x-homerslab-person';
 export const NAME_HEADER = 'x-homerslab-name';
@@ -20,7 +20,8 @@ function one(headers: Headers, name: string): string | null {
 }
 
 export function resolveIdentity(cfg: Pick<Config, 'mode' | 'trustedProxy'>, remoteAddress: string | undefined, headers: Headers): Identity | null {
-  if (cfg.mode !== 'homerslab' || !isTrustedProxy(cfg.trustedProxy, remoteAddress)) return null;
+  // The edge's one address only (config.ts refuses a range or a list in homerslab mode; checked here again).
+  if (cfg.mode !== 'homerslab' || !edgeAddress(cfg.trustedProxy) || !isTrustedProxy(cfg.trustedProxy, remoteAddress)) return null;
   const id = one(headers, PERSON_HEADER);
   if (!id || id.length > 200) return null;
   // The role exactly as HomersLab sends it: no case folding, no trimming.

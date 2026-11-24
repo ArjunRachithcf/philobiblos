@@ -45,11 +45,19 @@ const bigToV6 = (n: bigint) => {
   return `${groups.slice(0, best).join(':')}::${groups.slice(best + len).join(':')}`;
 };
 
-/** A plain address as the socket gives it: an IPv4-mapped IPv6 address is the IPv4 one. */
+/**
+ * A plain address: an IPv4-mapped IPv6 address, in any spelling (::ffff:192.0.2.1, ::ffff:c000:201, the long forms), is
+ * the IPv4 one, so no check (isHop, a range, the trusted proxy) sees it as IPv6.
+ */
 export function plainAddress(a: string | null | undefined): string {
   if (!a) return '';
   const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(a);
-  return m ? m[1]! : a;
+  if (m) return m[1]!;
+  if (isIPv6(a) && !a.includes('%')) {
+    const n = v6ToBig(a);
+    if ((n >> 32n) === 0xffffn) return intToV4(Number(n & 0xffffffffn));
+  }
+  return a;
 }
 
 /** A CIDR as an admin types it, normalised (host bits cleared); null if it is not one, or wider than NETWORKS allows. */

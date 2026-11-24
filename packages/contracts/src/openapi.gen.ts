@@ -1362,6 +1362,13 @@ export interface components {
             ageBand?: "0-2" | "3-5" | "6-8" | "9-12" | null;
             /** @description standalone: has at least one passkey */
             signsIn?: boolean;
+            /** @description let in by a join link's rules (slice 3), so an admin can find whom a link let in */
+            letInByLink?: {
+                linkId: string;
+                /** @description the admin who made the link; null once they are gone */
+                by: string | null;
+                at: string | null;
+            } | null;
         };
         PersonInput: {
             name: string;

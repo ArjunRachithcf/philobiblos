@@ -49,6 +49,11 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
                 <span className="row-main">
                   <span className="row-title">{p.name}{p.id === me.person?.id ? ' (you)' : ''}</span>
                   <span className="row-sub wrap">{sub(p)}</span>
+                  {isAdmin && p.letInByLink && (
+                    <span className="row-sub wrap">
+                      {`Let in by ${p.letInByLink.by ? `${p.letInByLink.by}’s` : 'a former admin’s'} join link${p.letInByLink.at ? `, ${new Date(p.letInByLink.at).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}` : ''}`}
+                    </span>
+                  )}
                 </span>
                 <span className="row-trail">
                   {p.role !== 'kid' && me.mode === 'standalone' && !p.signsIn && <span className="pill pill-orange">No passkey yet</span>}

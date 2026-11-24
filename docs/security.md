@@ -142,7 +142,11 @@ An admin under HomersLab sees the waiting list with its buttons off and the reas
   address that is itself a hop (the proxy forwarding loopback, or the container's own networks) is never home either.
 - A host booted with `ipv6.disable=1` has no `/proc/net/ipv6_route`: Philobiblos in a container there cannot tell its
   IPv6 next hops from people, so it fails closed (no join link opens), says so in a log line at start and on People.
-- A range in `PHILOBIBLOS_TRUSTED_PROXY` must hold proxies only: a client inside it is taken for a proxy and passed over,
+- Under HomersLab `PHILOBIBLOS_TRUSTED_PROXY` must be the edge's one address (a /32 or /128): a range or a list stops
+  the start, since whoever is in it could send `X-HomersLab-Person` with any role (`identity.ts` checks it again).
+- Whoever a link's rules let in keeps which link and which admin made it (`person.admitted_link`, `admitted_by`, kept
+  after both go), shown to admins on People, so a rogue admin's admissions can be found.
+- Standalone, a range in `PHILOBIBLOS_TRUSTED_PROXY` must hold proxies only: a client inside it is taken for a proxy and passed over,
   so the entry to its left, which that client wrote, would be believed. Name the proxy's exact address where it has one.
 - A link that accepts automatically lets in, as an adult, anyone who holds it and is on its networks, a guest on the same
   Wi-Fi too, without an admin seeing them first (Settings says so when the link is made); its uses (at most 10) and its
