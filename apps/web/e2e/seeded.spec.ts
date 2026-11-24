@@ -316,7 +316,13 @@ test('the mailbox: what connecting allows; the provider\'s return read once and 
     asked = new URL(route.request().url());
     await route.fulfill({ status: 302, headers: { location: `${ORIGIN}/settings/mail-oauth?code=e2e-code-123&state=${asked.searchParams.get('state')}` } });
   });
-  await card.getByRole('button', { name: 'Connect the mailbox' }).click();
+  // The page is on /settings already, so its URL says nothing about the round trip (philobiblos#55): wait for the
+  // provider to be asked and for the code it sent back to reach the server.
+  await Promise.all([
+    page.waitForRequest('https://auth.invalid/**'),
+    page.waitForResponse('**/api/mail/oauth/finish'),
+    card.getByRole('button', { name: 'Connect the mailbox' }).click(),
+  ]);
   // Back on Settings, the code and the state gone from the address bar.
   await expect(page).toHaveURL(`${ORIGIN}/settings`);
   const a = asked as URL | null;
