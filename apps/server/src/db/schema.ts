@@ -89,13 +89,13 @@ export const joinLink = sqliteTable('join_link', {
 }, (t) => [check('join_link_uses', sql`${t.maxUses} BETWEEN 1 AND 10 AND ${t.uses} BETWEEN 0 AND ${t.maxUses}`)]);
 
 // What a waiting person's request says, for the admin who decides (the waiting list): the link they used and whether
-// they came from the household's networks, and whether they matched every rule of the link (slice 3). Gone when they
-// are decided or lapse.
+// they came from the household's networks, and whether they matched the link's own rules (slice 3; null: it has none
+// beyond the household's). Gone when they are decided or lapse.
 export const joinRequest = sqliteTable('join_request', {
   personId: text('person_id').primaryKey().references(() => person.id, { onDelete: 'cascade' }),
   joinLinkId: text('join_link_id').references(() => joinLink.id, { onDelete: 'set null' }),
   fromHomeNetwork: integer('from_home_network').notNull(),
-  matchesRules: integer('matches_rules').notNull().default(0),
+  matchesRules: integer('matches_rules'),
 });
 
 export const householdSettings = sqliteTable('household_settings', {

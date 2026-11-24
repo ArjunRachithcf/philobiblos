@@ -99,9 +99,9 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
       id: p.id, name: p.name, arrivedAt: p.arrivedAt, via: p.externalId ? 'homeward' as const : 'join_link' as const,
       joinLink: r?.link ? { id: r.link.id, createdAt: r.link.createdAt, createdBy: r.by ?? null } : null,
       fromHomeNetwork: r ? r.r.fromHomeNetwork === 1 : null,
-      // Whether they matched every rule of their link (slice 3): on a link that waits for approval, or one whose own
-      // ranges they came from outside of. Never a reason to approve by itself.
-      matchesRules: r ? r.r.matchesRules === 1 : null,
+      // Whether they matched their link's own rules (slice 3); null when it has none beyond the household's (or from
+      // Homeward). Never a reason to approve by itself.
+      matchesRules: r && r.r.matchesRules !== null ? r.r.matchesRules === 1 : null,
       // Slices 4a and 4b of philobiblos#34 fill this: a verified address.
       verifiedAddress: null,
       // Under HomersLab, the most they may be: their Homeward role.

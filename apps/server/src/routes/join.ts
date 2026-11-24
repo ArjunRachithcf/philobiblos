@@ -27,7 +27,7 @@ import { requireAdmin, requireFreshSignIn } from '../auth/hook';
 import { requestSession, startSession } from '../auth/cookie';
 import { anyPerson } from '../household/waiting';
 import { passkeyLabel, passkeyRow, type Challenges, type WebAuthn } from '../auth/webauthn';
-import { JOIN_LINK, JoinLinkError, NO_RULES, RULE_ROLE, checkLink, createJoinLink, linkNetworks, listJoinLinks, presentedHash, revokeJoinLink, rulesView, spendUse, type LinkRules } from '../household/join-links';
+import { JOIN_LINK, JoinLinkError, RULE_ROLE, checkLink, createJoinLink, linkNetworks, listJoinLinks, presentedHash, revokeJoinLink, rulesView, spendUse, type LinkRules } from '../household/join-links';
 import { NETWORKS, NO_SURROUNDINGS, homeNetworks, isHop, parseCidr, plainAddress, proposeNetwork, rangeProblem, setHomeNetworks, surroundingsWarning, type Cidr, type Surroundings } from '../net/networks';
 import { clientAddress } from '../net/proxy';
 import { suggestHandle, view } from '../household/people';
@@ -160,13 +160,13 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
         if (!admission) return;
         const { link } = admission;
         if (tx.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.id, cred.id)).get()) { outcome = 'taken'; return; }
-        if (admission.outcome === 'accept') {
-          // A rule match: a member at once, and always RULE_ROLE (an adult), whatever anyone sent.
-          tx.insert(t.person).values({ id: pending.personId!, name: pending.name!, role: RULE_ROLE, state: 'active', handle: suggestHandle(tx, pending.name!), arrivedAt: now.toISOString(), settingsJson: '{}' }).run();
-        } else {
-          tx.insert(t.person).values({ id: pending.personId!, name: pending.name!, role: 'adult', state: 'waiting', handle: null, arrivedAt: now.toISOString(), settingsJson: '{}' }).run();
-          tx.insert(t.joinRequest).values({ personId: pending.personId!, joinLinkId: link.id, fromHomeNetwork: 1, matchesRules: admission.matches ? 1 : 0 }).run();
-        }
+        // Always RULE_ROLE (an adult), whatever anyone sent: a rule match is a member at once, anyone else waits.
+        const accepted = admission.outcome === 'accept';
+        tx.insert(t.person).values({
+          id: pending.personId!, name: pending.name!, role: RULE_ROLE, state: accepted ? 'active' : 'waiting', handle: accepted ? suggestHandle(tx, pending.name!) : null,
+          arrivedAt: now.toISOString(), settingsJson: '{}',
+        }).run();
+        if (!accepted) tx.insert(t.joinRequest).values({ personId: pending.personId!, joinLinkId: link.id, fromHomeNetwork: 1, matchesRules: admission.matches === null ? null : admission.matches ? 1 : 0 }).run();
         tx.insert(t.passkey).values(passkeyRow(cred, pending.personId!, label, now.toISOString())).run();
         // The use counts here and only here, with the passkey (checkLink saw room for it in this same transaction).
         if (!spendUse(tx, link.id, now)) throw new Error('a join link use was not counted');
@@ -179,8 +179,8 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (outcome === 'taken') return answer(reply, start, 409, { error: 'this passkey is already enrolled' });
     if (outcome === 'not-here') return answer(reply, start, 404, NOT_HERE);
     startSession(db, req, reply, pending.personId, cred.id);
-    // Someone waits: the admins are told. A rule match leaves nothing to decide (People lists them).
-    if (outcome === 'joined') o.joined?.();
+    // The admins are told (the push's kind alone): someone waits, or a link's rules let someone in (People lists them).
+    o.joined?.();
     const p = db.select().from(t.person).where(eq(t.person.id, pending.personId)).get()!;
     return answer(reply, start, 200, { mode: cfg.mode, signedIn: true, setupNeeded: false, waiting: outcome === 'joined', person: view(db, p) });
   });
@@ -238,7 +238,7 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     }
     try {
       const rules: LinkRules = {
-        ...NO_RULES, automatic: b.accept === 'automatic', refuseNonMatches: b.nonMatches === 'refuse',
+        automatic: b.accept === 'automatic', refuseNonMatches: b.nonMatches === 'refuse',
         networks: b.networks === undefined ? null : linkNetworks(db, b.networks, where),
       };
       const l = createJoinLink(db, cfg, { createdBy: req.caller!.personId, days: b.days as number | undefined, uses: b.uses as number | undefined, rules });

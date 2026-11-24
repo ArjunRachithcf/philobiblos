@@ -1307,7 +1307,7 @@ export interface components {
             } | null;
             /** @description whether they came from the household's networks (null: from Homeward) */
             fromHomeNetwork: boolean | null;
-            /** @description whether they matched every rule of their link (on a link that waits for approval, or outside its own ranges); null: from Homeward. Never a reason to approve by itself */
+            /** @description whether they matched their link's own rules (its ranges inside the home network); null: the link has none beyond the household's, or from Homeward. Never a reason to approve by itself */
             matchesRules: boolean | null;
             /** @description the address a rule verified (slices 4a and 4b) */
             verifiedAddress: null;

@@ -82,7 +82,7 @@ CREATE TABLE join_request (                -- a waiting person's request: what t
   person_id         TEXT PRIMARY KEY NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   join_link_id      TEXT REFERENCES join_link(id) ON DELETE SET NULL,
   from_home_network INTEGER NOT NULL,
-  matches_rules     INTEGER NOT NULL DEFAULT 0 -- whether they matched every rule of the link (slice 3)
+  matches_rules     INTEGER                -- whether they matched the link's own rules (slice 3); NULL: it has none
 );
 
 CREATE TABLE household_settings (

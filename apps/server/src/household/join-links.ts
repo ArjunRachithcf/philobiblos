@@ -98,11 +98,13 @@ export const presentedHash = (token: unknown) => hashToken(looksLikeToken(token)
  * What a presented link does for this address: `accept` (they match every rule of a link that accepts automatically:
  * an adult at once), `wait` (for an admin), or null (the one answer for every link that does not open: unknown,
  * expired, used up, outside the household's networks (never a hop: net/networks.ts isHop), a non-match on a link that
- * refuses them, or a full waiting list). Every case does the same work (one lookup by hash, the whole network list, the
+ * refuses them, or a full waiting list for someone who would wait). Every case does the same work (one lookup by hash, the whole network list, the
  * link's ranges, the count), so neither the answer nor its time says which it was. The caller lapses old requests
- * first (household/waiting-rows.ts), so a lapsed one frees its place. A full list refuses rule matches too.
+ * first (household/waiting-rows.ts), so a lapsed one frees its place. A rule match takes no waiting place, so a full
+ * list never holds one back.
  */
-export interface Admission { link: JoinLink; outcome: 'accept' | 'wait'; matches: boolean }
+/** `matches`: whether they matched the link's own rules; null when it has none beyond the household's. */
+export interface Admission { link: JoinLink; outcome: 'accept' | 'wait'; matches: boolean | null }
 export function checkLink(tx: Db, by: { hash: string } | { id: string }, address: string | null | undefined, now = new Date(), s: Surroundings = NO_SURROUNDINGS): Admission | null {
   const row = tx.select().from(t.joinLink).where('hash' in by ? eq(t.joinLink.tokenHash, by.hash) : eq(t.joinLink.id, by.id)).get();
   // The household's rule, which every link keeps: its networks.
@@ -113,8 +115,10 @@ export function checkLink(tx: Db, by: { hash: string } | { id: string }, address
   const matches = home && inOwn;
   const room = waitingNow(tx) < WAITING.max;
   const open = row !== undefined && row.expiresAt > now.toISOString() && row.uses < row.maxUses;
-  if (!open || !home || !room || (!matches && rules.refuseNonMatches)) return null;
-  return { link: row, outcome: matches && rules.automatic ? 'accept' : 'wait', matches };
+  if (!open || !home || (!matches && rules.refuseNonMatches)) return null;
+  const outcome = matches && rules.automatic ? 'accept' as const : 'wait' as const;
+  if (outcome === 'wait' && !room) return null;
+  return { link: row, outcome, matches: rules.networks === null ? null : matches };
 }
 
 /** Counts a use, at an enrolment, inside its transaction: false if the link was used up or expired in between. */

@@ -31,7 +31,7 @@ services:
       PHILOBIBLOS_EGRESS: ${PHILOBIBLOS_EGRESS:-${SHELF_EGRESS:-on}}
       # A reverse proxy in front of Philobiblos (its address, or a range of at most /24 or /64; comma-separated): only its
       # X-Forwarded-For names the client, for join links' home network (docs/security.md). Empty: the connection's address.
-      PHILOBIBLOS_TRUSTED_PROXY: ${PHILOBIBLOS_TRUSTED_PROXY:-}
+      PHILOBIBLOS_TRUSTED_PROXY: ${PHILOBIBLOS_TRUSTED_PROXY:-${SHELF_TRUSTED_PROXY:-}}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Mail (ADR 0007): the Philobiblos-only mailbox, read over IMAP (TLS from the first byte) with an app password, or
       # with XOAUTH2 for a provider that refuses passwords (PHILOBIBLOS_IMAP_AUTH=xoauth2: your own OAuth client, then

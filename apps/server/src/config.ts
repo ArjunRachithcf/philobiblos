@@ -51,6 +51,7 @@ export interface Config {
    * filter's common words. null: English.
    */
   locale: string | null;
+  /**
    * PHILOBIBLOS_TRUSTED_PROXY (net/proxy.ts): the proxy's addresses or ranges, checked at start. Under HomersLab the only
    * sender whose X-HomersLab-* headers are trusted; in both modes the only one whose X-Forwarded-For names the client
    * (net/proxy.ts clientAddress). null: none, every client is the connection's address.
@@ -122,7 +123,8 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
   if (mode === 'homerslab' && env.PHILOBIBLOS_EDGE_IDENTITY !== EDGE_IDENTITY) {
     throw new Error(`homerslab mode needs an edge that strips and sets the X-HomersLab-* headers (HomersLab #236): PHILOBIBLOS_EDGE_IDENTITY=${EDGE_IDENTITY}`);
   }
-  if (mode === 'homerslab' && !env.PHILOBIBLOS_TRUSTED_PROXY) throw new Error('PHILOBIBLOS_TRUSTED_PROXY must be set in homerslab mode');
+  const trustedProxy = parseTrustedProxy(env.PHILOBIBLOS_TRUSTED_PROXY);
+  if (mode === 'homerslab' && !trustedProxy) throw new Error('PHILOBIBLOS_TRUSTED_PROXY must be set in homerslab mode');
   const origin = parseOrigin(env.PHILOBIBLOS_ORIGIN ?? `http://localhost:${port}`);
   return {
     mode,
@@ -135,7 +137,7 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
     timezone: parseTimeZone(env.PHILOBIBLOS_TZ),
     currency: parseCurrency(env.PHILOBIBLOS_CURRENCY),
     locale: parseLocaleEnv(env.PHILOBIBLOS_LOCALE),
-    trustedProxy: parseTrustedProxy(env.PHILOBIBLOS_TRUSTED_PROXY),
+    trustedProxy,
     webDir: env.PHILOBIBLOS_WEB_DIR ?? null,
     origin: origin.origin,
     rpId: origin.hostname,

@@ -10,22 +10,23 @@
 // read). A trusted proxy that sends no X-Forwarded-For, an empty one, one too long, or an entry that is not a plain
 // address (a port, brackets, a zone, a name) before that one, gives no client address (null): such a visitor is in no
 // household network (fail closed).
-import { isIP, isIPv4 } from 'node:net';
-import { inRanges, parseCidrAnyWidth, plainAddress, type Cidr } from './networks';
+import { BlockList, isIP, isIPv4 } from 'node:net';
+import { parseCidrAnyWidth, plainAddress, type Cidr } from './networks';
 
 /** At most `max` entries, none wider than a /24 (IPv4) or a /64 (IPv6); X-Forwarded-For past `headerMax` is not read. */
 export const TRUSTED_PROXY = { max: 10, minPrefix4: 24, minPrefix6: 64, headerMax: 2048 } as const;
 
 /**
- * PHILOBIBLOS_TRUSTED_PROXY as given: comma-separated addresses (each is a /32 or /128) or CIDRs. null when unset or
- * empty; throws on anything else (an unspecified address, a name, a mapped address, a range wider than TRUSTED_PROXY
- * allows, an empty entry, too many).
+ * PHILOBIBLOS_TRUSTED_PROXY as given: comma-separated addresses (each is a /32 or /128; an IPv4-mapped one is its IPv4
+ * address) or CIDRs. null when unset or empty; throws on anything else (an unspecified address, a name, a range wider
+ * than TRUSTED_PROXY allows, an empty entry, too many).
  */
 export function parseTrustedProxy(raw: string | undefined): Cidr[] | null {
   if (raw === undefined || raw.trim() === '') return null;
   const entries = raw.split(',').map((e) => e.trim());
   if (entries.length > TRUSTED_PROXY.max) throw new Error(`PHILOBIBLOS_TRUSTED_PROXY: at most ${TRUSTED_PROXY.max} addresses or ranges`);
-  return entries.map((e) => {
+  return entries.map((raw) => {
+    const e = plainAddress(raw);
     const withPrefix = e.includes('/') ? e : `${e}/${isIPv4(e) ? 32 : 128}`;
     const c = parseCidrAnyWidth(withPrefix, TRUSTED_PROXY.minPrefix4, TRUSTED_PROXY.minPrefix6);
     if (!c || c.network === '0.0.0.0' || c.network === '::') {
@@ -36,8 +37,14 @@ export function parseTrustedProxy(raw: string | undefined): Cidr[] | null {
 }
 
 /** Whether an address (a mapped one as its IPv4 one) is the trusted proxy's. */
+const blocks = new WeakMap<Cidr[], BlockList>();
 export function isTrustedProxy(list: Cidr[] | null, address: string | null | undefined): boolean {
-  return list !== null && Boolean(address) && inRanges(list, address);
+  if (list === null || !address) return false;
+  let b = blocks.get(list);
+  if (!b) { b = new BlockList(); for (const c of list) b.addSubnet(c.network, c.prefix, c.family); blocks.set(list, b); }
+  const a = plainAddress(address);
+  const family = isIPv4(a) ? 'ipv4' : isIP(a) === 6 ? 'ipv6' : null;
+  return family !== null && b.check(a, family);
 }
 
 /** One entry of X-Forwarded-For as a plain address, or null when it is anything else. */

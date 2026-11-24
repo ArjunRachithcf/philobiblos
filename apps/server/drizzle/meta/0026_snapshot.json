@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "7962752a-5698-4167-b385-e2d79399c23e",
+  "id": "90dde93c-f4dc-4696-9e53-21cacffa4f3d",
   "prevId": "3aeb215c-81c6-40fb-abe2-53cc2402734b",
   "tables": {
     "ai_run": {
@@ -2146,9 +2146,8 @@
           "name": "matches_rules",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},

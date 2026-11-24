@@ -14,7 +14,8 @@ import { waitingPeople } from '../src/household/waiting';
 import { readSurroundings, surroundingsFrom, surroundingsWarning, type Surroundings, type System } from '../src/net/networks';
 import { TRUSTED_PROXY, clientAddress, parseTrustedProxy } from '../src/net/proxy';
 import { JOIN_OPEN, NOT_HERE } from '../src/routes/join';
-import { ORIGIN, TEST_SEALING_KEY, fakeWebAuthn, household, nowherePush, sessionCookie } from './helpers';
+import type { Egress } from '../src/net/egress';
+import { ORIGIN, RFC8291_UA_KEY, TEST_SEALING_KEY, fakeWebAuthn, household, nowherePush, sessionCookie } from './helpers';
 
 const PROXY = '127.0.0.1';
 const standalone = (proxy?: string) => loadConfig({ PHILOBIBLOS_MODE: 'standalone', PHILOBIBLOS_DATA_DIR: '/nonexistent', PHILOBIBLOS_SEALING_KEY: TEST_SEALING_KEY, ...(proxy ? { PHILOBIBLOS_TRUSTED_PROXY: proxy } : {}) });
@@ -70,7 +71,7 @@ describe('PHILOBIBLOS_TRUSTED_PROXY: exact addresses or narrow ranges, checked a
 
   it('refuses anything else, so Philobiblos does not start', () => {
     const bad = ['proxy.example.org', '0.0.0.0', '::', '0.0.0.0/0', '::/0', '10.0.0.0/8', '192.0.2.0/23', '2001:db8::/48', '127.0.0.1,', ',127.0.0.1',
-      '127.0.0.1:8080', '[::1]', '::ffff:127.0.0.1', 'fe80::1%eth0', '127.0.0.1 10.0.0.1', Array.from({ length: TRUSTED_PROXY.max + 1 }, (_, i) => `192.0.2.${i + 1}`).join(',')];
+      '127.0.0.1:8080', '[::1]', 'fe80::1%eth0', '127.0.0.1 10.0.0.1', Array.from({ length: TRUSTED_PROXY.max + 1 }, (_, i) => `192.0.2.${i + 1}`).join(',')];
     for (const v of bad) {
       expect(() => parseTrustedProxy(v), v).toThrow(/PHILOBIBLOS_TRUSTED_PROXY/);
       expect(() => standalone(v), v).toThrow(/PHILOBIBLOS_TRUSTED_PROXY/);
@@ -281,6 +282,11 @@ describe('a link\'s rules', () => {
     for (const url of ['/api/settings', '/api/people/waiting']) expect((await a.inject({ url, headers: { cookie: cookieOf(v) } })).statusCode, url).toBe(403);
     const list = (await a.inject({ url: '/api/people/waiting', headers: { cookie: sessionCookie(db, 'p_alex') } })).json();
     expect(list).toEqual([expect.objectContaining({ name: 'Jordan', fromHomeNetwork: true, matchesRules: true })]);
+    // a link with no rules of its own says nothing either way
+    const plain = await makeLink(a, db);
+    await join(a, plain.token, 'Robin 2', { remote: IN_GARDEN });
+    const again = (await a.inject({ url: '/api/people/waiting', headers: { cookie: sessionCookie(db, 'p_alex') } })).json();
+    expect(again.find((p: { name: string }) => p.name === 'Robin 2')).toMatchObject({ matchesRules: null });
   });
 
   it('a link\'s own ranges narrow it: outside them a person waits, or is refused when the link refuses non-matches', async () => {
@@ -439,5 +445,51 @@ describe('a match can never make an admin', () => {
     const admin = { 'x-homerslab-person': 'hl-alex', 'x-homerslab-name': 'Alex', 'x-homerslab-role': 'admin', origin: ORIGIN };
     expect((await a.inject({ url: '/api/people/home-networks', remoteAddress: PROXY, headers: admin })).statusCode).toBe(404);
     expect((await a.inject({ method: 'POST', url: '/api/people/join-links', remoteAddress: PROXY, headers: admin, payload: { accept: 'automatic', networks: [KITCHEN] } })).statusCode).toBe(404);
+  });
+});
+
+describe('the review\'s findings', () => {
+  it('a full waiting list holds back those who would wait, never a rule match (they take no place)', async () => {
+    const { app: a, db } = await app();
+    home(db);
+    for (const half of [0, 5]) {
+      const waits = await makeLink(a, db);
+      for (let i = half; i < half + 5; i++) expect((await join(a, waits.token, `Waiter ${i}`, { remote: `10.20.4.${i + 1}` })).json()).toMatchObject({ waiting: true });
+    }
+    expect(waitingPeople(db)).toHaveLength(10);
+    const auto = await makeLink(a, db, { accept: 'automatic', networks: [KITCHEN] });
+    expect((await join(a, auto.token, 'Jordan', { remote: IN_KITCHEN })).json()).toMatchObject({ waiting: false });
+    // a non-match on the same link would wait: the full list refuses them
+    expect((await post(a, '/api/join/open', { token: auto.token }, { remote: IN_GARDEN })).statusCode).toBe(404);
+  });
+
+  it('the admins are told when a link\'s rules let someone in', async () => {
+    const sent: string[] = [];
+    const push: Egress = { ...nowherePush, push: async (url) => { sent.push(url); return { status: 201, type: '', body: Buffer.alloc(0), url }; } };
+    const db = household();
+    db.insert(t.pushSubscription).values({ id: 'ps-alex', personId: 'p_alex', endpoint: 'https://fcm.googleapis.com/fcm/send/ps-alex', p256dh: RFC8291_UA_KEY, auth: 'BTBZMqHH6r4Tts7J_aSIgg', createdAt: new Date().toISOString() }).run();
+    const b = await buildApp(standalone(), db, { webauthn: fakeWebAuthn(), push, joinFloorMs: 0, surroundings: HOST });
+    await b.app.ready();
+    open.push(b);
+    home(db);
+    const { token } = await makeLink(b.app, db, { accept: 'automatic' });
+    expect((await join(b.app, token, 'Jordan')).json()).toMatchObject({ waiting: false });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual(['https://fcm.googleapis.com/fcm/send/ps-alex']);
+  });
+
+  it('homerslab mode does not start with a blank PHILOBIBLOS_TRUSTED_PROXY; a mapped address is its IPv4 one', () => {
+    expect(() => loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_EDGE_IDENTITY: 'homerslab-v1', PHILOBIBLOS_TRUSTED_PROXY: ' ', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_DATA_DIR: '/nonexistent' })).toThrow(/PHILOBIBLOS_TRUSTED_PROXY must be set/);
+    expect(parseTrustedProxy('::ffff:172.30.0.2')!.map((c) => c.cidr)).toEqual(['172.30.0.2/32']);
+  });
+
+  it('share-token failures count per forwarded client behind the trusted proxy', async () => {
+    const { app: a } = await app(standalone(PROXY));
+    let n = 0;
+    const wrong = (xff: string) => a.inject({ method: 'POST', url: '/api/shares', remoteAddress: PROXY, headers: { authorization: `Bearer ${String(n++).padStart(26, "x")}`, 'x-forwarded-for': xff } });
+    let last = 0;
+    for (let i = 0; i < 100 && last !== 429; i++) last = (await wrong(AWAY)).statusCode;
+    expect(last).toBe(429);
+    expect((await wrong('198.51.100.8')).statusCode).toBe(401);
   });
 });
