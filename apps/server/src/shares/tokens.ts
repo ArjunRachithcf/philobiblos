@@ -61,11 +61,16 @@ export function revokeShareToken(db: Db, personId: string, id: string, now = new
  */
 export class Limiter {
   private readonly seen = new Map<string, { n: number; until: number }>();
-  constructor(readonly max: number, readonly windowMs: number, readonly maxKeys = 10_000) {}
+  /** `full`: when maxKeys are counted, 'evict' forgets the oldest key; 'refuse' drops expired keys and else refuses the new one. */
+  constructor(readonly max: number, readonly windowMs: number, readonly maxKeys = 10_000, readonly full: 'evict' | 'refuse' = 'evict') {}
   hit(key: string, now = Date.now()): boolean {
     let w = this.seen.get(key);
     if (!w || w.until <= now) {
       this.seen.delete(key);
+      if (this.seen.size >= this.maxKeys && this.full === 'refuse') {
+        for (const [k, v] of this.seen) if (v.until <= now) this.seen.delete(k);
+        if (this.seen.size >= this.maxKeys) return false;
+      }
       if (this.seen.size >= this.maxKeys) this.seen.delete(this.seen.keys().next().value!);
       w = { n: 0, until: now + this.windowMs };
       this.seen.set(key, w);

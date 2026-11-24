@@ -71,6 +71,34 @@ test('the setup link makes Alex the admin with a passkey, then the household is 
   expect(await page.locator('header.bar').evaluate((el) => getComputedStyle(el).backdropFilter)).toBe('none');
   await cdp.send('Emulation.setEmulatedMedia', { features: [] });
 
+  // A join link (ADR 0011). The e2e server sees every browser from loopback, as Philobiblos behind a proxy or Docker's
+  // published port does: loopback is refused as a home network, the page says links wait for the trusted proxy
+  // (slice 3), and a link made for another network does not open here, with nothing of the household shown.
+  await page.getByRole('region', { name: 'A link for Sam' }).getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByText('Join links wait for the trusted proxy.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Make a join link' })).toBeDisabled();
+  await page.getByLabel('A range, such as 192.0.2.0/24').fill('127.0.0.0/8');
+  await page.getByRole('button', { name: 'Add the range' }).click();
+  await expect(page.getByRole('alert')).toContainText('127.0.0.0/8 is loopback');
+  await page.getByLabel('A range, such as 192.0.2.0/24').fill('192.0.2.0/24');
+  await page.getByRole('button', { name: 'Add the range' }).click();
+  await expect(page.getByRole('button', { name: 'Remove 192.0.2.0/24' })).toBeVisible();
+  await page.getByRole('button', { name: 'Make a join link' }).click();
+  const joinField = page.getByLabel(/Send it yourself; it lets 5 people ask/);
+  await expect(joinField).toHaveValue(new RegExp(`^${ORIGIN}/join#`));
+  const joinUrl = await joinField.inputValue();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expectAccessible(page, 'household with a join link');
+  const joiner = await (await browser.newContext()).newPage();
+  const joinDone = noForeignRequests(joiner, ORIGIN);
+  await joiner.goto(joinUrl);
+  await expect(joiner).toHaveURL(`${ORIGIN}/join`); // the token left the address bar
+  await expect(joiner.getByRole('alert')).toContainText('This link does not open here.');
+  await expect(joiner.getByRole('button', { name: 'Try again' })).toHaveCount(0); // final, not a hiccup
+  await expect(joiner.locator('body')).not.toContainText(/Alex|Sam|Kid 1/);
+  await expectAccessible(joiner, 'join, not here');
+  joinDone();
+
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
   await expectAccessible(page, 'sign-in');

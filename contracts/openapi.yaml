@@ -55,6 +55,31 @@ paths:
   /auth/sign-out:
     post: { tags: [auth], operationId: signOut, security: [], summary: Ends this browser's session (if any) and clears the cookie, responses: { '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Signed out } } }
 
+  /join/open:
+    post:
+      tags: [auth]
+      operationId: joinOpen
+      security: []
+      summary: 'Standalone: whether a household join link opens here (ADR 0011, philobiblos#34 slice 2). An unknown, expired, revoked, used-up or out-of-network link, and a full waiting list, all get the same 404, no sooner than any other answer. Nothing of the household in any answer. 20 in 10 minutes per client address and per link (429). Under HomersLab, 404.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], additionalProperties: false, properties: { token: { type: string, maxLength: 200, description: 'from the link''s #fragment' } } } } } }
+      responses: { '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: 'The link opens here' }, '404': { description: 'The link does not open here (whatever the reason), or under HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many tries, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /join/options:
+    post:
+      tags: [auth]
+      operationId: joinOptions
+      security: []
+      summary: 'Standalone: a name and the options to enrol a passkey with a join link. The name is never compared with the household''s: a member''s name gets the same answer as any other. Nothing is stored, and no use counted, until the passkey is enrolled. The same 404 as /join/open; 10 in 10 minutes per client address and per link, with /join/verify (429).'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token, name], additionalProperties: false, properties: { token: { type: string, maxLength: 200 }, name: { type: string, minLength: 1, maxLength: 60 } } } } } }
+      responses: { '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: WebAuthn registration options, content: { application/json: { schema: { $ref: '#/components/schemas/WebAuthnStart' } } } }, '400': { description: 'Not a name (1 to 60 characters, no control characters)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'A member is signed in on this browser already', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: 'The link does not open here, or under HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many tries, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /join/verify:
+    post:
+      tags: [auth]
+      operationId: joinVerify
+      security: []
+      summary: 'Standalone: enrols the passkey; in the same transaction the link''s use counts and the person is stored, waiting for an admin (signed in, to the one waiting page). The link is checked again; the same 404 if it no longer opens here.'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WebAuthnFinish' } } } }
+      responses: { '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'Waiting (signed in)', headers: { Set-Cookie: { schema: { type: string }, description: 'philobiblos_session; HttpOnly; Secure; SameSite=Strict; Path=/' } }, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSession' } } } }, '401': { description: 'Verification failed, or the step expired', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: 'The link no longer opens here, or under HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'This passkey is already enrolled', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many tries, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+
   /people:
     post:
       tags: [household]
@@ -68,6 +93,37 @@ paths:
       operationId: listWaiting
       summary: 'Admins: the people who wait for approval (ADR 0011), newest first; at most 10 wait. A waiting person counts nowhere else and sees nothing.'
       responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WaitingPerson' } } } } } }
+  /people/home-networks:
+    get:
+      tags: [household]
+      operationId: getHomeNetworks
+      summary: 'Admins, standalone: the household''s networks (a join link opens only from one), and the private range the admin is on, proposed for them to confirm. Under HomersLab, 404.'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/HomeNetworks' } } } }, '404': { description: Under HomersLab, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+    put:
+      tags: [household]
+      operationId: setHomeNetworks
+      summary: 'Admins, standalone: replaces the list (at most 20 CIDRs, none wider than /8, or /32 for IPv6; never one overlapping loopback or, in a container, its own networks or next hops). An empty list makes no link open, never every address. Needs a sign-in in the last 10 minutes (403).'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [networks], additionalProperties: false, properties: { networks: { type: array, maxItems: 20, items: { type: string, maxLength: 64 } } } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/HomeNetworks' } } } }, '400': { description: 'Not a range Philobiblos takes', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: Under HomersLab, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /people/join-links:
+    get:
+      tags: [household]
+      operationId: listJoinLinks
+      summary: 'Admins, standalone: the household''s join links, open ones and closed ones someone who came with them still waits for. Never a token. Under HomersLab, 404.'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/JoinLink' } } } } }, '404': { description: Under HomersLab, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+    post:
+      tags: [household]
+      operationId: createJoinLink
+      summary: 'Admins, standalone: a household join link (7 days and 5 uses by default; 1 to 14 days, 1 to 10 uses); the link is in this response only. Needs a sign-in in the last 10 minutes (403), and a home network listed (409).'
+      requestBody: { required: false, content: { application/json: { schema: { type: object, additionalProperties: false, properties: { days: { type: integer, minimum: 1, maximum: 14 }, uses: { type: integer, minimum: 1, maximum: 10 } } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { type: object, required: [id, url, expiresAt, maxUses], properties: { id: { type: string }, url: { type: string, description: 'the token in its #fragment' }, expiresAt: { type: string }, maxUses: { type: integer } } } } } }, '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: Under HomersLab, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'No home network is listed', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /people/join-links/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    delete:
+      tags: [household]
+      operationId: revokeJoinLink
+      summary: 'Admins, standalone: revokes a join link; the people who wait after using it are declined, in the same transaction. Needs a sign-in in the last 10 minutes (403).'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Revoked }, '404': { description: 'No such join link; or under HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
   /people/waiting/{personId}/approve:
     parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
     post:
@@ -442,10 +498,12 @@ components:
         name: { type: string, description: 'as they gave it (or Homeward sent it): plain text, never a reason to approve by itself' }
         arrivedAt: { type: [string, 'null'] }
         via: { enum: [homeward, join_link] }
-        joinLink: { type: ['null'], description: 'the join link they used (philobiblos#34 slice 2)' }
-        fromHomeNetwork: { type: ['null'], description: 'whether they came from the household''s networks (slice 3)' }
+        joinLink: { type: [object, 'null'], required: [id, createdAt, createdBy], properties: { id: {type: string}, createdAt: {type: string}, createdBy: { type: [string, 'null'], description: 'the admin who made it' } }, description: 'the join link they used (null: from Homeward, or the link is gone)' }
+        fromHomeNetwork: { type: [boolean, 'null'], description: 'whether they came from the household''s networks (null: from Homeward)' }
         verifiedAddress: { type: ['null'], description: 'the address a rule verified (slices 4a and 4b)' }
         mayBeAdmin: { type: boolean, description: 'under HomersLab, false unless their Homeward role is admin (the ceiling)' }
+    HomeNetworks: { type: object, required: [networks, proposal, behindProxy], properties: { behindProxy: { type: boolean, description: 'the admin comes through loopback or the container''s own networks (a proxy, a published port), or the container''s surroundings could not be read: no join link opens for anyone until the forwarded address is read from PHILOBIBLOS_TRUSTED_PROXY (philobiblos#34 slice 3)' },  networks: { type: array, items: { type: object, required: [cidr, addedAt], properties: { cidr: {type: string}, addedAt: {type: string} } } }, proposal: { type: [string, 'null'], description: 'the private range (a /24, or an IPv6 /64) the admin is on; never added by itself' } } }
+    JoinLink: { type: object, required: [id, createdAt, expiresAt, maxUses, uses, createdBy, waiting, open], properties: { id: {type: string}, createdAt: {type: string}, expiresAt: {type: string}, maxUses: {type: integer}, uses: { type: integer, description: 'passkeys enrolled with it' }, createdBy: { type: [string, 'null'] }, waiting: { type: integer, description: 'people who came with it and wait' }, open: { type: boolean, description: 'unexpired and not used up' } } }
     Person: { type: object, required: [id, name, role], properties: { id: {type: string}, name: {type: string}, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'] }, birthYear: { type: [integer, 'null'], description: kids only }, ageBand: { enum: ['0-2','3-5','6-8','9-12', null] }, signsIn: { type: boolean, description: 'standalone: has at least one passkey' } } }
     PersonInput: { type: object, required: [name, role], additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: string, pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: integer, minimum: 2000, maximum: 2100 } } }
     PersonPatch: { type: object, additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'], pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: [integer, 'null'], minimum: 2000, maximum: 2100 } } }

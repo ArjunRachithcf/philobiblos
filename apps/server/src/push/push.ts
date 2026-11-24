@@ -42,18 +42,27 @@ export const pushClient = (cfg: Pick<Config, 'pushHosts' | 'egress'>, o: Partial
 
 export type PushKind = 'plan' | 'test' | 'join';
 
-/** `join` pushes (someone waits to join, philobiblos#34): at most 6 an hour for the household, to its admins. */
-export const JOIN_PUSH = { max: 6, windowMs: 3_600_000 } as const;
+/**
+ * `join` pushes (someone waits to join, philobiblos#34): at most 6 an hour for the household, to its admins; under
+ * HomersLab only to admins the edge sent in the last `seenDays` days.
+ */
+export const JOIN_PUSH = { max: 6, windowMs: 3_600_000, seenDays: 14 } as const;
 
 /**
  * The household's admins are told that someone waits: the kind alone (no name, nothing else), to whoever is an admin
  * when it is sent (a demoted admin's devices get no more), within JOIN_PUSH; the Inbox item stays either way.
+ *
+ * Under HomersLab a person Homeward removes no longer arrives, but stays a Philobiblos admin until the household provider
+ * reports the removal (not built yet). So a `join` goes only to admins the edge sent in the last JOIN_PUSH.seenDays
+ * (person.seen_at, written at most hourly by household/waiting.ts arrive): a removed admin's devices stop getting them
+ * within that time, and an admin away longer finds the Inbox item when they come back.
  */
-export function joinNotifier(db: Db, cfg: Pick<Config, 'sealingKey'>, egress: Egress): () => void {
+export function joinNotifier(db: Db, cfg: Pick<Config, 'sealingKey' | 'mode'>, egress: Egress, now = () => new Date()): () => void {
   const limit = new Limiter(JOIN_PUSH.max, JOIN_PUSH.windowMs);
   return () => {
+    const since = new Date(now().getTime() - JOIN_PUSH.seenDays * 86_400_000).toISOString();
     // No admin to tell yet (a new HomersLab household): the hour's budget is kept for when there is one.
-    const admins = household(db).filter((p) => p.role === 'admin').map((p) => p.id);
+    const admins = household(db).filter((p) => p.role === 'admin' && (cfg.mode !== 'homerslab' || (p.seenAt !== null && p.seenAt >= since))).map((p) => p.id);
     if (admins.length && limit.hit('join')) void notify(db, cfg, egress, 'join', { people: admins }).catch(() => undefined);
   };
 }

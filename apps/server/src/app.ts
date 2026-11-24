@@ -15,6 +15,9 @@ import { backlogRoutes } from './routes/backlog';
 import { knowledgeRoutes } from './routes/knowledge';
 import { libraryRoutes } from './routes/library';
 import { peopleRoutes } from './routes/people';
+import { joinRoutes } from './routes/join';
+import { readSurroundings, type Surroundings } from './net/networks';
+import { lapseWaiting } from './household/waiting';
 import { stubRoutes } from './routes/stubs';
 import { jobRoutes, type JobDeps } from './routes/jobs';
 import { createEgress, egressRules } from './net/egress';
@@ -51,7 +54,13 @@ export interface AppOptions { connectors?: Registry; ai?: AiJobOptions; push?: E
   /** Tests only: the book client's lookup (so nothing is looked up for real). */
   egress?: Pick<EgressOptions, 'resolve'>;
   /** Tests only: the mailbox's OAuth token client (their own provider) and clock. */
-  mailOAuth?: MailOAuthOptions }
+  mailOAuth?: MailOAuthOptions;
+  /** Tests only: the public join routes' answer floor (routes/join.ts JOIN_FLOOR_MS). */
+  joinFloorMs?: number;
+  /** Tests only: where Philobiblos runs (net/networks.ts readSurroundings, read at start otherwise). */
+  surroundings?: Surroundings;
+  /** Tests only: how many links a per-link join limiter counts (routes/join.ts JOIN_LINK_KEYS). */
+  joinLinkKeys?: number }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   // The household's settings row, with PHILOBIBLOS_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
@@ -103,6 +112,11 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   const ai = new AiJobs(db, cfg, opts.ai);
   const shares = new ShareProcessor(db, { dataDir: cfg.dataDir, workDir: cfg.workDir, media: opts.media, retryMs: opts.shareRetryMs, after: () => { void ai.kickShares(); } });
   app.addHook('onClose', async () => shares.close());
+  // Waiting requests lapse after 7 days (household/waiting-rows.ts): each read of the waiting people lapses old ones,
+  // and this hourly sweep the ones nobody reads.
+  const sweep = setInterval(() => { try { lapseWaiting(db); } catch { /* the next sweep tries again */ } }, 3_600_000);
+  sweep.unref();
+  app.addHook('onClose', async () => clearInterval(sweep));
   app.addHook('onReady', async () => { void shares.kick(); });
   await app.register(async (api) => {
     const push = opts.push ?? pushClient(cfg);
@@ -111,6 +125,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     api.addHook('onRequest', authHook(cfg, db, { joined }));
     await authRoutes(api, cfg, db, webauthn, challenges, joined);
     await peopleRoutes(api, cfg, db);
+    await joinRoutes(api, cfg, db, webauthn, challenges, { joined, floorMs: opts.joinFloorMs, surroundings: opts.surroundings ?? readSurroundings(), linkKeys: opts.joinLinkKeys });
     await libraryRoutes(api, cfg, db, connectors);
     await backlogRoutes(api, cfg, db);
     await monthRoutes(api, cfg, db, connectors);

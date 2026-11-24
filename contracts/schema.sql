@@ -16,7 +16,8 @@ CREATE TABLE person (
   -- without a handle (given at approval), counts nowhere and sees nothing.
   state         TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('waiting','active') AND (state = 'active' OR (role = 'adult' AND handle IS NULL))),
   ceiling       TEXT CHECK (ceiling IN ('admin','adult','kid')), -- HomersLab: the Homeward role sent last; the Philobiblos role is never above it
-  arrived_at    TEXT                      -- when they first came
+  arrived_at    TEXT,                     -- when they first came
+  seen_at       TEXT                      -- HomersLab: when the edge last sent them (to the hour); `join` pushes stop for an admin it no longer sends
 );
 CREATE UNIQUE INDEX person_handle ON person(handle);
 
@@ -53,6 +54,30 @@ CREATE TABLE invite (                      -- one-time link to enrol a passkey (
   created_at  TEXT NOT NULL,
   expires_at  TEXT NOT NULL,
   used_at     TEXT
+);
+
+-- Joining with a link (standalone; ADR 0011, philobiblos#34 slice 2) ----
+CREATE TABLE home_network (                -- the household's networks: a join link opens only from one; none listed, no link
+  cidr      TEXT PRIMARY KEY NOT NULL,     -- normalised CIDR, e.g. 192.0.2.0/24
+  added_by  TEXT REFERENCES person(id) ON DELETE SET NULL,
+  added_at  TEXT NOT NULL
+);
+
+CREATE TABLE join_link (                   -- a household join link; its waiting people are declined when it is revoked
+  id          TEXT PRIMARY KEY NOT NULL,
+  token_hash  TEXT NOT NULL UNIQUE,        -- SHA-256 of the link's token (in its #fragment); the token is never stored
+  created_by  TEXT NOT NULL REFERENCES person(id) ON DELETE CASCADE, -- an admin; their links go when they stop being one
+  created_at  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  max_uses    INTEGER NOT NULL DEFAULT 5,
+  uses        INTEGER NOT NULL DEFAULT 0,  -- counted at a passkey's enrolment, in the same transaction
+  CHECK (max_uses BETWEEN 1 AND 10 AND uses BETWEEN 0 AND max_uses)
+);
+
+CREATE TABLE join_request (                -- a waiting person's request: what the admin who decides sees
+  person_id         TEXT PRIMARY KEY NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+  join_link_id      TEXT REFERENCES join_link(id) ON DELETE SET NULL,
+  from_home_network INTEGER NOT NULL
 );
 
 CREATE TABLE household_settings (

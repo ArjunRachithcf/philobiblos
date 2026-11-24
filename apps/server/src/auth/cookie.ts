@@ -2,7 +2,7 @@
 // LEGACY_SESSION_COOKIE) read until 0.2.0 and moved to the new one the first time it comes.
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '../db/open';
-import { LEGACY_SESSION_COOKIE, SESSION_COOKIE, cookieOptions, endSession, liveSession, sessionToken, type Session } from './sessions';
+import { LEGACY_SESSION_COOKIE, SESSION_COOKIE, SESSION_DAYS, cookieOptions, createSession, endSession, liveSession, sessionToken, type Session } from './sessions';
 
 /**
  * The live session the request's cookie names, or null. A request that brought only the old cookie gets the new one
@@ -29,4 +29,15 @@ export function endRequestSessions(db: Db, req: FastifyRequest): void {
 /** Clears both names. */
 export function clearSessionCookies(reply: FastifyReply): FastifyReply {
   return reply.clearCookie(SESSION_COOKIE, { path: '/' }).clearCookie(LEGACY_SESSION_COOKIE, { path: '/' });
+}
+
+/**
+ * Signs a person in on this browser (an enrolment or a sign-in): its earlier session ends, a new one starts with the
+ * passkey that made it (removing the passkey ends it), and the old cookie name is cleared.
+ */
+export function startSession(db: Db, req: FastifyRequest, reply: FastifyReply, personId: string, passkeyId: string): void {
+  endRequestSessions(db, req);
+  const { token } = createSession(db, personId, passkeyId);
+  void reply.setCookie(SESSION_COOKIE, token, cookieOptions(SESSION_DAYS * 86_400));
+  if (req.cookies?.[LEGACY_SESSION_COOKIE] !== undefined) void reply.clearCookie(LEGACY_SESSION_COOKIE, { path: '/' });
 }

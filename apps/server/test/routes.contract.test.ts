@@ -43,6 +43,9 @@ beforeAll(async () => {
   db0.insert(t.orderLine).values({ orderId: 'o_tap', bookId: 'b_tap', forPerson: 'p_alex', estimateC: 2500 }).run();
   // Two people who wait for approval (ADR 0011): one to approve, one to decline.
   db0.insert(t.person).values([1, 2].map((n) => ({ id: `p_wait${n}`, name: `Waiting ${n}`, role: 'adult' as const, state: 'waiting' as const, arrivedAt: new Date().toISOString() }))).run();
+  // A home network and a join link of Alex's (ADR 0011), for the join links' routes.
+  db0.insert(t.homeNetwork).values({ cidr: '192.0.2.0/24', addedBy: 'p_alex', addedAt: new Date().toISOString() }).run();
+  db0.insert(t.joinLink).values({ id: 'jl_contract', tokenHash: 'contract', createdBy: 'p_alex', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString() }).run();
   admin = sessionCookie(db0, 'p_alex');
   adult = sessionCookie(db0, 'p_sam');
   kid = sessionCookie(db0, 'p_kid1');
@@ -88,9 +91,9 @@ describe('contracts/openapi.yaml', () => {
 });
 
 describe('deny by default (securitySchemes)', () => {
-  it('only /health and the sign-in steps are open; every other operation declares 401 and 403', () => {
+  it('only /health, the sign-in steps and the join steps are open; every other operation declares 401 and 403', () => {
     const open = ops.filter(isPublic).map((o) => o.op.operationId).sort();
-    expect(open).toEqual(['authSession', 'enrolOptions', 'enrolVerify', 'health', 'signInOptions', 'signInVerify', 'signOut']);
+    expect(open).toEqual(['authSession', 'enrolOptions', 'enrolVerify', 'health', 'joinOpen', 'joinOptions', 'joinVerify', 'signInOptions', 'signInVerify', 'signOut']);
     for (const o of ops.filter((x) => !isPublic(x))) expect(Object.keys(o.op.responses), o.op.operationId).toEqual(expect.arrayContaining(['401', '403']));
   });
 

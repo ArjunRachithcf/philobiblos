@@ -1,9 +1,10 @@
-// Philobiblos's web app: sign-in, the one-time links, the household, this month, the inbox and phone share, the brain and its proposals,
+// Philobiblos's web app: sign-in, the one-time links and join links, the household, this month, the inbox and phone share, the brain and its proposals,
 // the library, the backlog and the budget. A screen never calls the network
 // beyond Philobiblos's own API (ADR 0003).
 import { useCallback, useEffect, useState } from 'react';
 import { api, message, type AuthSession, type Me } from './api';
 import { Enrol, takeToken } from './pages/Enrol';
+import { Join } from './pages/Join';
 import { Household } from './pages/Household';
 import { Backlog } from './pages/Backlog';
 import { Brain } from './pages/Brain';
@@ -26,7 +27,7 @@ const path = () => location.pathname.replace(/\/+$/, '') || '/';
 
 export function App() {
   const [route, setRoute] = useState(path);
-  const [token] = useState(() => (route === '/setup' || route === '/enrol' ? takeToken() : null));
+  const [token] = useState(() => (route === '/setup' || route === '/enrol' || route === '/join' ? takeToken() : null));
   const [session, setSession] = useState<AuthSession | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +58,8 @@ export function App() {
   if (error) return <main className="auth" id="main"><h1 className="large-title">Philobiblos</h1><Notice kind="error" title="Philobiblos did not answer.">{error}</Notice></main>;
   if (!session) return <main className="auth" id="main" aria-busy="true"><p className="sr-only">Loading</p></main>;
   if (route === '/setup' || route === '/enrol') return <Enrol kind={route === '/setup' ? 'setup' : 'enrol'} token={token} onSignedIn={signedIn} />;
+  // A household join link (ADR 0011): nothing of the household, then the one waiting page.
+  if (route === '/join') return <Join token={token} member={Boolean(session.signedIn && !session.waiting && session.mode === 'standalone')} onSignedIn={signedIn} />;
   if (!session.signedIn) return <SignIn session={session} onSignedIn={signedIn} />;
   if (session.waiting) return <Waiting session={session} onSignOut={signOut} />;
 

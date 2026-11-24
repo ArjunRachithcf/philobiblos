@@ -137,6 +137,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/join/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Standalone: whether a household join link opens here (ADR 0011, philobiblos#34 slice 2). An unknown, expired, revoked, used-up or out-of-network link, and a full waiting list, all get the same 404, no sooner than any other answer. Nothing of the household in any answer. 20 in 10 minutes per client address and per link (429). Under HomersLab, 404. */
+        post: operations["joinOpen"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/join/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Standalone: a name and the options to enrol a passkey with a join link. The name is never compared with the household's: a member's name gets the same answer as any other. Nothing is stored, and no use counted, until the passkey is enrolled. The same 404 as /join/open; 10 in 10 minutes per client address and per link, with /join/verify (429). */
+        post: operations["joinOptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/join/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Standalone: enrols the passkey; in the same transaction the link's use counts and the person is stored, waiting for an admin (signed in, to the one waiting page). The link is checked again; the same 404 if it no longer opens here. */
+        post: operations["joinVerify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/people": {
         parameters: {
             query?: never;
@@ -166,6 +217,61 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/home-networks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admins, standalone: the household's networks (a join link opens only from one), and the private range the admin is on, proposed for them to confirm. Under HomersLab, 404. */
+        get: operations["getHomeNetworks"];
+        /** Admins, standalone: replaces the list (at most 20 CIDRs, none wider than /8, or /32 for IPv6; never one overlapping loopback or, in a container, its own networks or next hops). An empty list makes no link open, never every address. Needs a sign-in in the last 10 minutes (403). */
+        put: operations["setHomeNetworks"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/join-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admins, standalone: the household's join links, open ones and closed ones someone who came with them still waits for. Never a token. Under HomersLab, 404. */
+        get: operations["listJoinLinks"];
+        put?: never;
+        /** Admins, standalone: a household join link (7 days and 5 uses by default; 1 to 14 days, 1 to 10 uses); the link is in this response only. Needs a sign-in in the last 10 minutes (403), and a home network listed (409). */
+        post: operations["createJoinLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/join-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Admins, standalone: revokes a join link; the people who wait after using it are declined, in the same transaction. Needs a sign-in in the last 10 minutes (403). */
+        delete: operations["revokeJoinLink"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1192,14 +1298,42 @@ export interface components {
             arrivedAt: string | null;
             /** @enum {unknown} */
             via: "homeward" | "join_link";
-            /** @description the join link they used (philobiblos#34 slice 2) */
-            joinLink: null;
-            /** @description whether they came from the household's networks (slice 3) */
-            fromHomeNetwork: null;
+            /** @description the join link they used (null: from Homeward, or the link is gone) */
+            joinLink: {
+                id: string;
+                createdAt: string;
+                /** @description the admin who made it */
+                createdBy: string | null;
+            } | null;
+            /** @description whether they came from the household's networks (null: from Homeward) */
+            fromHomeNetwork: boolean | null;
             /** @description the address a rule verified (slices 4a and 4b) */
             verifiedAddress: null;
             /** @description under HomersLab, false unless their Homeward role is admin (the ceiling) */
             mayBeAdmin: boolean;
+        };
+        HomeNetworks: {
+            /** @description the admin comes through loopback or the container's own networks (a proxy, a published port), or the container's surroundings could not be read: no join link opens for anyone until the forwarded address is read from PHILOBIBLOS_TRUSTED_PROXY (philobiblos#34 slice 3) */
+            behindProxy: boolean;
+            networks: {
+                cidr: string;
+                addedAt: string;
+            }[];
+            /** @description the private range (a /24, or an IPv6 /64) the admin is on; never added by itself */
+            proposal: string | null;
+        };
+        JoinLink: {
+            id: string;
+            createdAt: string;
+            expiresAt: string;
+            maxUses: number;
+            /** @description passkeys enrolled with it */
+            uses: number;
+            createdBy: string | null;
+            /** @description people who came with it and wait */
+            waiting: number;
+            /** @description unexpired and not used up */
+            open: boolean;
         };
         Person: {
             id: string;
@@ -2217,6 +2351,177 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    joinOpen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description from the link's #fragment */
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The link opens here */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description The link does not open here (whatever the reason), or under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many tries */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    joinOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description WebAuthn registration options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnStart"];
+                };
+            };
+            /** @description Not a name (1 to 60 characters, no control characters) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description The link does not open here, or under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A member is signed in on this browser already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many tries */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    joinVerify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebAuthnFinish"];
+            };
+        };
+        responses: {
+            /** @description Waiting (signed in) */
+            200: {
+                headers: {
+                    /** @description philobiblos_session; HttpOnly; Secure; SameSite=Strict; Path=/ */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSession"];
+                };
+            };
+            /** @description Verification failed, or the step expired */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description The link no longer opens here, or under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description This passkey is already enrolled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Too many tries */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     addPerson: {
         parameters: {
             query?: never;
@@ -2281,6 +2586,207 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getHomeNetworks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeNetworks"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setHomeNetworks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    networks: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeNetworks"];
+                };
+            };
+            /** @description Not a range Philobiblos takes */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listJoinLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JoinLink"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createJoinLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    days?: number;
+                    uses?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        /** @description the token in its #fragment */
+                        url: string;
+                        expiresAt: string;
+                        maxUses: number;
+                    };
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No home network is listed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    revokeJoinLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No such join link; or under HomersLab */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     approvePerson: {

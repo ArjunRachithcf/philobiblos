@@ -7,6 +7,7 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { purgeTakeawayRuns } from '../library/ai-context';
 import type { Role } from '../identity';
+import { revokeJoinLinksBy } from './join-links';
 
 export type Person = typeof t.person.$inferSelect;
 export type PersonView = components['schemas']['Person'];
@@ -110,7 +111,10 @@ export function editPerson(db: Db, id: string, patch: Partial<PersonInput>): Per
     }).where(eq(t.person.id, id)).run();
     // Kids never sign in: becoming one ends every session and removes every passkey and device.
     if (role === 'kid' && p.role !== 'kid') becameKid(tx as unknown as Db, id);
-    if (role !== 'admin' && p.role === 'admin') revokeInvitesBy(tx as unknown as Db, id);
+    if (role !== 'admin' && p.role === 'admin') {
+      revokeInvitesBy(tx as unknown as Db, id);
+      revokeJoinLinksBy(tx as unknown as Db, id); // and their join links, as revoked: the people who came with them are declined
+    }
   });
   return getPerson(db, id)!;
 }
@@ -139,6 +143,7 @@ export function removePerson(db: Db, id: string, by: string): void {
   try {
     db.transaction((tx) => {
       revokeInvitesBy(tx as unknown as Db, id); // otherwise they would outlive their admin, with no one behind them
+      revokeJoinLinksBy(tx as unknown as Db, id); // their join links too, as revoked
       purgeTakeawayRuns(tx as unknown as Db, id); // their runs go with them (ai_run.takeaways_of cascades)
       tx.delete(t.person).where(eq(t.person.id, id)).run();
     });

@@ -76,7 +76,20 @@ export function simpleWebAuthn(cfg: Pick<Config, 'origin' | 'rpId'>): WebAuthn {
   };
 }
 
-export interface Pending { challenge: string; kind: 'enrol' | 'sign-in'; inviteId?: string; name?: string; expires: number }
+/** A passkey's label as a person gives it: trimmed, at most 40 characters, 'Passkey' when empty. */
+export const passkeyLabel = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 40) : 'Passkey');
+
+/** The passkey row of a verified enrolment (auth.ts's links, join.ts's join links). */
+export const passkeyRow = (cred: NewCredential, personId: string, label: string, createdAt: string, invitedBy: string | null = null) => ({
+  id: cred.id, personId, publicKey: Buffer.from(cred.publicKey), counter: cred.counter,
+  transportsJson: JSON.stringify(cred.transports), backedUp: cred.backedUp ? 1 : 0, label, createdAt, invitedBy,
+});
+
+export interface Pending {
+  challenge: string; kind: 'enrol' | 'sign-in' | 'join'; inviteId?: string; name?: string; expires: number;
+  /** 'join' (household/join-links.ts): the link, the presented token's hash (its rate limit) and the person to be. */
+  joinLinkId?: string; tokenHash?: string; personId?: string;
+}
 
 /** One-time challenges, 5 minutes, at most 1000 waiting (the oldest go first). */
 export class Challenges {
@@ -88,6 +101,12 @@ export class Challenges {
     const id = randomBytes(18).toString('base64url');
     this.m.set(id, { ...p, expires: now + this.ttlMs });
     return id;
+  }
+  /** The step, left in place (a rate limit reads its link before deciding whether to take it). */
+  peek(id: unknown, kind: Pending['kind'], now = Date.now()): Pending | null {
+    if (typeof id !== 'string') return null;
+    const p = this.m.get(id);
+    return p && p.kind === kind && p.expires > now ? p : null;
   }
   take(id: unknown, kind: Pending['kind'], now = Date.now()): Pending | null {
     if (typeof id !== 'string') return null;
