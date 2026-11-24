@@ -23,10 +23,11 @@ export function wholeIn(c: number, digits: number): boolean {
 
 /**
  * Whole units and the decimals of an amount as written, in hundredths: decimals beyond the second must be 0 (a
- * thousandth is not kept), and the amount must be whole in the currency and at most the ceiling; else null.
+ * thousandth is not kept: `below`, so the refusal can say why), and the amount must be whole in the currency and at
+ * most the ceiling; else null.
  */
-export function toHundredths(units: string, decimals: string, digits: number): number | null {
-  if (/[1-9]/.test(decimals.slice(2))) return null;
+export function toHundredths(units: string, decimals: string, digits: number): number | 'below' | null {
+  if (/[1-9]/.test(decimals.slice(2))) return 'below';
   const c = Number(units) * 100 + Number(decimals.slice(0, 2).padEnd(2, '0'));
   return c <= AMOUNT_CEILING_C && wholeIn(c, digits) ? c : null;
 }
@@ -40,11 +41,19 @@ export function toHundredths(units: string, decimals: string, digits: number): n
 export function parseAmount(s: string, digits: number): number | null {
   const m = /^(\d{1,11})(?:[.,](\d{1,4}))?$/.exec(s.trim());
   if (!m || (m[2] ?? '').length > Math.max(2, digits)) return null;
-  return toHundredths(m[1]!, m[2] ?? '', digits);
+  const c = toHundredths(m[1]!, m[2] ?? '', digits);
+  return c === 'below' ? null : c;
 }
 
-/** Whether an amount as written has a part below hundredths (`1.255`): why it is refused, said as such. */
-export function belowHundredths(s: string): boolean {
-  const m = /[.,](\d{3,4})$/.exec(s.trim());
+/** An amount to show as an example of how to write one: `18.90`, `1890` in a currency without decimals, `18.900` with three. */
+export const amountExample = (digits: number): string => (digits ? (18.9).toFixed(digits) : '1890');
+
+/**
+ * Whether an amount as written in a currency with `digits` decimals is refused for a part below hundredths (`1.255`
+ * with three): why, said as such. In a currency with two or none, a third decimal is no amount at all, never this.
+ */
+export function belowHundredths(s: string, digits: number): boolean {
+  if (digits <= 2) return false;
+  const m = /^\d{1,11}[.,](\d{3,4})$/.exec(s.trim());
   return m !== null && /[1-9]/.test(m[1]!.slice(2));
 }

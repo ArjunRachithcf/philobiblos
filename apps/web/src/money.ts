@@ -3,7 +3,9 @@
 // not chosen one yet sees plain numbers. Each currency is written and typed with its own decimals, as the server counts
 // them (Me.money.digits, Settings' currencies; philobiblos#40, #62): never this browser's Intl count, which can differ.
 import { createContext, useContext } from 'react';
-import { belowHundredths, parseAmount, unitC } from '@philobiblos/contracts/money';
+import { amountExample, belowHundredths, parseAmount, unitC } from '@philobiblos/contracts/money';
+
+export { amountExample };
 
 export type Currency = string | null | undefined;
 
@@ -26,11 +28,8 @@ export function money(c: number, currency: Currency, digits: number, cents: 'aut
 /** An amount as typed in a field (`18.90`, `18,90`, `1500`), in hundredths; null when the currency cannot write it. */
 export const typed = (s: string, digits: number): number | null => parseAmount(s, digits);
 
-/** An amount to show as an example of how to type one: `18.90`, `1890` in a currency without decimals, `18.900` with three. */
-export const amountExample = (digits: number): string => (digits ? (18.9).toFixed(digits) : '1890');
-
 /** Why a typed amount is not one, and how to write one: a thousandth is said as such (amounts are kept in hundredths). */
-export const amountHelp = (s: string, digits: number): string => (belowHundredths(s)
+export const amountHelp = (s: string, digits: number): string => (belowHundredths(s, digits)
   ? `amounts are kept to hundredths, so the third decimal is 0, for example ${amountExample(digits)}`
   : `for example ${amountExample(digits)}`);
 

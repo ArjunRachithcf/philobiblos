@@ -1,7 +1,7 @@
 // Amounts in hundredths of the household's currency (packages/contracts money.ts, philobiblos#40, #62): written and typed
 // with the currency's own decimals, which the server's Intl knows and sends (`digits`); no currency is built in.
 import { describe, expect, it } from 'vitest';
-import { AMOUNT_CEILING_C, belowHundredths, parseAmount, wholeIn } from '../src/money';
+import { AMOUNT_CEILING_C, amountExample, belowHundredths, parseAmount, toHundredths, wholeIn } from '../src/money';
 
 describe('an amount whole in a currency\'s decimals', () => {
   it('in one without decimals only whole units; with two or three (kept as hundredths), any whole hundredth', () => {
@@ -32,11 +32,20 @@ describe('an amount as a person types it', () => {
     expect(parseAmount('12', 3)).toBe(1200);
     expect(parseAmount('1.255', 3)).toBeNull();
     expect(parseAmount('1.2500', 3)).toBeNull();
-    expect(belowHundredths('1.255')).toBe(true);
-    expect(belowHundredths(' 1,005 ')).toBe(true);
-    expect(belowHundredths('1.250')).toBe(false);
-    expect(belowHundredths('1.25')).toBe(false);
-    expect(belowHundredths('1500')).toBe(false);
+    expect(belowHundredths('1.255', 3)).toBe(true);
+    expect(belowHundredths(' 1,005 ', 3)).toBe(true);
+    expect(belowHundredths('1.250', 3)).toBe(false);
+    expect(belowHundredths('1.25', 3)).toBe(false);
+    expect(belowHundredths('1500', 3)).toBe(false);
+    expect(belowHundredths('18.905', 2)).toBe(false);
+    expect(toHundredths('1', '255', 3)).toBe('below');
+    expect(toHundredths('1', '250', 3)).toBe(125);
+  });
+
+  it('an example of an amount in a currency\'s decimals, the same on the server and the screens', () => {
+    expect(amountExample(0)).toBe('1890');
+    expect(amountExample(2)).toBe('18.90');
+    expect(amountExample(3)).toBe('18.900');
   });
 
   it('a high-nominal amount reads in full; past the ceiling, a sign, a symbol or grouping is refused, never guessed', () => {

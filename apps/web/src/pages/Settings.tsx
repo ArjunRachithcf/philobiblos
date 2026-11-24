@@ -2,7 +2,7 @@
 // sees it; no rollover), its currency and unknown price (philobiblos#27: none is built in) and where orders go (the bookshop's address and the delivery address, sealed on the server; the
 // delivery address is never shown back), the bookshops (Bookshops.tsx), the mailbox (Mailbox.tsx: its XOAUTH2 connection), when the monthly refresh runs, notifications (Notifications.tsx), the AI (AiSettings.tsx) and phone share tokens (ShareTokens.tsx). The rest
 // arrives with its parts.
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { api, message, type Me, type Settings as S } from '../api';
 import { Notice, PageHead } from '../ui';
 import { ShareTokens } from './ShareTokens';
@@ -124,7 +124,7 @@ function HouseholdMoney({ admin, reload, known }: { admin: boolean; reload: () =
   const [max, setMax] = useState(shown(priceLimits?.max));
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState('');
-  const list = admin ? currencies(known, currency) : [];
+  const list = useMemo(() => (admin ? currencies(known, currency) : []), [admin, known, currency]);
   useEffect(() => { setCode(currency ?? ''); }, [currency]);
   useEffect(() => { if (unknownPrice != null) setUnknown(asTyped(unknownPrice, digits)); }, [unknownPrice, digits]);
   useEffect(() => {

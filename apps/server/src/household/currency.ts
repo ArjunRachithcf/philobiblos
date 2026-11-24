@@ -13,9 +13,11 @@ export function validCurrency(code: unknown): code is string {
  * does not know: 2, hundredths as stored.
  */
 export function currencyDigits(currency: string | null | undefined): number {
-  if (!currency || !KNOWN.has(currency)) return 2;
-  return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
+  return (currency ? DIGITS.get(currency) : undefined) ?? 2;
 }
+// Counted once at start: the data never changes while the process runs.
+const DIGITS = new Map([...KNOWN].map((code) => [code, new Intl.NumberFormat('en', { style: 'currency', currency: code }).resolvedOptions().maximumFractionDigits ?? 2]));
+const LIST = [...DIGITS].map(([code, digits]) => ({ code, digits }));
 
 /** Every currency this server knows, with its decimals: Settings' choice of the household's. */
-export const currencyList = (): { code: string; digits: number }[] => [...KNOWN].map((code) => ({ code, digits: currencyDigits(code) }));
+export const currencyList = (): { code: string; digits: number }[] => LIST;

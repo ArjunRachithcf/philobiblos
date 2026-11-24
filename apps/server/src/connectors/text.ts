@@ -75,13 +75,15 @@ export function amountNumber(digits: number): string {
 }
 
 /** The two captures of `amountNumber` in hundredths; `below` when its decimals have a thousandth (not kept); else null. */
-export function readNumber(units: string, decimals: string, digits: number): number | 'below' | null {
-  if (/[1-9]/.test(decimals.slice(2))) return 'below';
-  return toHundredths(units.replace(/[,.']/g, ''), decimals, digits);
-}
+export const readNumber = (units: string, decimals: string, digits: number): number | 'below' | null =>
+  toHundredths(units.replace(/[,.']/g, ''), decimals, digits);
 
-/** The first amount in a line, a symbol before it or after it, read by `readNumber`. */
-function amountReader(m: Money, digits: number): (s: string) => number | 'below' | null {
+/**
+ * The first amount in a line, a symbol before it or after it: hundredths, written with the currency's `digits` decimals
+ * (household/currency.ts), at most any amount's ceiling; `below` when it has a thousandth (not kept, and said so); else
+ * null. One pattern, compiled once.
+ */
+export function amountReader(m: Money, digits: number): (s: string) => number | 'below' | null {
   const n = amountNumber(digits);
   // A side without symbols has no branch (an empty alternation would match any number).
   const before = m.before.length ? `${alternation(m.before)}\\s?${n}` : '(?!)()()';
@@ -93,23 +95,18 @@ function amountReader(m: Money, digits: number): (s: string) => number | 'below'
   };
 }
 
-/**
- * Hundredths of the first amount in a line, written with the currency's `digits` decimals (household/currency.ts), at
- * most any amount's ceiling; or null. An amount with a thousandth is null too (`amountBelow` says so).
- */
+/** `amountReader` as a price: an amount with a thousandth is none either. */
 export function amountFinder(m: Money, digits: number): (s: string) => number | null {
   const read = amountReader(m, digits);
   return (s) => { const c = read(s); return c === 'below' ? null : c; };
 }
 
-/** Whether the first amount in a line has a thousandth (`1.255` in a currency with three decimals): why it is not read, said as such. */
-export function amountBelow(m: Money, digits: number): (s: string) => boolean {
-  const read = amountReader(m, digits);
-  return (s) => read(s) === 'below';
-}
-
-/** Whether a line holds an amount at all (a symbol and a digit, or an amount with the currency's decimals and a symbol after it). */
+/**
+ * Whether a line holds an amount at all: a symbol and a digit, or a number with a symbol after it. Loose on purpose
+ * (two decimals, or as many as the currency has), so a line with an amount the reader cannot place is refused, never
+ * skipped.
+ */
 export function amountTest(m: Money, digits: number): (s: string) => boolean {
-  const re = new RegExp(`${alternation(m.before)}\\s?\\d|\\d${digits > 0 ? `[.,]\\d{${digits}}` : ''}\\s?${alternation(m.after)}${NOT_WORD_AFTER}`, 'iu');
+  const re = new RegExp(`${alternation(m.before)}\\s?\\d|\\d${digits > 0 ? `[.,]\\d{2,${Math.max(2, digits)}}` : ''}\\s?${alternation(m.after)}${NOT_WORD_AFTER}`, 'iu');
   return (s) => re.test(s);
 }

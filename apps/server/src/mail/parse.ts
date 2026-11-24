@@ -11,7 +11,7 @@
 // field passes `safeField` (read.ts) on its way out. The household's own request, quoted below a reply, is never read:
 // lines from the first reply marker on, and any line starting with `>`, are left out.
 import type { Connector } from '@philobiblos/contracts/connector';
-import { alternation, amountBelow, amountFinder, amountNumber, amountTest, contains, literal, readNumber, startsWith, subjectMatcher } from '../connectors/text';
+import { alternation, amountNumber, amountReader, amountTest, contains, literal, readNumber, startsWith, subjectMatcher } from '../connectors/text';
 import { currencyDigits } from '../household/currency';
 import { belowHundredths } from '@philobiblos/contracts/money';
 import { safeField } from './read';
@@ -66,7 +66,7 @@ export interface MailRules {
   reply: ((l: string) => boolean)[];
   quote: { field: RegExp; labels: Map<string, QuoteField>; split: RegExp; confirm: (l: string) => boolean; orderNumber: RegExp; deliveryLabel: RegExp } | null;
   shop: { books: Set<string>; skip: Set<string>; right: RegExp; price: (right: RegExpExecArray) => number | 'below' | null; ean: RegExp; by: string } | null;
-  invoice: { total: (l: string) => boolean; postage: (l: string) => boolean; unit: string; currency: string; money: (cell: string) => number | 'below' | null } | null;
+  invoice: { total: (l: string) => boolean; postage: (l: string) => boolean; unit: string; currency: string; digits: number; money: (cell: string) => number | 'below' | null } | null;
   /** schema.org Order and Invoice markup counts (`mail.markup`), its amounts in this currency only. */
   markup: { currency: string } | null;
 }
@@ -92,6 +92,7 @@ export function mailRules(c: Connector): MailRules {
   // Amounts with the currency's own decimals (none, two or three; philobiblos#62), as this server's Intl knows them.
   const digits = currencyDigits(c.locale.currency);
   const cell = new RegExp(`^${amountNumber(digits)}$`, 'u');
+  const read = amountReader(c.money, digits);
   const r: MailRules = {
     quoteSenders: q?.senders ?? [],
     subjects: [
@@ -99,8 +100,8 @@ export function mailRules(c: Connector): MailRules {
       ...(m.shop?.click_collect_subjects ?? []).map((t) => ['click_collect', subjectMatcher(t)] as const),
       ...(m.invoice?.subjects ?? []).map((t) => ['invoice', subjectMatcher(t)] as const),
     ] as MailRules['subjects'],
-    amount: amountFinder(c.money, digits),
-    below: amountBelow(c.money, digits),
+    amount: (s) => { const x = read(s); return x === 'below' ? null : x; },
+    below: (s) => read(s) === 'below',
     hasAmount: amountTest(c.money, digits),
     startsWithAmount: new RegExp(`^${alternation(c.money.before)}\\s?\\d`, 'iu'),
     summary: m.summary ? startsWith(m.summary) : never,
@@ -125,7 +126,7 @@ export function mailRules(c: Connector): MailRules {
       price: (x) => readNumber(x[2]!, x[3]!, digits),
       ean: new RegExp(` ${literal(m.shop.ean_label)}: ?(\\d{13})$`, 'iu'),
     } : null,
-    invoice: m.invoice ? { total: startsWith(m.invoice.total_words), postage: startsWith(m.invoice.postage_words), unit: m.invoice.unit.toUpperCase(), currency: c.locale.currency,
+    invoice: m.invoice ? { total: startsWith(m.invoice.total_words), postage: startsWith(m.invoice.postage_words), unit: m.invoice.unit.toUpperCase(), currency: c.locale.currency, digits,
       money: (s) => { const x = cell.exec(s); return x ? readNumber(x[1]!, x[2]!, digits) : null; } } : null,
     markup: m.markup ? { currency: c.locale.currency } : null,
   };
@@ -246,7 +247,7 @@ export function parseQuote(text: string, address: string[], r: MailRules): Parse
     if (bullet) {
       flush();
       // Split at commas between parts, never inside an amount (`1,980`, `22,50`).
-      const parts = bullet[1]!.split(/,(?!\d)\s?/);
+      const parts = bullet[1]!.split(/(?:(?<!\d),|,(?!\d))\s?/);
       const at = parts.findIndex((p) => r.startsWithAmount.test(p));
       const end = at >= 0 ? at : parts.length - 1;
       if (parts.length < 3 || end < 2 || (at < 0 && !r.unavailable(parts[end]!))) {
@@ -328,12 +329,27 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
     const s = row.join(' ').normalize('NFKC').replace(/\s+/g, ' ').trim().replace(/(\d) %/g, '$1%');
     if (s.length > LIMITS.lineChars) return refuse('invoice', P, 'a row too long');
     const tok = s.split(' ');
-    // A cell with a thousandth (`3.105` in a currency with three decimals) is never passed over, in a book row, a total or postage: amounts are kept in hundredths.
-    if (tok.some((x) => inv.money(x) === 'below')) return refuse('invoice', P, BELOW_HUNDREDTHS);
-    const money = (x: string) => { const c = inv.money(x); return c === 'below' ? null : c; };
-    const lastAmount = () => { for (let i = tok.length - 1; i >= 0; i--) { const m = money(tok[i]!); if (m != null) return m; } return null; };
-    if (inv.total(s)) { stated = lastAmount(); continue; }
-    if (inv.postage(s)) { postage += lastAmount() ?? 0; continue; }
+    // A cell read as money with a thousandth (`3.105` in a currency with three decimals) is never passed over: the
+    // invoice is refused (amounts are kept in hundredths). Other cells (a title's `2.105`) are not money.
+    let below = false;
+    const money = (x: string) => { const c = inv.money(x); if (c === 'below') below = true; return c === 'below' ? null : c; };
+    // A total's or postage's amount is the last one with the currency after it (`72.82` and the currency): a count or a tax beside it
+    // is no amount. Without one, the last amount, unless the currency has no decimals (any count would read as one):
+    // `undefined`, a total that is then refused.
+    const lastAmount = () => {
+      for (let i = tok.length - 2; i >= 0; i--) if (tok[i + 1]!.toUpperCase() === inv.currency) { const m = money(tok[i]!); if (m != null || below) return m; }
+      if (!inv.digits) return undefined;
+      for (let i = tok.length - 1; i >= 0; i--) { const m = money(tok[i]!); if (m != null || below) return m; }
+      return null;
+    };
+    if (inv.total(s)) {
+      const t = lastAmount();
+      if (below) return refuse('invoice', P, BELOW_HUNDREDTHS);
+      if (t === undefined) return refuse('invoice', P, 'a total Philobiblos cannot place');
+      stated = t;
+      continue;
+    }
+    if (inv.postage(s)) { postage += lastAmount() ?? 0; if (below) return refuse('invoice', P, BELOW_HUNDREDTHS); continue; }
     // From the end: VAT %, the currency, total, [discount %], price, the unit, qty; the title is what is left.
     let i = tok.length - 1;
     const vat = pct(tok[i--] ?? '');
@@ -344,6 +360,7 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
     const price = money(tok[i--] ?? '');
     const st = tok[i--]?.toUpperCase() === inv.unit;
     const qty = /^\d{1,2}$/.test(tok[i] ?? '') ? Number(tok[i--]) : null;
+    if (below) return refuse('invoice', P, BELOW_HUNDREDTHS);
     const whole = vat != null && inCurrency && total != null && price != null && st && qty;
     if (!/^\d{13}$/.test(tok[0]!)) {
       // A book row but for its EAN (spaced, cut short): read, counted in the total, and sent to the Inbox, never matched.
@@ -410,7 +427,7 @@ export function parseMarkup(markup: Markup, address: string[], r: MailRules): Pa
     if (ok === 'none') return { problem: 'an amount without its currency' };
     if (ok === 'other') return { problem: 'an amount in another currency' };
     const c = hundredths(v, currency);
-    return c == null ? { problem: belowHundredths(String(v)) ? BELOW_HUNDREDTHS : 'a price Philobiblos cannot read' } : { c };
+    return c == null ? { problem: belowHundredths(String(v), currencyDigits(currency)) ? BELOW_HUNDREDTHS : 'a price Philobiblos cannot read' } : { c };
   };
   const top = isInvoice ? invoices[0]! : orders[0]!;
   // An invoice for one order, which is no cancellation, return or problem: an invoice naming two orders, or for an order

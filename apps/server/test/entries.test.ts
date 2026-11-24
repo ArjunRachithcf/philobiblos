@@ -402,6 +402,8 @@ describe('three decimals (KWD, BHD) are kept as hundredths: a thousandth is refu
     refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,abc\n' }, 400, /such as 1890, in JPY/);
     db.update(t.householdSettings).set({ currency: 'CHF' }).run();
     refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,abc\n' }, 400, /such as 18\.90, in CHF/);
+    // A third decimal in a currency with two is no amount at all: never the thousandth advice.
+    refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,18.905\n' }, 400, /such as 18\.90, in CHF$/);
   });
 });
 

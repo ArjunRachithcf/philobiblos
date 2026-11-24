@@ -1,7 +1,7 @@
 // The screens' amounts (src/money.ts): in the household's currency, never a built-in one, with the decimals the server
 // says it has (Me.money.digits, Settings' currencies: philobiblos#62), never the browser's own count.
 import { describe, expect, it } from 'vitest';
-import { amountExample, asTyped, budgetBar, budgetPatch, money, moneyPatch, typed, unit } from '../src/money';
+import { amountExample, amountHelp, asTyped, budgetBar, budgetPatch, money, moneyPatch, typed, unit } from '../src/money';
 
 const plain = (s: string) => s.replace(/\s/g, ' ');
 
@@ -53,6 +53,12 @@ describe('a currency\'s own decimals, as the server counts them (philobiblos#40,
     expect(amountExample(3)).toBe('18.900');
     expect(amountExample(2)).toBe('18.90');
     expect(amountExample(0)).toBe('1890');
+  });
+
+  it('the thousandth advice is only for a currency with three decimals: in one with two, a third is no amount at all', () => {
+    expect(amountHelp('1.255', 3)).toMatch(/hundredths/);
+    expect(amountHelp('18.905', 2)).toBe('for example 18.90');
+    expect(amountHelp('1500.555', 0)).toBe('for example 1890');
   });
 
   it('an amount kept from before, which its currency cannot write now, is shown as it is, never rounded', () => {

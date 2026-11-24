@@ -23,7 +23,7 @@ import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { bookIsbn } from '../books/isbn';
-import { AMOUNT_CEILING_C, belowHundredths, parseAmount } from '@philobiblos/contracts/money';
+import { AMOUNT_CEILING_C, amountExample, belowHundredths, parseAmount } from '@philobiblos/contracts/money';
 import { currencyDigits } from '../household/currency';
 import { amountProblem, getMoney } from '../household/money';
 import { actsFor, getPerson, household, view } from '../household/people';
@@ -98,9 +98,6 @@ const LINE_FIELDS: Record<EntryKind, string[]> = { invoice: ['isbn', 'title', 'a
  * One line, from JSON (`price` in hundredths) or a CSV's row (its cells as text: `price` an amount such as 18.90), in
  * the household's `currency`: whole units in one without decimals.
  */
-/** An example of an amount as written in a currency with `digits` decimals: 1890, 18.90, or 18.900. */
-const amountExample = (digits: number) => (digits ? (18.9).toFixed(digits) : '1890');
-
 function line(kind: EntryKind, row: number, v: unknown, csv: boolean, currency: string): Given {
   const at = (m: string) => bad(`row ${row}: ${m}`);
   if (!isObject(v)) return at('an object');
@@ -141,7 +138,7 @@ function line(kind: EntryKind, row: number, v: unknown, csv: boolean, currency: 
       const digits = currencyDigits(currency);
       const written = typeof p === 'string' ? p : '';
       p = parseAmount(written, digits);
-      if (p === null && belowHundredths(written)) return at(`price: amounts are kept to hundredths, so a ${currency} price has 0 as its third decimal (${amountExample(digits)}, not ${written.trim().slice(0, 20)})`);
+      if (p === null && belowHundredths(written, digits)) return at(`price: amounts are kept to hundredths, so a ${currency} price has 0 as its third decimal (${amountExample(digits)}, not ${written.trim().slice(0, 20)})`);
       if (p === null) return at(`price: an amount such as ${amountExample(digits)}, in ${currency}`);
     }
     const problem = amountProblem(p, currency);

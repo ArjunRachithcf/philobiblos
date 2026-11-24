@@ -11,7 +11,7 @@ import { buildApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import { ConnectorError, enabledConnectors, orderAddress, setConnector, shopHosts } from '../src/connectors/enabled';
 import { CONNECTOR_LIMITS, loadConnectors, readConnector, registry, type LoadedConnector } from '../src/connectors/load';
-import { alternation, amountBelow, amountFinder, amountTest, contains, startsWith, subjectMatcher } from '../src/connectors/text';
+import { alternation, amountFinder, amountReader, amountTest, contains, startsWith, subjectMatcher } from '../src/connectors/text';
 import { openDb } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { refreshMail } from '../src/mail/job';
@@ -193,20 +193,21 @@ describe('a connector\'s words are matched in linear time', () => {
     expect(kwd('KWD 1.250')).toBe(125);
     expect(kwd('KWD 1,250.500')).toBe(125050);
     expect(kwd('12.500 KWD')).toBe(1250);
-    // A thousandth is never kept, nor rounded: none read, and amountBelow says why.
+    // A thousandth is never kept, nor rounded: none read, and the reader says why.
     for (const bad of ['KWD 1.255', 'KWD 1.25', 'KWD 1']) expect(kwd(bad), bad).toBeNull();
-    const below = amountBelow({ before: ['KWD'], after: ['KWD'] }, 3);
+    const below = (s: string) => amountReader({ before: ['KWD'], after: ['KWD'] }, 3)(s) === 'below';
     expect(below('KWD 1.255')).toBe(true);
     expect(below('1.255 KWD')).toBe(true);
     expect(below('KWD 1.250')).toBe(false);
-    expect(amountBelow({ before: ['CHF'], after: ['CHF'] }, 2)('CHF 1.255')).toBe(false);
+    expect(amountReader({ before: ['CHF'], after: ['CHF'] }, 2)('CHF 1.255')).toBeNull();
   });
 
   it('whether a line holds an amount follows the decimals too', () => {
     expect(amountTest({ before: ['¥'], after: ['円'] }, 0)('2,480円')).toBe(true);
     expect(amountTest({ before: ['¥'], after: ['円'] }, 0)('2480 円')).toBe(true);
     expect(amountTest({ before: ['KWD'], after: ['KWD'] }, 3)('1.250 KWD')).toBe(true);
-    expect(amountTest({ before: ['KWD'], after: ['KWD'] }, 3)('1.25 KWD')).toBe(false);
+    // Loose on purpose: an amount with fewer decimals than its currency's still counts, so its line is refused, never skipped.
+    expect(amountTest({ before: ['KWD'], after: ['KWD'] }, 3)('Versand 1.25 KWD')).toBe(true);
     expect(amountTest({ before: ['CHF'], after: ['CHF'] }, 2)('19.90 CHF')).toBe(true);
     expect(amountTest({ before: ['CHF'], after: ['CHF'] }, 2)('page 3 CHF')).toBe(false);
   });
