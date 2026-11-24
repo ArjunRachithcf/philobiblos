@@ -71,6 +71,40 @@ test('the setup link makes Alex the admin with a passkey, then the household is 
   expect(await page.locator('header.bar').evaluate((el) => getComputedStyle(el).backdropFilter)).toBe('none');
   await cdp.send('Emulation.setEmulatedMedia', { features: [] });
 
+  // A join link (ADR 0011): the home network first, then the link; whoever opens it sees nothing of the household,
+  // makes a passkey and waits, and Alex lets them in.
+  await page.getByRole('region', { name: 'A link for Sam' }).getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByRole('button', { name: 'Make a join link' })).toBeDisabled();
+  await page.getByLabel('A range, such as 192.0.2.0/24').fill('127.0.0.0/8');
+  await page.getByRole('button', { name: 'Add the range' }).click();
+  await expect(page.getByRole('button', { name: 'Remove 127.0.0.0/8' })).toBeVisible();
+  await page.getByRole('button', { name: 'Make a join link' }).click();
+  const joinField = page.getByLabel(/Send it yourself; it lets 5 people ask/);
+  await expect(joinField).toHaveValue(new RegExp(`^${ORIGIN}/join#`));
+  const joinUrl = await joinField.inputValue();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expectAccessible(page, 'household with a join link');
+  const joiner = await (await browser.newContext()).newPage();
+  const joinDone = noForeignRequests(joiner, ORIGIN);
+  await addAuthenticator(joiner);
+  await joiner.goto(joinUrl);
+  await expect(joiner).toHaveURL(`${ORIGIN}/join`); // the token left the address bar
+  await expect(joiner.getByLabel('Your name')).toBeEnabled();
+  await expect(joiner.locator('body')).not.toContainText(/Alex|Sam|Kid 1/);
+  await expectAccessible(joiner, 'join');
+  await joiner.getByLabel('Your name').fill('Jordan');
+  await joiner.getByRole('button', { name: 'Ask to join' }).click();
+  await expect(joiner.getByText('Waiting for approval.')).toBeVisible();
+  await expect(joiner.locator('body')).not.toContainText(/Alex|Sam|Kid 1/);
+  joinDone();
+  await page.reload();
+  await expect(page.getByRole('listitem').filter({ hasText: 'Jordan' }).first()).toContainText('Alex’s join link · ');
+  await expect(page.getByRole('listitem').filter({ hasText: 'Jordan' }).first()).toContainText('from the home network');
+  await page.getByRole('button', { name: 'Approve Jordan as an adult' }).click();
+  await expect(page.getByText('Jordan is in the household now, as an adult.')).toBeAttached();
+  await joiner.reload();
+  await expect(joiner.getByText('Jordan (you)')).toBeVisible();
+
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Sign in with a passkey' })).toBeVisible();
   await expectAccessible(page, 'sign-in');

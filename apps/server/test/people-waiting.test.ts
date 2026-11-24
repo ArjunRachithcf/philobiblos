@@ -372,6 +372,7 @@ describe('the admins are told', () => {
     const sub = (id: string, personId: string) => ({ id, personId, endpoint: `https://fcm.googleapis.com/fcm/send/${id}`, p256dh: RFC8291_UA_KEY, auth: 'BTBZMqHH6r4Tts7J_aSIgg', createdAt: new Date().toISOString() });
     db.insert(t.pushSubscription).values([sub('ps-alex', 'p_alex'), sub('ps-sam', 'p_sam')]).run();
     const { app: a } = await app(homerslab(), db, push);
+    await a.inject({ url: '/api/me', headers: HL_ALEX }); // the edge sends Alex: an admin it still sends (person.seen_at)
     for (let i = 0; i < JOIN_PUSH.max + 2; i++) await a.inject({ url: '/api/me', headers: hlHeaders(`hl-n${i}`, `N${i}`, 'adult') });
     await new Promise((r) => setTimeout(r, 50));
     expect(sent).toHaveLength(JOIN_PUSH.max);

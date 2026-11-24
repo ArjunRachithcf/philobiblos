@@ -15,7 +15,8 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { getPerson } from '../household/people';
-import { anyPerson, arrive } from '../household/waiting';
+import { anyPerson, arrive, lapseWaiting } from '../household/waiting';
+import { hasLapsed } from '../household/waiting-rows';
 import { resolveIdentity } from '../identity';
 import { requestSession } from './cookie';
 import { isFresh, type Session } from './sessions';
@@ -93,7 +94,9 @@ export function authHook(cfg: Config, db: Db, o: AuthHookOptions = {}) {
       }
     } else {
       const s = requestSession(db, req, reply);
-      const p = s ? anyPerson(db, s.personId) : undefined;
+      let p = s ? anyPerson(db, s.personId) : undefined;
+      // A request unanswered for 7 days lapses (household/waiting-rows.ts): its person and session go.
+      if (p && hasLapsed(p)) { lapseWaiting(db); p = undefined; }
       if (s && p) {
         if (p.state === 'waiting') return reply.code(403).send(WAITING_ANSWER);
         if (p.role === 'kid') return reply.code(403).send({ error: 'not allowed' });

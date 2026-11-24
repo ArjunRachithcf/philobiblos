@@ -1,9 +1,11 @@
 // The household (spec §2, the design's "Family"): who is in it, their role, kids' age bands. Admins add people,
-// change roles, invite adults to make a passkey, and remove people. Under HomersLab it is read-only here, but for the
-// people who wait to join (ADR 0011): admins approve or decline them, in both modes. A household of one shows only you.
+// change roles, invite adults to make a passkey, make join links from the home network (JoinLinks.tsx), and remove
+// people. Under HomersLab it is read-only here, but for the people who wait to join (ADR 0011): admins approve or
+// decline them, in both modes. A household of one shows only you.
 import { useCallback, useEffect, useId, useState } from 'react';
 import { api, message, type Me, type Passkey, type Person, type PersonInput, type WaitingPerson } from '../api';
 import { Notice, PageHead, initials } from '../ui';
+import { JoinLinks } from './JoinLinks';
 
 const ROLE_TEXT: Record<Person['role'], string> = { admin: 'Admin · sets the budget and the rules', adult: 'Adult · shares posts, adds books, marks orders', kid: 'Kid' };
 const AVATAR: Record<Person['role'], string> = { admin: 'av-admin', adult: 'av-adult', kid: 'av-kid' };
@@ -66,6 +68,7 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
         </section>
         {invite && <InviteLink {...invite} onDone={() => setInvite(null)} />}
         {editable && <AddPerson onAdded={reload} />}
+        {editable && <JoinLinks onChanged={reload} />}
         {me.mode === 'standalone' && <Passkeys name={me.person?.name ?? ''} />}
       </div>
     </>
@@ -103,7 +106,7 @@ function WaitingList({ mode, onDecided }: { mode: NonNullable<Me['mode']>; onDec
             <span className="row-main">
               <span className="row-title">{p.name}</span>
               <span className="row-sub wrap">
-                {[p.via === 'homeward' ? 'Came from Homeward' : 'Came with a join link',
+                {[p.via === 'homeward' ? 'Came from Homeward' : p.joinLink?.createdBy ? `Came with ${p.joinLink.createdBy}’s join link` : 'Came with a join link',
                   p.arrivedAt ? new Date(p.arrivedAt).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : null,
                   p.fromHomeNetwork == null ? null : p.fromHomeNetwork ? 'from the home network' : 'from outside the home network',
                   p.verifiedAddress ? `verified ${p.verifiedAddress}` : null].filter(Boolean).join(' · ')}

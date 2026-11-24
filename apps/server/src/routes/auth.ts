@@ -6,8 +6,7 @@ import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { findInvite, openRecovery, removeSetupLink, spendInvites, useInvite } from '../auth/invites';
-import { clearSessionCookies, endRequestSessions, requestSession } from '../auth/cookie';
-import { LEGACY_SESSION_COOKIE, SESSION_COOKIE, SESSION_DAYS, cookieOptions, createSession } from '../auth/sessions';
+import { clearSessionCookies, endRequestSessions, requestSession, startSession } from '../auth/cookie';
 import type { Challenges, WebAuthn } from '../auth/webauthn';
 import { getPerson, setupNeeded, suggestHandle, view } from '../household/people';
 import { anyPerson, arrive } from '../household/waiting';
@@ -23,10 +22,7 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
   };
   // A sign-in replaces this browser's earlier session, and remembers the passkey (removing it ends the session).
   const signIn = (req: FastifyRequest, reply: FastifyReply, personId: string, passkeyId: string) => {
-    endRequestSessions(db, req);
-    const { token } = createSession(db, personId, passkeyId);
-    void reply.setCookie(SESSION_COOKIE, token, cookieOptions(SESSION_DAYS * 86_400));
-    if (req.cookies?.[LEGACY_SESSION_COOKIE] !== undefined) void reply.clearCookie(LEGACY_SESSION_COOKIE, { path: '/' });
+    startSession(db, req, reply, personId, passkeyId);
     const p = anyPerson(db, personId)!;
     return { mode: cfg.mode, signedIn: true, setupNeeded: false, ...(p.state === 'waiting' ? { waiting: true } : {}), person: view(db, p) };
   };

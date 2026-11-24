@@ -87,13 +87,24 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
 
   app.get('/people/waiting', async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    return waitingPeople(db).map((p) => ({
+    const people = waitingPeople(db);
+    // What each request says (household/join-links.ts): the link used, who made it, and the household's networks.
+    const by = alias(t.person, 'by');
+    const requests = new Map(db.select({ r: t.joinRequest, link: t.joinLink, by: by.name }).from(t.joinRequest)
+      .leftJoin(t.joinLink, eq(t.joinLink.id, t.joinRequest.joinLinkId)).leftJoin(by, eq(by.id, t.joinLink.createdBy)).all()
+      .map((x) => [x.r.personId, x]));
+    return people.map((p) => {
+      const r = requests.get(p.id);
+      return {
       id: p.id, name: p.name, arrivedAt: p.arrivedAt, via: p.externalId ? 'homeward' as const : 'join_link' as const,
-      // Slices 2 to 4 of philobiblos#34 fill these: the join link used, the household's networks, a verified address.
-      joinLink: null, fromHomeNetwork: null, verifiedAddress: null,
+      joinLink: r?.link ? { id: r.link.id, createdAt: r.link.createdAt, createdBy: r.by ?? null } : null,
+      fromHomeNetwork: r ? r.r.fromHomeNetwork === 1 : null,
+      // Slices 4a and 4b of philobiblos#34 fill this: a verified address.
+      verifiedAddress: null,
       // Under HomersLab, the most they may be: their Homeward role.
       mayBeAdmin: !p.ceiling || p.ceiling === 'admin',
-    }));
+      };
+    });
   });
 
   app.post<{ Params: { personId: string } }>('/people/waiting/:personId/approve', async (req, reply) => {

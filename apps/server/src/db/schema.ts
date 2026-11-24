@@ -19,6 +19,9 @@ export const person = sqliteTable('person', {
   ceiling: text('ceiling', { enum: ['admin', 'adult', 'kid'] }),
   // When they first came (a waiting person's request; null for people from before).
   arrivedAt: text('arrived_at'),
+  // Under HomersLab: when the edge last sent them (at most an hour off), so `join` pushes stop for an admin Homeward
+  // removed (philobiblos#34 slice 2; push/push.ts joinNotifier). Null standalone.
+  seenAt: text('seen_at'),
 }, (t) => [
   check('person_role', sql`${t.role} IN ('admin','adult','kid')`), uniqueIndex('person_handle').on(t.handle),
   check('person_state', sql`${t.state} IN ('waiting','active') AND (${t.state} = 'active' OR (${t.role} = 'adult' AND ${t.handle} IS NULL))`),
@@ -58,6 +61,34 @@ export const invite = sqliteTable('invite', {
   expiresAt: text('expires_at').notNull(),
   usedAt: text('used_at'),
 }, (t) => [check('invite_kind', sql`${t.kind} IN ('setup','admin','self','recovery')`)]);
+
+// Joining with a link (standalone; ADR 0011, philobiblos#34 slice 2) ----
+// The household's networks (Settings → People → Home network): a join link opens only from one of them, and with none
+// listed no link can be made. CIDRs, normalised (household/networks.ts).
+export const homeNetwork = sqliteTable('home_network', {
+  cidr: text('cidr').primaryKey(),
+  addedBy: text('added_by').references(() => person.id, { onDelete: 'set null' }),
+  addedAt: text('added_at').notNull(),
+});
+
+// A household join link: the token in the link's #fragment, only its SHA-256 here. A use counts at a passkey's enrolment.
+export const joinLink = sqliteTable('join_link', {
+  id: text('id').primaryKey(),
+  tokenHash: text('token_hash').notNull().unique(),
+  createdBy: text('created_by').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  maxUses: integer('max_uses').notNull().default(5),
+  uses: integer('uses').notNull().default(0),
+}, (t) => [check('join_link_uses', sql`${t.maxUses} BETWEEN 1 AND 10 AND ${t.uses} BETWEEN 0 AND ${t.maxUses}`)]);
+
+// What a waiting person's request says, for the admin who decides (the waiting list): the link they used and whether
+// they came from the household's networks. Gone when they are decided or lapse.
+export const joinRequest = sqliteTable('join_request', {
+  personId: text('person_id').primaryKey().references(() => person.id, { onDelete: 'cascade' }),
+  joinLinkId: text('join_link_id').references(() => joinLink.id, { onDelete: 'set null' }),
+  fromHomeNetwork: integer('from_home_network').notNull(),
+});
 
 export const householdSettings = sqliteTable('household_settings', {
   id: integer('id').primaryKey(),
