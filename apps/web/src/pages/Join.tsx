@@ -1,6 +1,7 @@
 // A household join link (/join#token; ADR 0011, philobiblos#34 slice 2). The token is read from the #fragment, kept in
 // memory only and removed from the address bar at once (Enrol.tsx takeToken). The page shows nothing of the household:
-// whoever holds a link gives a name and makes a passkey, then waits for an admin. A link that does not open here gets
+// whoever holds a link gives a name and makes a passkey, then waits for an admin (or is let in at once, when the link's
+// rules accept them: slice 3). A link that does not open here gets
 // one message, whatever the reason.
 import { useCallback, useEffect, useId, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
@@ -46,7 +47,7 @@ export function Join({ token, member, onSignedIn }: { token: string | null; memb
 
   return (
     <main className="auth" id="main" aria-busy={opens === null}>
-      <PageHead title="Ask to join" sub="Give your name and make a passkey on this device. An admin of the household then lets you in; there is no password." />
+      <PageHead title="Ask to join" sub="Give your name and make a passkey on this device. An admin of the household then lets you in, or the link does at once; there is no password." />
       {member ? (
         <Notice kind="info" title="You are in the household already.">This link is for someone new: send it to them. To use it yourself, sign out first.</Notice>
       ) : opens === false ? (

@@ -17,7 +17,9 @@ CREATE TABLE person (
   state         TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('waiting','active') AND (state = 'active' OR (role = 'adult' AND handle IS NULL))),
   ceiling       TEXT CHECK (ceiling IN ('admin','adult','kid')), -- HomersLab: the Homeward role sent last; the Philobiblos role is never above it
   arrived_at    TEXT,                     -- when they first came
-  seen_at       TEXT                      -- HomersLab: when the edge last sent them (to the hour); `join` pushes stop for an admin it no longer sends
+  seen_at       TEXT,                     -- HomersLab: when the edge last sent them (to the hour); `join` pushes stop for an admin it no longer sends
+  admitted_link TEXT,                     -- slice 3: the join link whose rules let them in (kept after it goes)
+  admitted_by   TEXT                      -- slice 3: the admin who made that link (kept after they go)
 );
 CREATE UNIQUE INDEX person_handle ON person(handle);
 
@@ -71,13 +73,18 @@ CREATE TABLE join_link (                   -- a household join link; its waiting
   expires_at  TEXT NOT NULL,
   max_uses    INTEGER NOT NULL DEFAULT 5,
   uses        INTEGER NOT NULL DEFAULT 0,  -- counted at a passkey's enrolment, in the same transaction
+  -- its rules (slice 3), which only narrow the household's
+  automatic          INTEGER NOT NULL DEFAULT 0, -- 1: whoever matches every rule is let in at once, as an adult (never an admin)
+  refuse_non_matches INTEGER NOT NULL DEFAULT 0, -- 1: whoever does not match is refused instead of waiting
+  networks_json      TEXT,                 -- JSON array of CIDRs inside the household's networks; NULL: all of them
   CHECK (max_uses BETWEEN 1 AND 10 AND uses BETWEEN 0 AND max_uses)
 );
 
 CREATE TABLE join_request (                -- a waiting person's request: what the admin who decides sees
   person_id         TEXT PRIMARY KEY NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   join_link_id      TEXT REFERENCES join_link(id) ON DELETE SET NULL,
-  from_home_network INTEGER NOT NULL
+  from_home_network INTEGER NOT NULL,
+  matches_rules     INTEGER                -- whether they matched the link's own rules (slice 3); NULL: it has none
 );
 
 CREATE TABLE household_settings (

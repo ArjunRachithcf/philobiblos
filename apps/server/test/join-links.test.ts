@@ -110,7 +110,7 @@ describe('making a join link', () => {
     const { app: a, db } = await app();
     home(db);
     const cookie = sessionCookie(db, 'p_alex');
-    for (const body of [{ days: 0 }, { days: JOIN_LINK.maxDays + 1 }, { uses: 0 }, { uses: JOIN_LINK.maxUses + 1 }, { days: 1.5 }, { uses: '3' }, { days: 3, rules: [] }]) {
+    for (const body of [{ days: 0 }, { days: JOIN_LINK.maxDays + 1 }, { uses: 0 }, { uses: JOIN_LINK.maxUses + 1 }, { days: 1.5 }, { uses: '3' }, { days: 3, rules: [] }, { accept: 'admin' }, { nonMatches: 'let-in' }, { role: 'admin' }]) {
       expect((await post(a, '/api/people/join-links', body, { cookie })).statusCode, JSON.stringify(body)).toBe(400);
     }
     const ok = (await post(a, '/api/people/join-links', { days: JOIN_LINK.maxDays, uses: JOIN_LINK.maxUses }, { cookie })).json();
@@ -156,7 +156,7 @@ describe('the home network', () => {
     for (const a of ['127.0.0.1', '172.18.0.1', '172.20.5.9', '192.168.1.1', '203.0.113.5', '2001:db8::1', 'fe80::1', '', undefined]) expect(proposeNetwork(a), String(a)).toBeNull();
     const { app: a, db } = await app();
     const res = await a.inject({ url: '/api/people/home-networks', remoteAddress: '192.168.1.23', headers: { cookie: sessionCookie(db, 'p_alex') } });
-    expect(res.json()).toEqual({ networks: [], proposal: '192.168.1.0/24', behindProxy: false });
+    expect(res.json()).toEqual({ networks: [], proposal: '192.168.1.0/24', behindProxy: false, trustedProxy: false, surroundings: 'known' });
     expect(db.select().from(t.homeNetwork).all()).toEqual([]);
   });
 
@@ -286,7 +286,7 @@ const DOCKER = surroundingsFrom({
 const putNets = (a: BuiltApp['app'], db: Db, networks: string[], remote?: string) =>
   a.inject({ method: 'PUT', url: '/api/people/home-networks', remoteAddress: remote ?? HOME_ADDR, headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN }, payload: { networks } });
 
-describe('a hop is never home: loopback and the container\'s own networks (until slice 3\'s trusted proxy)', () => {
+describe('a hop is never home: loopback and the container\'s own networks', () => {
   it('reads both families: on-link prefixes from the interfaces, default next hops from both route tables', () => {
     expect(DOCKER).toEqual({ container: true, known: true, hops: ['172.17.0.1', 'fd00::1'], onLink: ['172.17.0.0/16', '192.168.16.0/20', 'fd00::/64', 'fe80::/64'].map((c) => parseCidr(c) ?? expect.objectContaining({ cidr: c })) });
   });

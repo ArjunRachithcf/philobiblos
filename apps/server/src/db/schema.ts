@@ -22,6 +22,10 @@ export const person = sqliteTable('person', {
   // Under HomersLab: when the edge last sent them (at most an hour off), so `join` pushes stop for an admin Homeward
   // removed (philobiblos#34 slice 2; push/push.ts joinNotifier). Null standalone.
   seenAt: text('seen_at'),
+  // Let in by a join link's rules (philobiblos#34 slice 3): the link and the admin who made it, kept after the link or
+  // the admin goes (plain ids, no keys), so an admin can find whom a link let in. Null for everyone else.
+  admittedLink: text('admitted_link'),
+  admittedBy: text('admitted_by'),
 }, (t) => [
   check('person_role', sql`${t.role} IN ('admin','adult','kid')`), uniqueIndex('person_handle').on(t.handle),
   check('person_state', sql`${t.state} IN ('waiting','active') AND (${t.state} = 'active' OR (${t.role} = 'adult' AND ${t.handle} IS NULL))`),
@@ -80,14 +84,22 @@ export const joinLink = sqliteTable('join_link', {
   expiresAt: text('expires_at').notNull(),
   maxUses: integer('max_uses').notNull().default(5),
   uses: integer('uses').notNull().default(0),
+  // Its rules (philobiblos#34 slice 3), which only narrow the household's: whoever matches every one is let in at once
+  // as an adult when `automatic` is 1; who does not waits, or is refused when `refuse_non_matches` is 1. networks_json:
+  // ranges inside the household's networks the link opens from (a JSON array of CIDRs; null: all of the household's).
+  automatic: integer('automatic').notNull().default(0),
+  refuseNonMatches: integer('refuse_non_matches').notNull().default(0),
+  networksJson: text('networks_json'),
 }, (t) => [check('join_link_uses', sql`${t.maxUses} BETWEEN 1 AND 10 AND ${t.uses} BETWEEN 0 AND ${t.maxUses}`)]);
 
 // What a waiting person's request says, for the admin who decides (the waiting list): the link they used and whether
-// they came from the household's networks. Gone when they are decided or lapse.
+// they came from the household's networks, and whether they matched the link's own rules (slice 3; null: it has none
+// beyond the household's). Gone when they are decided or lapse.
 export const joinRequest = sqliteTable('join_request', {
   personId: text('person_id').primaryKey().references(() => person.id, { onDelete: 'cascade' }),
   joinLinkId: text('join_link_id').references(() => joinLink.id, { onDelete: 'set null' }),
   fromHomeNetwork: integer('from_home_network').notNull(),
+  matchesRules: integer('matches_rules'),
 });
 
 export const householdSettings = sqliteTable('household_settings', {

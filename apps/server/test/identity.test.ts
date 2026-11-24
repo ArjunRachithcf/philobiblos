@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { resolveIdentity } from '../src/identity';
 import { loadConfig } from '../src/config';
+import { parseTrustedProxy } from '../src/net/proxy';
 
-const hl = { mode: 'homerslab' as const, trustedProxy: '172.30.0.2' };
+const hl = { mode: 'homerslab' as const, trustedProxy: parseTrustedProxy('172.30.0.2') };
 const h = { 'x-homerslab-person': 'person-1' };
 
 describe('X-HomersLab-Person', () => {
@@ -18,7 +19,7 @@ describe('X-HomersLab-Person', () => {
   });
   it('is ignored without a configured proxy and in standalone mode', () => {
     expect(resolveIdentity({ mode: 'homerslab', trustedProxy: null }, '172.30.0.2', h)).toBeNull();
-    expect(resolveIdentity({ mode: 'standalone', trustedProxy: '172.30.0.2' }, '172.30.0.2', h)).toBeNull();
+    expect(resolveIdentity({ mode: 'standalone', trustedProxy: parseTrustedProxy('172.30.0.2') }, '172.30.0.2', h)).toBeNull();
   });
   it('a repeated or empty header is refused', () => {
     expect(resolveIdentity(hl, '172.30.0.2', { 'x-homerslab-person': ['a', 'b'] })).toBeNull();

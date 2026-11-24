@@ -33,6 +33,15 @@ export function view(db: Db, p: Person): PersonView {
   };
 }
 
+/**
+ * view() plus what only an admin sees (the household list of /me, for an admin caller only): whether a join link's rules
+ * let them in, when, and whose link (the admin's name; null once they are gone).
+ */
+export function adminView(db: Db, p: Person): PersonView {
+  const by = p.admittedBy ? db.select({ name: t.person.name }).from(t.person).where(eq(t.person.id, p.admittedBy)).get()?.name ?? null : null;
+  return { ...view(db, p), letInByLink: p.admittedLink ? { linkId: p.admittedLink, by, at: p.arrivedAt } : null };
+}
+
 /** The household's members (a waiting person is not one: household/waiting.ts). */
 export function household(db: Db): Person[] {
   return db.select().from(t.person).where(eq(t.person.state, 'active')).all().sort((a, b) => rank(a.role) - rank(b.role) || a.name.localeCompare(b.name));

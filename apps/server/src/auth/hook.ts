@@ -9,6 +9,7 @@
 // A share token is good for POST /shares and nothing else. Kids, and people HomersLab sends without a role, get 403.
 // A person waiting for an admin's approval (household/waiting.ts) gets 403 WAITING on every route but the public ones,
 // with nothing of the household in it.
+import { addressKey, clientAddress } from '../net/proxy';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
 import type { Config } from '../config';
@@ -65,7 +66,8 @@ export function authHook(cfg: Config, db: Db, o: AuthHookOptions = {}) {
       const row = token ? findShareToken(db, token) : null;
       const p = row ? getPerson(db, row.personId) : undefined;
       if (!row || !p || p.role === 'kid') {
-        const byAddress = failures.hit(`a:${req.socket.remoteAddress ?? ''}`);
+        // Per client: the trusted proxy's forwarded one (net/proxy.ts), or the proxy itself when it names no one.
+        const byAddress = failures.hit(addressKey(clientAddress(cfg.trustedProxy, req.socket.remoteAddress, req.headers['x-forwarded-for']) ?? req.socket.remoteAddress));
         const byId = failures.hit(`t:${(token ?? '').slice(0, 26)}`);
         return byAddress && byId ? reply.code(401).send({ error: 'sign in required' }) : reply.code(429).send({ error: 'too many wrong share tokens: wait a few minutes' });
       }
