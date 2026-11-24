@@ -58,7 +58,9 @@ export interface AppOptions { connectors?: Registry; ai?: AiJobOptions; push?: E
   /** Tests only: the public join routes' answer floor (routes/join.ts JOIN_FLOOR_MS). */
   joinFloorMs?: number;
   /** Tests only: where Philobiblos runs (net/networks.ts readSurroundings, read at start otherwise). */
-  surroundings?: Surroundings }
+  surroundings?: Surroundings;
+  /** Tests only: how many links a per-link join limiter counts (routes/join.ts JOIN_LINK_KEYS). */
+  joinLinkKeys?: number }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   // The household's settings row, with PHILOBIBLOS_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
@@ -123,7 +125,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     api.addHook('onRequest', authHook(cfg, db, { joined }));
     await authRoutes(api, cfg, db, webauthn, challenges, joined);
     await peopleRoutes(api, cfg, db);
-    await joinRoutes(api, cfg, db, webauthn, challenges, { joined, floorMs: opts.joinFloorMs, surroundings: opts.surroundings ?? readSurroundings() });
+    await joinRoutes(api, cfg, db, webauthn, challenges, { joined, floorMs: opts.joinFloorMs, surroundings: opts.surroundings ?? readSurroundings(), linkKeys: opts.joinLinkKeys });
     await libraryRoutes(api, cfg, db, connectors);
     await backlogRoutes(api, cfg, db);
     await monthRoutes(api, cfg, db, connectors);

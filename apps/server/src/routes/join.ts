@@ -41,14 +41,17 @@ const TOO_MANY = { error: 'Too many tries with this link: wait a few minutes.' }
 /** A name as a person gives it: 1 to 60 characters, no control characters; null otherwise. */
 export function joinName(v: unknown): string | null {
   if (typeof v !== 'string') return null;
-  // Control characters, line separators, bidi controls and default-ignorable ones (zero-width, joiners, variation
+  // Control characters, line separators and default-ignorable ones (bidi controls, zero-width, joiners, variation
   // selectors, tags): a name an admin reads must look like what it is.
-  if (/[\p{Cc}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u.test(v)) return null;
+  if (/[\p{Cc}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u.test(v)) return null;
   const name = v.normalize('NFC').trim();
   return name.length >= 1 && name.length <= 60 ? name : null;
 }
 
-export interface JoinOptions { joined?: () => void; floorMs?: number; surroundings?: Surroundings }
+export interface JoinOptions { joined?: () => void; floorMs?: number; surroundings?: Surroundings; linkKeys?: number }
+
+/** How many links (presented tokens) a per-link limiter counts at once; past it, new ones are refused. */
+export const JOIN_LINK_KEYS = 10_000;
 
 /**
  * The key an address is limited by: an IPv6 address by its /64 (one household's, or one attacker's, whole block), an
@@ -66,8 +69,8 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
   const where = o.surroundings ?? NO_SURROUNDINGS;
   // Per address and per link in limiters of their own: a flood of addresses never evicts a link's count, and a link's
   // limiter refuses a new key when it is full rather than forget one (net effect: a flood of made-up links is refused).
-  const opening = { byAddress: new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs), byLink: new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs, 10_000, 'refuse') };
-  const joining = { byAddress: new Limiter(JOIN_ENROL.max, JOIN_ENROL.windowMs), byLink: new Limiter(JOIN_ENROL.max, JOIN_ENROL.windowMs, 10_000, 'refuse') };
+  const opening = { byAddress: new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs), byLink: new Limiter(JOIN_OPEN.max, JOIN_OPEN.windowMs, o.linkKeys ?? JOIN_LINK_KEYS, 'refuse') };
+  const joining = { byAddress: new Limiter(JOIN_ENROL.max, JOIN_ENROL.windowMs), byLink: new Limiter(JOIN_ENROL.max, JOIN_ENROL.windowMs, o.linkKeys ?? JOIN_LINK_KEYS, 'refuse') };
   const standaloneOnly = (reply: FastifyReply) => {
     if (cfg.mode === 'standalone') return true;
     void reply.code(404).send({ error: 'not found' });

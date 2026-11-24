@@ -231,7 +231,7 @@ export interface paths {
         };
         /** Admins, standalone: the household's networks (a join link opens only from one), and the private range the admin is on, proposed for them to confirm. Under HomersLab, 404. */
         get: operations["getHomeNetworks"];
-        /** Admins, standalone: replaces the list (at most 20 CIDRs, none wider than /8, or /32 for IPv6; never loopback, a range holding the container's gateway, or one holding the hop the admin comes through). An empty list makes no link open, never every address. Needs a sign-in in the last 10 minutes (403). */
+        /** Admins, standalone: replaces the list (at most 20 CIDRs, none wider than /8, or /32 for IPv6; never one overlapping loopback or, in a container, its own networks or next hops). An empty list makes no link open, never every address. Needs a sign-in in the last 10 minutes (403). */
         put: operations["setHomeNetworks"];
         post?: never;
         delete?: never;
@@ -1313,7 +1313,7 @@ export interface components {
             mayBeAdmin: boolean;
         };
         HomeNetworks: {
-            /** @description the admin comes through loopback or the container's gateway (a proxy, a published port): no join link opens for anyone until the forwarded address is read from PHILOBIBLOS_TRUSTED_PROXY (philobiblos#34 slice 3) */
+            /** @description the admin comes through loopback or the container's own networks (a proxy, a published port), or the container's surroundings could not be read: no join link opens for anyone until the forwarded address is read from PHILOBIBLOS_TRUSTED_PROXY (philobiblos#34 slice 3) */
             behindProxy: boolean;
             networks: {
                 cidr: string;

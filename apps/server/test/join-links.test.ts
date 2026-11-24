@@ -12,7 +12,7 @@ import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { JOIN_LINK } from '../src/household/join-links';
 import { WAITING, waitingPeople } from '../src/household/waiting';
-import { inHomeNetwork, parseCidr, parseRoutes, proposeNetwork, type Surroundings } from '../src/net/networks';
+import { inHomeNetwork, parseCidr, proposeNetwork, surroundingsFrom, type Surroundings } from '../src/net/networks';
 import { JOIN_ENROL, JOIN_OPEN, NOT_HERE, addressKey, joinName } from '../src/routes/join';
 import { spendUse } from '../src/household/join-links';
 import { Limiter } from '../src/shares/tokens';
@@ -33,7 +33,7 @@ const DAY = 86_400_000;
 
 let open: BuiltApp[] = [];
 /** Where the tests' Philobiblos runs: on a host, not in a container, unless a test says otherwise. */
-const HOST: Surroundings = { container: false, gateways: [], localNets: [] };
+const HOST: Surroundings = { container: false, known: true, hops: [], onLink: [] };
 async function app(cfg = standalone(), db = household(), o: { push?: Egress; floorMs?: number; surroundings?: Surroundings } = {}) {
   const b = await buildApp(cfg, db, { webauthn: fakeWebAuthn(), push: o.push ?? nowherePush, joinFloorMs: o.floorMs ?? 0, surroundings: o.surroundings ?? HOST });
   await b.app.ready();
@@ -276,59 +276,80 @@ describe('one answer, and one timing, for every link that does not open', () => 
   });
 });
 
-const DOCKER: Surroundings = { container: true, gateways: ['172.17.0.1'], localNets: [parseCidr('172.17.0.0/16')!, parseCidr('192.168.16.0/20')!] };
+/** A container on an IPv4 bridge and an IPv6 one, with a second network (a proxy's), as Docker would set it up. */
+const DOCKER = surroundingsFrom({
+  container: true,
+  interfaces: [{ cidr: '127.0.0.1/8', internal: true }, { cidr: '172.17.0.2/16', internal: false }, { cidr: '192.168.16.2/20', internal: false }, { cidr: 'fd00::2/64', internal: false }, { cidr: 'fe80::42:acff:fe11:2/64', internal: false }],
+  route: 'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t010011AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\neth0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0',
+  ipv6Route: '00000000000000000000000000000000 00 00000000000000000000000000000000 00 fd000000000000000000000000000001 00000400 00000001 00000000 00000003 eth0\nfd000000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001 eth0',
+});
 const putNets = (a: BuiltApp['app'], db: Db, networks: string[], remote?: string) =>
   a.inject({ method: 'PUT', url: '/api/people/home-networks', remoteAddress: remote ?? HOME_ADDR, headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN }, payload: { networks } });
 
-describe('a hop is never home: loopback and the container\'s gateway (until slice 3\'s trusted proxy)', () => {
-  it('loopback ranges, and ranges holding the container\'s gateway or the admin\'s own hop, are refused', async () => {
+describe('a hop is never home: loopback and the container\'s own networks (until slice 3\'s trusted proxy)', () => {
+  it('reads both families: on-link prefixes from the interfaces, default next hops from both route tables', () => {
+    expect(DOCKER).toEqual({ container: true, known: true, hops: ['172.17.0.1', 'fd00::1'], onLink: ['172.17.0.0/16', '192.168.16.0/20', 'fd00::/64', 'fe80::/64'].map((c) => parseCidr(c) ?? expect.objectContaining({ cidr: c })) });
+  });
+
+  it('refuses every range overlapping them, either way round, and loopback', async () => {
     const { app: a, db } = await app(standalone(), household(), { surroundings: DOCKER });
-    for (const bad of ['127.0.0.0/8', '127.0.0.1/32', '::1/128', '172.17.0.0/16', '172.16.0.0/12', '172.17.0.0/24']) {
+    for (const bad of ['127.0.0.0/8', '127.0.0.1/32', '::1/128', '172.17.0.0/16', '172.16.0.0/12', '172.17.0.2/31', '192.168.16.3/32', '192.168.0.0/16',
+      'fd00::/64', 'fd00::/32', 'fd00::5/128', 'fe80::/32', '::ffff:172.17.0.0/112']) {
       expect((await putNets(a, db, [bad])).statusCode, bad).toBe(400);
     }
-    const viaGateway = await putNets(a, db, ['10.0.0.0/8'], '10.89.0.1');
-    expect(viaGateway.statusCode).toBe(200); // not this container's gateway: the range holds no hop
-    const podman = await app(standalone(), household(), { surroundings: { container: true, gateways: ['10.89.0.1'], localNets: [] } });
-    expect((await putNets(podman.app, podman.db, ['10.0.0.0/8'], '10.89.0.1')).statusCode).toBe(400);
-    expect((await putNets(podman.app, podman.db, ['10.89.0.0/24'])).statusCode).toBe(400);
-    // on a host, loopback is still refused; a router's range is fine
+    expect((await putNets(a, db, ['10.0.0.0/8', 'fd12:3456::/48'])).statusCode).toBe(200);
     const host = await app();
     expect((await putNets(host.app, host.db, ['127.0.0.0/8'], '127.0.0.1')).statusCode).toBe(400);
     expect((await putNets(host.app, host.db, ['192.168.1.0/24'])).statusCode).toBe(200);
-    expect(db.select().from(t.homeNetwork).all().map((n) => n.cidr)).toEqual(['10.0.0.0/8']);
+    expect(db.select().from(t.homeNetwork).all().map((n) => n.cidr)).toEqual(['10.0.0.0/8', 'fd12:3456::/48']);
   });
 
-  it('a connection from loopback or the gateway is out of network, even when a range lists it (written by hand)', async () => {
+  it('a connection from a next hop or the container\'s networks is out of network at every step, even when a range lists it', async () => {
     const { app: a, db } = await app(standalone(), household(), { surroundings: DOCKER });
-    home(db, '127.0.0.0/8');
-    home(db, '172.17.0.0/16');
+    for (const c of ['127.0.0.0/8', '172.17.0.0/16', '192.168.16.0/20', 'fd00::/64', HOME]) home(db, c); // by hand, past the checks
     const { token } = await makeLink(a, db);
-    for (const remote of ['127.0.0.1', '::ffff:127.0.0.1', '172.17.0.1', '::1']) {
-      const res = await post(a, '/api/join/open', { token }, { remote });
-      expect([res.statusCode, res.json()], remote).toEqual([404, NOT_HERE]);
+    const hops = ['127.0.0.1', '::ffff:127.0.0.1', '::1', '172.17.0.1', '::ffff:172.17.0.1', '172.17.0.5', '192.168.16.3', 'fd00::1', 'fd00::5'];
+    for (const remote of hops) {
+      for (const url of ['/api/join/open', ...(['172.17.0.1', '192.168.16.3', 'fd00::5', '::1'].includes(remote) ? ['/api/join/options'] : [])]) {
+        const res = await post(a, url, { token, name: 'Jordan' }, { remote });
+        expect([res.statusCode, res.json()], `${url} ${remote}`).toEqual([404, NOT_HERE]);
+      }
     }
-    expect((await post(a, '/api/join/open', { token }, { remote: '172.17.0.5' })).statusCode).toBe(204); // a container on the bridge
+    // a person on a network of their own, routed to the container: in
+    const o = await options(a, token, 'Jordan', HOME_ADDR);
+    expect(o.statusCode).toBe(200);
+    // the enrolment checks the address again: the same step from a hop is refused
+    expect((await verify(a, o.json(), 'cred-j', 'fd00::5')).statusCode).toBe(404);
+    expect(waitingPeople(db)).toEqual([]);
   });
 
-  it('behind a hop the admin is told join links wait, and nothing is proposed', async () => {
+  it('behind a hop the admin is told join links wait, and nothing is proposed from one', async () => {
     const { app: a, db } = await app(standalone(), household(), { surroundings: DOCKER });
     const view = async (remote: string) => (await a.inject({ url: '/api/people/home-networks', remoteAddress: remote, headers: { cookie: sessionCookie(db, 'p_alex') } })).json();
-    expect(await view('172.17.0.1')).toMatchObject({ behindProxy: true, proposal: null });
-    expect(await view('127.0.0.1')).toMatchObject({ behindProxy: true, proposal: null });
-    expect(await view('192.168.16.3')).toMatchObject({ behindProxy: false, proposal: null }); // a proxy on a container network
+    for (const hop of ['172.17.0.1', '127.0.0.1', '192.168.16.3', 'fd00::1', 'fd00::5', '::ffff:192.168.16.3']) expect(await view(hop), hop).toMatchObject({ behindProxy: true, proposal: null });
     expect(await view('192.168.1.23')).toMatchObject({ behindProxy: false, proposal: '192.168.1.0/24' });
-    expect(proposeNetwork('10.89.0.1', { container: true, gateways: ['10.89.0.1'], localNets: [] })).toBeNull();
-    expect(proposeNetwork('10.89.0.7', { container: true, gateways: ['10.89.0.7'], localNets: [] })).toBeNull(); // a gateway not on .1
+    expect(await view('fd12:3456:789a:1::5')).toMatchObject({ behindProxy: false, proposal: 'fd12:3456:789a:1::/64' });
   });
 
-  it('the gateways and networks come from /proc/net/route', () => {
-    const text = [
-      'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT',
-      'eth0\t00000000\t010011AC\t0003\t0\t0\t0\t00000000\t0\t0\t0',
-      'eth0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0',
-      'garbage',
-    ].join('\n');
-    expect(parseRoutes(text)).toEqual({ gateways: ['172.17.0.1'], nets: [parseCidr('172.17.0.0/16')] });
+  it('a next hop outside every on-link prefix (a point-to-point link) is a hop too', async () => {
+    const p2p = surroundingsFrom({ container: true, interfaces: [{ cidr: '10.0.5.2/32', internal: false }], route: 'Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\neth0\t00000000\t0105000A\t0003\t0\t0\t0\t00000000', ipv6Route: '' });
+    expect(p2p.hops).toEqual(['10.0.5.1']);
+    const { app: a, db } = await app(standalone(), household(), { surroundings: p2p });
+    expect((await putNets(a, db, ['10.0.5.0/24'])).statusCode).toBe(400);
+    home(db, '10.0.5.0/24');
+    const { token } = await makeLink(a, db);
+    expect((await post(a, '/api/join/open', { token }, { remote: '10.0.5.1' })).statusCode).toBe(404);
+    expect((await post(a, '/api/join/open', { token }, { remote: '10.0.5.9' })).statusCode).toBe(204);
+  });
+
+  it('a container whose surroundings cannot be read fails closed', async () => {
+    const blind: Surroundings = { container: true, known: false, hops: [], onLink: [] };
+    const { app: a, db } = await app(standalone(), household(), { surroundings: blind });
+    home(db);
+    const { token } = await makeLink(a, db);
+    expect((await post(a, '/api/join/open', { token })).statusCode).toBe(404);
+    expect((await a.inject({ url: '/api/people/home-networks', remoteAddress: '192.168.1.23', headers: { cookie: sessionCookie(db, 'p_alex') } })).json()).toMatchObject({ behindProxy: true, proposal: null });
+    expect((await putNets(a, db, ['192.168.1.0/24'])).statusCode).toBe(400);
   });
 });
 
@@ -373,6 +394,18 @@ describe('limits, the review\'s nits', () => {
     const e = new Limiter(1, 60_000, 2);
     e.hit('link-a'); e.hit('flood-1'); e.hit('flood-2');
     expect(e.hit('link-a')).toBe(true); // the default evicts (what the join routes no longer use for links)
+  });
+
+  it('a full per-link limiter in the routes refuses new links rather than forget a counted one', async () => {
+    const db = household();
+    const b = await buildApp(standalone(), db, { webauthn: fakeWebAuthn(), push: nowherePush, joinFloorMs: 0, surroundings: HOST, joinLinkKeys: 3 });
+    await b.app.ready();
+    open.push(b);
+    home(db);
+    const { token } = await makeLink(b.app, db);
+    for (let i = 0; i < JOIN_OPEN.max; i++) await post(b.app, '/api/join/open', { token }, { remote: `10.20.30.${i + 1}` });
+    for (let i = 0; i < 5; i++) expect((await post(b.app, '/api/join/open', { token: `${'F'.repeat(42)}${i}` }, { remote: `10.20.31.${i + 1}` })).statusCode).toBeGreaterThanOrEqual(404);
+    expect((await post(b.app, '/api/join/open', { token }, { remote: '10.20.32.1' })).statusCode).toBe(429);
   });
 
   it('the join routes count a link apart from addresses: a flood of addresses never resets it', async () => {
