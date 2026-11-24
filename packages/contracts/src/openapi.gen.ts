@@ -661,7 +661,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Any adult (the bookshop's mail is the household's): the answer to an item of kind maybe_typed_invoice (philobiblos#45), a verified mailed invoice held because it and an invoice typed in or imported in the 30 days before it was read hold each other's copies (the same books, quantities and books' total; or one holds every copy of the other at the same total for them, philobiblos#64) with no number, or with its number for no shop or another (so nothing counted them once). same: the mail counts as the typed one and nothing else changes but the copies it holds beyond the typed ones (typed.more), which count as a mail's; another: another purchase, so the mail's effect now (its copies owned at the price paid, the price learnt, its order lines delivered and invoiced). Once; the item is gone after it. */
+        /** Any adult (the bookshop's mail is the household's): the answer to an item of kind maybe_typed_invoice (philobiblos#45), a verified mailed invoice held because it and an invoice typed in or imported in the 30 days before it was read hold each other's copies (the same books, quantities and books' total; or one holds every copy of the other at the same total for them, philobiblos#64) with no number, or with its number for no shop or another (so nothing counted them once). same: the mail counts as the typed one and nothing else changes but the copies it holds beyond the typed ones (typed.more), which count as a mail's; another: another purchase, so the mail's effect now (its copies owned at the price paid, the price learnt, its order lines delivered and invoiced). Once; the item is gone after it, unless what is left of the mail fits another typed invoice, which it then asks about (philobiblos#64). */
         post: operations["answerTypedInvoice"];
         delete?: never;
         options?: never;
@@ -3565,7 +3565,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description The item asks nothing about a typed invoice, or it is answered already */
+            /** @description The item asks nothing about a typed invoice, or it is answered already; same about a typed invoice that no longer fits what is left of the mail (philobiblos#64) */
             409: {
                 headers: {
                     [name: string]: unknown;

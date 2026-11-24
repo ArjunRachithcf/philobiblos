@@ -197,7 +197,7 @@ effects of the mail of its kind in the table above, on the same records, and not
   number, it is refused by the number, as before.
 - **One holding the other** (philobiblos#64): the two rules above ask too when one invoice holds every copy of the other,
   not only the same ones, at the same total for the copies they share (`overlap`; a cent off for each line taken in
-  part, and of a book billed on several lines, those nearest the other's price first): the mailed books and more typed
+  part now or before, and of a book billed on several lines, those nearest the other's price first): the mailed books and more typed
   (or more copies of one, or a book nobody has yet), part of them typed, the typed books and more mailed (a line
   Philobiblos cannot place among the more), or part of them mailed. The question says which: "Does this invoice hold
   the one that came by mail on …? Its N other copies count either way." (`maybeMailed.more`), "Is this invoice part of
@@ -206,9 +206,12 @@ effects of the mail of its kind in the table above, on the same records, and not
   share of the line's total): never a shared book twice, never the rest dropped. The copies the two share are kept with
   the answer (the entry's undo record `shared`, the mail's `shared: { <entry id>: … }`), so a record is compared by what
   of it is left (`entryLeft`, `mailLeft`): one purchase typed or mailed in three parts is asked about part by part, and
-  a record wholly counted as others is not asked about again (one from before this, or counted by its number: wholly). A
-  mail holding two typed invoices is asked about one, then, answered the same, about the other (it stays held); each one
-  it is the same as is never undone alone. An entry typed or imported that holds books of two mails is refused (409, no
+  a record wholly counted as others is not asked about again (one from before this, or counted by its number: wholly).
+  After either answer, what is left of a held mail is compared again with the typed invoices of the 30 days before the
+  answer (one typed while it waited included; never one it was answered about: `notTyped` for another purchase), and it
+  stays held, asked about the next that fits: a mail holding two typed invoices is asked about each in turn. Its card
+  shows what is left of each (`found`, `typed.totalC`). The same about a typed one that no longer fits what is left of
+  the mail is 409, and changes nothing. Each typed one a mail is the same as is never undone alone. An entry typed or imported that holds books of two mails is refused (409, no
   question), to be recorded part by part: one answer cannot settle two mails. An entry kept as a mail's duplicate makes
   its own copies, and its undo takes them back. A held mail's lines are not decided before the answer; after it, a line
   Philobiblos cannot place waits in the Inbox, as any such line (the answer is kept apart from a dismissal).

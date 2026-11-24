@@ -181,10 +181,13 @@ export function invoiceLines(tx: Tx, lines: { bookId: string | null; qty: number
 /** How recent a typed invoice is (recorded at most this many days before the mail is read) to be asked about. */
 export const MAYBE_TYPED_DAYS = 30;
 
-/** An invoice's line, as two invoices are compared: the book it names (null: none), its copies and what they cost together. */
-export interface Part { bookId: string | null; qty: number; totalC: number }
-/** Copies of a book, as two invoices share them (kept with the answer that they are one purchase: philobiblos#64). */
-export interface Shared { bookId: string; qty: number }
+/**
+ * An invoice's line, as two invoices are compared: the book it names (null: none), its copies and what they cost
+ * together; `slack`, the cents its total may be off, one for each time it was a line taken in part (its total a share).
+ */
+export interface Part { bookId: string | null; qty: number; totalC: number; slack?: number }
+/** Copies of a book and what the invoice holding them charges for them, as two invoices share them (kept with the answer that they are one purchase: philobiblos#64). */
+export interface Shared { bookId: string; qty: number; totalC: number }
 
 /**
  * What one invoice's copies (`inner`, every line naming a book) take of another's lines (`outer`): per outer line, how
@@ -192,18 +195,18 @@ export interface Shared { bookId: string; qty: number }
  * total; `partial` counts those, each up to a cent off). Of a book's lines, those nearest the inner's price for it are
  * taken first (a shop may bill one book on two lines at two prices). Null when the outer lacks some of them.
  */
-function take(outer: Part[], inner: (Shared & { totalC?: number })[]): { taken: number[]; amount: number; partial: number; shared: Shared[] } | null {
+function take(outer: Part[], inner: Part[]): { taken: number[]; amount: number; partial: number; shared: Shared[] } | null {
   if (!inner.length || inner.some((l) => !l.bookId)) return null;
   const want = new Map<string, { qty: number; c: number }>();
   for (const l of inner) {
-    const w = want.get(l.bookId) ?? { qty: 0, c: 0 };
-    want.set(l.bookId, { qty: w.qty + l.qty, c: w.c + (l.totalC ?? 0) });
+    const w = want.get(l.bookId!) ?? { qty: 0, c: 0 };
+    want.set(l.bookId!, { qty: w.qty + l.qty, c: w.c + l.totalC });
   }
-  const shared = [...want].map(([bookId, w]) => ({ bookId, qty: w.qty }));
-  const priced = inner.every((l) => l.totalC !== undefined);
-  const off = (l: Part) => (priced && l.bookId && want.has(l.bookId) ? Math.abs(l.totalC / l.qty - want.get(l.bookId)!.c / want.get(l.bookId)!.qty) : 0);
+  const shared = [...want].map(([bookId, w]) => ({ bookId, qty: w.qty, totalC: w.c }));
+  const off = (l: Part) => (l.bookId && want.has(l.bookId) ? Math.abs(l.totalC / l.qty - want.get(l.bookId)!.c / want.get(l.bookId)!.qty) : 0);
   const taken = outer.map(() => 0);
-  let amount = 0, partial = 0;
+  // The cents the amount may be off: a line taken in part, and any line whose total was a share already.
+  let amount = 0, partial = inner.reduce((n, l) => n + (l.slack ?? 0), 0);
   for (const i of outer.map((_, i) => i).sort((a, b) => off(outer[a]!) - off(outer[b]!))) {
     const l = outer[i]!;
     const w = l.bookId ? want.get(l.bookId) : undefined;
@@ -212,14 +215,14 @@ function take(outer: Part[], inner: (Shared & { totalC?: number })[]): { taken: 
     w!.qty -= k;
     taken[i] = k;
     amount += share(l, k);
-    if (k < l.qty) partial++;
+    partial += (l.slack ?? 0) + (k < l.qty ? 1 : 0);
   }
   return [...want.values()].every((w) => w.qty === 0) ? { taken, amount, partial, shared } : null;
 }
 /** What `k` of a line's copies cost: the line's total for all of them, else their share of it. */
 const share = (l: Part, k: number) => (k === l.qty ? l.totalC : Math.round((l.totalC * k) / l.qty));
 /** A line's copies left once `k` of them are taken, and what they cost. */
-const left = <L extends Part>(l: L, k: number): L => ({ ...l, qty: l.qty - k, totalC: l.totalC - (k ? share(l, k) : 0) });
+const left = <L extends Part>(l: L, k: number): L => (k ? { ...l, qty: l.qty - k, totalC: l.totalC - share(l, k), slack: (l.slack ?? 0) + 1 } : l);
 
 /** How a later invoice overlaps an earlier one (`overlap`). */
 export interface Overlap {
@@ -243,16 +246,16 @@ export function overlap<L extends Part>(earlier: Part[], later: L[]): Overlap | 
   const total = (ls: Part[]) => ls.reduce((n, l) => n + l.totalC, 0);
   const fits = (t: ReturnType<typeof take>, inner: Part[]) => !!t && Math.abs(t.amount - total(inner)) <= t.partial;
   const copies = (s: Shared[]) => s.reduce((n, l) => n + l.qty, 0);
-  const inLater = take(later, earlier as (Shared & { totalC: number })[]);
+  const inLater = take(later, earlier);
   if (inLater && fits(inLater, earlier)) {
     const rest = later.flatMap((l, at) => (inLater.taken[at] === l.qty ? [] : [{ ...left(l, inLater.taken[at]!), at }]));
     return { holds: rest.length ? 'more' : 'same', rest, shared: inLater.shared, copies: copies(inLater.shared) };
   }
-  const inEarlier = take(earlier, later as unknown as (Shared & { totalC: number })[]);
+  const inEarlier = take(earlier, later);
   return inEarlier && fits(inEarlier, later) ? { holds: 'part', rest: [], shared: inEarlier.shared, copies: copies(inEarlier.shared) } : null;
 }
 
-/** Lines less copies another invoice shares with them (`take`, nearest first); every copy of them shared: none. */
+/** Lines less copies another invoice shares with them (`take`: nearest its price first, as `overlap` took them); every copy shared: none. */
 function less<L extends Part>(lines: L[], shared: Shared[] | 'all'): L[] {
   if (shared === 'all') return [];
   if (!shared.length) return lines;
@@ -281,7 +284,7 @@ export function mailParts(lines: unknown, added: Map<number, string | null> = ne
   return out;
 }
 
-const isShared = (v: unknown): v is Shared[] => Array.isArray(v) && v.every((s) => s && typeof s.bookId === 'string' && Number.isInteger(s.qty) && s.qty > 0);
+const isShared = (v: unknown): v is Shared[] => Array.isArray(v) && v.every((s) => s && typeof s.bookId === 'string' && Number.isInteger(s.qty) && s.qty > 0 && Number.isInteger(s.totalC));
 /** What a typed entry kept as a mail's duplicate shares with it (its undo record's `shared`); one from before philobiblos#64: all of it. */
 const entryShared = (undoJson: string | null): Shared[] | 'all' => {
   const s = undoJson ? (JSON.parse(undoJson) as { shared?: unknown }).shared : undefined;
@@ -302,16 +305,28 @@ export const mailEntries = (p: { duplicateOf?: unknown; shared?: unknown }): str
 export const mailsOfEntry = (id: string) =>
   sql`(json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') = ${`entry:${id}`} OR json_extract(${t.mailSeen.parsedJson}, ${`$.shared.${id}`}) IS NOT NULL)`;
 
+/** What mails share with each typed entry they are the same purchase as (`mailShared`), read once for several entries. */
+export type MailLinks = Map<string, (Shared[] | 'all')[]>;
+export function mailLinks(tx: Tx): MailLinks {
+  const links: MailLinks = new Map();
+  const rows = tx.select({ p: t.mailSeen.parsedJson }).from(t.mailSeen).where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'),
+    sql`(json_extract(${t.mailSeen.parsedJson}, '$.duplicateOf') LIKE 'entry:%' OR json_extract(${t.mailSeen.parsedJson}, '$.shared') IS NOT NULL)`)).all();
+  for (const r of rows) {
+    const p = JSON.parse(r.p ?? '{}') as { duplicateOf?: unknown; shared?: unknown };
+    for (const id of mailEntries(p)) links.set(id, [...(links.get(id) ?? []), mailShared(p, id)]);
+  }
+  return links;
+}
+
 /**
  * What of a typed entry no mail counts as (philobiblos#64): its lines less what the mail it is the duplicate of shares
- * with it, and less what each mail answered the same as it shares. An entry a mail is one with by its number, or by an
- * answer from before philobiblos#64, has nothing left.
+ * with it, and less what each mail answered the same as it shares (`links`, else read for this one). An entry a mail is
+ * one with by its number, or by an answer from before philobiblos#64, has nothing left.
  */
-export function entryLeft(tx: Tx, e: { id: string; linesJson: string; duplicateOf: string | null; undoJson: string | null }): Part[] {
+export function entryLeft(tx: Tx, e: { id: string; linesJson: string; duplicateOf: string | null; undoJson: string | null }, links: MailLinks = mailLinks(tx)): Part[] {
   let lines = entryParts(e.linesJson);
   if (e.duplicateOf) lines = less(lines, entryShared(e.undoJson));
-  const mails = tx.select({ p: t.mailSeen.parsedJson }).from(t.mailSeen).where(and(eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), mailsOfEntry(e.id))).all();
-  for (const m of mails) lines = less(lines, mailShared(JSON.parse(m.p ?? '{}') as { shared?: unknown }, e.id));
+  for (const s of links.get(e.id) ?? []) lines = less(lines, s);
   return lines;
 }
 
@@ -351,7 +366,8 @@ export function maybeTyped(tx: Tx, m: { connector: string; number: string | null
     sql`NOT EXISTS (${waits})`,
     skip.length ? notInArray(t.orderEntry.id, skip) : undefined,
   )).orderBy(desc(t.orderEntry.createdAt)).all();
-  const best = fullest(rows.map((e) => ({ e, o: overlap(entryLeft(tx, e), lines) })));
+  const links = mailLinks(tx);
+  const best = fullest(rows.map((e) => ({ e, o: overlap(entryLeft(tx, e, links), lines) })));
   return best ? { id: best.e.id, o: best.o } : null;
 }
 
