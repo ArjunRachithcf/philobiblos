@@ -18,7 +18,7 @@ const SMTP = Number(process.env.PHILOBIBLOS_SMTP_TEST_PORT ?? 0);
 const CA = readFileSync(new URL('./fixtures/tls/cert.pem', import.meta.url), 'utf8');
 const USER = 'shelf@shelf.test', PASS = 'test-password';
 const cfg = (o: Partial<MailboxPlace> & { password?: Secret } = {}, test: Partial<NonNullable<MailboxConfig['test']>> = {}): MailboxPlace & { password: Secret } =>
-  ({ host: 'imap.test', user: USER, password: { value: PASS }, folder: 'INBOX', ...o, test: { ca: CA, connectTo: '127.0.0.1', port: IMAPS, ...test } });
+  ({ host: 'imap.test', user: USER, password: { value: PASS }, folder: 'INBOX', port: IMAPS, ...o, test: { ca: CA, connectTo: '127.0.0.1', ...test } });
 
 /** SMTP, just enough to hand GreenMail a message. */
 async function deliver(raw: Buffer): Promise<void> {

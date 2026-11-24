@@ -394,7 +394,7 @@ function Bought({ order, busy, onOwn }: { order: Order; busy: boolean; onOwn: (b
         })}
       </ul>
       <p className="group-foot">
-        Bought a book with no invoice to record? Mark it owned and it goes to the library. If you record the shop’s invoice instead, leave its books here: the invoice makes their copies.
+        Bought a book? Mark it owned when it arrives and it goes to the library. If the shop’s invoice comes later, from its mail or typed in, it takes that copy and its price paid: never a second copy, and the book stays owned.
         {' '}<a href={`/api/orders/${encodeURIComponent(order.id!)}/list.csv`} download>Download the books still to buy (CSV)</a>
       </p>
     </section>

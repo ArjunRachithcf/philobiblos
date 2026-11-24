@@ -290,7 +290,8 @@ export const orderLine = sqliteTable('order_line', {
   // private to them (a link or a book idea from their takeaways), so only they see it.
   whyAudience: text('why_audience'),
   // The copy a tap made when the book was bought with no invoice to record (no-shop mode, philobiblos#27 slice 5): while
-  // it is set, the tap can be undone. An invoice's or the Inbox's copies never set it.
+  // it is set, the tap can be undone. An invoice's or the Inbox's copies never set it, and an invoice of the book that
+  // comes later takes this copy and clears it (mail/effects.ts deliver; philobiblos#47).
   copyId: text('copy_id').references((): AnySQLiteColumn => copy.id, { onDelete: 'set null' }),
   // The line's state when it was tapped (planned or quoted): what the undo puts back.
   tappedFrom: text('tapped_from'),

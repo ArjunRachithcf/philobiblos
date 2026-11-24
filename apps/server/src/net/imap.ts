@@ -20,8 +20,8 @@ export interface MailboxPlace {
   folder: string;
   /** A PEM file: the server's certificate must chain to it, and to nothing else (null: the system's CAs). */
   caFile?: string | null;
-  /** Tests only: the CA of their own server, the address it listens on and its port. */
-  test?: { ca?: string; connectTo: string; port: number };
+  /** Tests only: the CA of their own server and the address it listens on (the port is always `port`'s). */
+  test?: { ca?: string; connectTo: string };
 }
 /** How it signs in: the app password, or an OAuth access token (never both). */
 export type MailboxConfig = MailboxPlace & ({ password: Secret; accessToken?: undefined } | { accessToken: string; password?: undefined });
@@ -50,7 +50,7 @@ export async function openMailbox(c: MailboxConfig): Promise<Mailbox> {
   }
   const client = new ImapFlow({
     host: c.test?.connectTo ?? c.host,
-    port: c.test?.port ?? port,
+    port,
     secure: true,
     doSTARTTLS: false,
     // XOAUTH2 (or OAUTHBEARER) with the token, never a password beside it; imapflow refuses a token with control characters.

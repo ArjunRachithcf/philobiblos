@@ -58,7 +58,8 @@ No shop at all, or one with no e-mail address: **Make a plain list** instead of 
 no one (choose the shop there), **Print the list** prints it alone, and **Download the CSV** saves it with the columns an
 invoice imports, so the same file with the prices paid filled in records what you bought. When you have bought a book
 and there is no invoice to record, tap **Owned** under *Bought*: it goes to the library (a copy, the line delivered), and
-**Undo** takes it back. Record an invoice or tap Owned for a book, not both: each makes its copy. The rules are in
+**Undo** takes it back. If the shop's invoice comes later (read from its mail, typed in or imported, within 60 days), it takes the
+tap's copy and its price paid, never a second copy; Undo is then gone, as for any invoice's copy. The rules are in
 `contracts/connectors.md` ("No-shop mode").
 
 ## Upgrading from M3

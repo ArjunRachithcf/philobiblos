@@ -166,6 +166,24 @@ describe('homerslab mode', () => {
     for (const k of ['PHILOBIBLOS_EDGE_IDENTITY', 'PHILOBIBLOS_TRUSTED_PROXY', 'PHILOBIBLOS_ORIGIN']) expect(Object.keys(m.env ?? {}), k).not.toContain(k);
     expect(m.audience).toBe('adults');
   });
+  it('the manifest names every mailbox setting the server reads, the CA file as a mounted file and the port in the egress (philobiblos#49)', () => {
+    const m = parse(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'));
+    const source = readFileSync(new URL('../src/config.ts', import.meta.url), 'utf8');
+    const read = [...new Set(source.match(/env\.PHILOBIBLOS_IMAP_[A-Z0-9_]+/g)!.map((k) => k.slice(4)))];
+    expect(read).toEqual(expect.arrayContaining(['PHILOBIBLOS_IMAP_PORT', 'PHILOBIBLOS_IMAP_CA_FILE']));
+    const keys = (l: { key: string }[] | undefined) => (l ?? []).map((e) => e.key);
+    const named = [...keys(m.config), ...keys(m.secrets), ...keys(m.files)];
+    // A secret's *_FILE form is how HomersLab hands a secret it holds as a file: covered by the secret.
+    for (const k of read) expect(named.includes(k) || named.includes(k.replace(/_FILE$/, '')), k).toBe(true);
+    const ca = m.files.find((f: { key: string }) => f.key === 'PHILOBIBLOS_IMAP_CA_FILE');
+    expect(ca).toMatchObject({ optional: true, read_only: true });
+    expect(ca.mount).toMatch(/^\/[^\s]+\.pem$/);
+    expect(m.volumes.map((v: { mount: string }) => v.mount)).not.toContain(ca.mount);
+    expect(m.network.egress).toContain('${PHILOBIBLOS_IMAP_HOST}:${PHILOBIBLOS_IMAP_PORT}');
+    // Plain ${VAR} substitution only, as every other entry: the port's default is its config entry's.
+    expect(m.config.find((c: { key: string }) => c.key === 'PHILOBIBLOS_IMAP_PORT')).toMatchObject({ optional: true, default: '993' });
+    expect(JSON.stringify(m.network)).not.toMatch(/:-/);
+  });
   it('needs PHILOBIBLOS_ORIGIN, the edge\'s promise (HomersLab #236) and the trusted proxy', () => {
     expect(() => loadConfig({ PHILOBIBLOS_MODE: 'homerslab' })).toThrow(/PHILOBIBLOS_ORIGIN/);
     expect(() => loadConfig({ PHILOBIBLOS_MODE: 'homerslab', PHILOBIBLOS_ORIGIN: ORIGIN, PHILOBIBLOS_TRUSTED_PROXY: '127.0.0.1' })).toThrow(/PHILOBIBLOS_EDGE_IDENTITY/);

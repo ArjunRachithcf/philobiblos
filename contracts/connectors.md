@@ -33,8 +33,12 @@ the other (`docs/mail-providers.md`):
   and mailbox they were given for: a change of either in the environment and they are never used or sent anywhere. The
   access token is refreshed with less than a minute left, one refresh at a time; a new refresh token replaces the old one
   (rotation); `invalid_grant` forgets them. Disconnecting forgets them, then revokes the refresh token (RFC 7009) when the
-  client names a revocation endpoint. The token client reaches the token and revocation endpoints only (https, public
-  addresses, never redirected); no token, code or verifier is in an answer, a log or `job_run`, and of a provider's
+  client names a revocation endpoint, and drops every connection still being made (one started before it never finishes
+  after it); a refresh that loses to a disconnect writes nothing back and, while nothing is sealed and no connection is
+  being made, revokes the refresh token the provider rotated to as well (one that loses to a new connection, made or
+  being made, does not: at some providers that would end the new grant too). The token client reaches the token and revocation endpoints only (https, public addresses, never
+  redirected): **a token endpoint only on the home network is not supported** (decided, philobiblos#49: the client secret
+  and refresh token never go to a private address); no token, code or verifier is in an answer, a log or `job_run`, and of a provider's
   refusal only its RFC 6749 error code is repeated.
 
 **Every mail is hostile input.** Forwarded mail can be spoofed, so before a mail has any effect:
@@ -195,9 +199,11 @@ answers the list of its books still to buy (planned or quoted).
   as text), `title`, `author` (the first), `qty` (1), `price` (empty) and `estimate` (the quote, else the estimate), so the
   same file with the prices paid imports as an invoice (above; `estimate` is named back). An attachment, `no-store`.
   **A formula is never written**: a cell that starts with `=`, `+`, `-`, `@` or their full-width forms (after any spaces,
-  or after a control character turned into a space), or with a tab or a carriage return, is written with a leading `'`
-  (OWASP "CSV Injection"; philobiblos#45); control characters become spaces, so a row is a line. An import reads that one
-  `'` back out (`unguardCell`), so an exported title comes back as it was.
+  or after a control character turned into a space), or with a tab or a carriage return, or whose first visible character
+  is one of the four in any NFKC form (small, super- or subscript) after invisible format characters (zero-width spaces
+  and joiners, a byte order mark), is written with a leading `'` (OWASP "CSV Injection"; philobiblos#45, #47); control
+  characters become spaces, so a row is a line. A cell that starts with `'` gets one more too. An import reads that one
+  `'` back out (`unguardCell`), so an exported title comes back as it was, its own apostrophe included.
 - None of the three holds the delivery address, a person's name or a card number.
 - **Owned by a tap** (`PUT /orders/{id}/lines/{bookId}`, `{ owned: true }`, any adult: the order and its copies are the
   household's): for a composed order's planned or quoted line, one copy (source `manual`, of this order, priced as the shop
@@ -205,7 +211,12 @@ answers the list of its books still to buy (planned or quoted).
   (`order_line.copy_id`, `tapped_from`). A
   second tap is 409, never a second copy; an unavailable line is 409. `{ owned: false }` undoes a tap while the line holds
   its copy: the copy removed, the line as the tap found it (planned or quoted); a line an invoice or the Inbox delivered is
-  never undone here (409). A quote (mailed or typed) never changes a delivered line. While any line of the order is delivered, its picks, budget and list stay as they are (409), so picking again
+  never undone here (409). **An invoice after a tap** (mailed, typed, imported or added in the Inbox), when no line of the book
+  is still to buy and the tap's copy was made within 60 days of the invoice's date, takes that copy as its first (its
+  source and price paid; the copy keeps its arrival date; the rest of its quantity new copies), clears `copy_id` and
+  `tapped_from`, and invoices the order: one copy for one book bought, and Undo is then 409 like any invoice's
+  (philobiblos#47). An older tap is another purchase: the invoice makes its own copies. A line an
+  invoice delivered is never taken again: a second invoice of the book is a copy of no order. A quote (mailed or typed) never changes a delivered line. While any line of the order is delivered, its picks, budget and list stay as they are (409), so picking again
   never drops a book in the library.
 
 ## Price lookup (ADR 0008)

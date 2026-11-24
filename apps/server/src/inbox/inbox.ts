@@ -19,7 +19,7 @@ import type { components } from '@philobiblos/contracts/openapi';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { actsFor, getPerson, household, view } from '../household/people';
-import { matchBook } from '../mail/effects';
+import { deliver, invoiceOrders, matchBook } from '../mail/effects';
 import { norm } from '../seed/import';
 import { foundBooks, keptFiles, ownShare, shareAiNote, type ShareRow } from '../shares/shares';
 import { validateAiOutput, type SuggestNextOut } from '@philobiblos/contracts';
@@ -326,14 +326,8 @@ export function decide(db: Db, me: string, id: string, index: number, body: unkn
       // known (the order line it was ordered in delivered), and on the to-read pile of whoever it is for.
       const inv = book.invoice;
       const acquired = inv.date && !Number.isNaN(Date.parse(inv.date)) ? new Date(inv.date).toISOString() : iso;
-      const line = tx.select({ orderId: t.orderLine.orderId }).from(t.orderLine).innerJoin(t.order, eq(t.order.id, t.orderLine.orderId))
-        .where(and(eq(t.orderLine.bookId, bookId), inArray(t.order.status, ['drafted', 'quoted', 'invoiced']), inArray(t.orderLine.state, ['planned', 'quoted']))).orderBy(desc(t.order.month)).get();
-      for (let i = 0; i < Math.min(inv.qty, MAX_COPIES); i++) tx.insert(t.copy).values({ id: ulid(), bookId, source: 'invoice', orderId: line?.orderId ?? null, priceC: inv.unitC, acquiredAt: acquired }).run();
-      if (line) {
-        tx.update(t.orderLine).set({ state: 'delivered' }).where(and(eq(t.orderLine.orderId, line.orderId), eq(t.orderLine.bookId, bookId))).run();
-        const o = tx.select().from(t.order).where(eq(t.order.id, line.orderId)).get()!;
-        tx.update(t.order).set({ status: 'invoiced', invoicedC: (o.invoicedC ?? 0) + inv.totalC }).where(eq(t.order.id, o.id)).run();
-      }
+      const orderId = deliver(tx, { bookId, qty: Math.min(inv.qty, MAX_COPIES), unitC: inv.unitC, acquiredAt: acquired, source: 'invoice' });
+      if (orderId) invoiceOrders(tx, new Map([[orderId, inv.totalC]]));
       if (forWho) tx.insert(t.reading).values({ personId: target.id, bookId, status: 'to_read', updatedAt: iso }).onConflictDoNothing().run();
     } else {
       // Already in that backlog: added all the same.

@@ -37,7 +37,8 @@ services:
       PHILOBIBLOS_IMAP_PASSWORD_FILE: ${PHILOBIBLOS_IMAP_PASSWORD_FILE:-${SHELF_IMAP_PASSWORD_FILE:-}}
       PHILOBIBLOS_IMAP_FOLDER: ${PHILOBIBLOS_IMAP_FOLDER:-${SHELF_IMAP_FOLDER:-INBOX}}
       # A self-hosted server or a local bridge: its port (TLS from the first byte all the same) and its own certificate
-      # (mount it read-only and name it here); empty: 993 and the system's CAs.
+      # (mount it read-only and name it here); empty: 993 and the system's CAs. A mail bridge that listens on its own
+      # loopback needs this service to share its network (network_mode): docs/mail-providers.md.
       PHILOBIBLOS_IMAP_PORT: ${PHILOBIBLOS_IMAP_PORT:-}
       PHILOBIBLOS_IMAP_CA_FILE: ${PHILOBIBLOS_IMAP_CA_FILE:-}
       PHILOBIBLOS_IMAP_AUTH: ${PHILOBIBLOS_IMAP_AUTH:-password}

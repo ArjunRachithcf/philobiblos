@@ -179,6 +179,15 @@ describe('configuration: the admin\'s own OAuth client, from the environment', (
     for (const p of ['0', '65536', '99x', '1.5']) expect(() => loadConfig({ PHILOBIBLOS_IMAP_HOST: 'imap.test', PHILOBIBLOS_IMAP_USER: USER, PHILOBIBLOS_IMAP_PASSWORD: 'pw', PHILOBIBLOS_IMAP_PORT: p })).toThrow(/PHILOBIBLOS_IMAP_PORT/);
   });
 
+  it('a token endpoint only on the home network is not supported (philobiblos#49, decided): refused before anything is sent, nothing sealed', async () => {
+    const db = household();
+    const o = new MailOAuth(db, config(), { egressOptions: { resolve: async () => [{ address: '192.168.1.10', family: 4 }], test: { ca: CA, httpsPort: port } }, now: () => clock });
+    const e = await o.finish(ME, consent(o.start(ME, { accept: oauthView(db).allowsVersion }).authorizeUrl)).then(() => null, (x: unknown) => x as OAuthError);
+    expect(e).toMatchObject({ status: 502, message: 'cannot reach other.test (private-address)' });
+    expect(provider.requests).toEqual([]);
+    expect(isSealed(db, OAUTH_SEALED)).toBe(false);
+  });
+
   it('the token client reaches the token and revocation endpoints and nothing else', () => {
     expect(oauthEgressRules(config().imap!.oauth!)).toEqual([{ host: 'other.test' }]);
     expect(oauthEgressRules({ ...config().imap!.oauth!, tokenUrl: 'https://token.test:8443/t', revokeUrl: 'https://revoke.test/r' })).toEqual([{ host: 'token.test', port: 8443 }, { host: 'revoke.test' }]);
@@ -484,6 +493,96 @@ describe('disconnecting', () => {
     await o.disconnect();
     expect((await pending)?.message).toMatch(/disconnected or connected again meanwhile/);
     expect(isSealed(db, OAUTH_SEALED)).toBe(false);
+  });
+
+  it('a refresh that loses to a disconnect: the rotated refresh token it was given is revoked too, never kept (philobiblos#49)', async () => {
+    const db = household();
+    const o = await connected(db);
+    provider.rotate = true;
+    clock = new Date(clock.getTime() + 3600_000);
+    let release!: () => void;
+    provider.gate = new Promise((ok) => { release = ok; });
+    const pending = o.accessToken().then(() => null, (e: unknown) => e as Error);
+    await expect.poll(() => provider.requests.some((r) => r.path === 'held')).toBe(true);
+    expect(await o.disconnect()).toEqual({ revoked: true });
+    release();
+    expect((await pending)?.message).toMatch(/disconnected or connected again meanwhile/);
+    expect(isSealed(db, OAUTH_SEALED)).toBe(false);
+    const revoked = () => provider.requests.filter((r) => r.path === '/revoke').map((r) => Object.fromEntries(r.form));
+    expect(revoked()).toEqual([
+      { token: 'rt-1-' + 'r'.repeat(20), token_type_hint: 'refresh_token', client_id: CLIENT_ID, client_secret: CLIENT_SECRET },
+      { token: 'rt-2-' + 'r'.repeat(20), token_type_hint: 'refresh_token', client_id: CLIENT_ID, client_secret: CLIENT_SECRET },
+    ]);
+  });
+
+  it('a refresh that loses to a disconnect while the admin is connecting again: not revoked (the new grant may be the same)', async () => {
+    const db = household();
+    const o = await connected(db);
+    provider.rotate = true;
+    clock = new Date(clock.getTime() + 3600_000);
+    let release!: () => void;
+    provider.gate = new Promise((ok) => { release = ok; });
+    const pending = o.accessToken().then(() => null, (e: unknown) => e as Error);
+    await expect.poll(() => provider.requests.some((r) => r.path === 'held')).toBe(true);
+    await o.disconnect();
+    const again = o.start(ME, { accept: oauthView(db).allowsVersion }); // the provider's sign-in not finished yet
+    release();
+    expect((await pending)?.message).toMatch(/meanwhile/);
+    expect(provider.requests.filter((r) => r.path === '/revoke').map((r) => r.form.get('token'))).toEqual(['rt-1-' + 'r'.repeat(20)]);
+    await o.finish(ME, consent(again.authorizeUrl));
+    expect(isSealed(db, OAUTH_SEALED)).toBe(true);
+  });
+
+  it('a connection started before a disconnect cannot finish after it; the refresh that lost then revokes its rotated token (review probe)', async () => {
+    const db = household();
+    const o = await connected(db);
+    provider.rotate = true;
+    clock = new Date(clock.getTime() + 3600_000);
+    let release!: () => void;
+    provider.gate = new Promise((ok) => { release = ok; });
+    const pending = o.accessToken().then(() => null, (e: unknown) => e as Error);
+    await expect.poll(() => provider.requests.some((r) => r.path === 'held')).toBe(true);
+    const before = o.start(ME, { accept: oauthView(db).allowsVersion }); // started, then Disconnect
+    await o.disconnect();
+    await expect(o.finish(ME, consent(before.authorizeUrl))).rejects.toMatchObject({ status: 400 });
+    release();
+    expect((await pending)?.message).toMatch(/meanwhile/);
+    expect(isSealed(db, OAUTH_SEALED)).toBe(false);
+    expect(provider.requests.filter((r) => r.path === '/revoke').map((r) => r.form.get('token'))).toEqual(['rt-1-' + 'r'.repeat(20), 'rt-2-' + 'r'.repeat(20)]);
+  });
+
+  it('a connection started after the disconnect and left to expire does not keep the rotated token from being revoked', async () => {
+    const db = household();
+    const o = await connected(db);
+    provider.rotate = true;
+    clock = new Date(clock.getTime() + 3600_000);
+    let release!: () => void;
+    provider.gate = new Promise((ok) => { release = ok; });
+    const pending = o.accessToken().then(() => null, (e: unknown) => e as Error);
+    await expect.poll(() => provider.requests.some((r) => r.path === 'held')).toBe(true);
+    await o.disconnect();
+    o.start(ME, { accept: oauthView(db).allowsVersion });
+    clock = new Date(clock.getTime() + PENDING_MS + 1);
+    release();
+    expect((await pending)?.message).toMatch(/meanwhile/);
+    expect(provider.requests.filter((r) => r.path === '/revoke').map((r) => r.form.get('token'))).toEqual(['rt-1-' + 'r'.repeat(20), 'rt-2-' + 'r'.repeat(20)]);
+  });
+
+  it('a refresh that loses to a new connection: its rotated token is not revoked (at some providers that ends the new grant), nothing written', async () => {
+    const db = household();
+    const o = await connected(db);
+    provider.rotate = true;
+    clock = new Date(clock.getTime() + 3600_000);
+    let release!: () => void;
+    provider.gate = new Promise((ok) => { release = ok; });
+    const old = o.accessToken().then(() => null, (e: unknown) => e as Error);
+    await expect.poll(() => provider.requests.some((r) => r.path === 'held')).toBe(true);
+    await o.finish(ME, consent(o.start(ME, { accept: oauthView(db).allowsVersion }).authorizeUrl));
+    const now = sealedJson(db).refresh;
+    release();
+    expect((await old)?.message).toMatch(/connected again meanwhile/);
+    expect(sealedJson(db).refresh).toBe(now);
+    expect(provider.requests.filter((r) => r.path === '/revoke')).toEqual([]);
   });
 });
 

