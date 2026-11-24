@@ -8,7 +8,9 @@ import { loadConfig } from '../src/config';
 import * as t from '../src/db/schema';
 import { markOwned } from '../src/month/plan';
 import { EntryError, UNDO_DAYS, recentEntries, recordEntry, undoEntry } from '../src/orders/entries';
+import { refreshMail } from '../src/mail/job';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
+import { CFG, fakeBox, message, resolver, signed } from './mailkit';
 
 const NOW = new Date('2026-11-16T10:00:00.000Z');
 const LATER = new Date(NOW.getTime() + 3600_000);
@@ -112,6 +114,64 @@ describe('undo: everything the invoice did, and only that', () => {
     undoEntry(db, 'p_sam', b.id!, LATER);
     expect(order(db)).toMatchObject({ status: 'quoted', invoicedC: null });
     expect(line(db, 'b_hedgehog').state).toBe('planned');
+  });
+});
+
+/** The bookshop's mailed invoice of The Long Tide of Markets: `qty` copies at `price` each (19.90 unless told). */
+async function mailTide(db: W, o: { qty?: number; price?: string; uid?: number } = {}) {
+  const qty = o.qty ?? 1, price = o.price ?? '19.90', total = (Number(price) * qty).toFixed(2);
+  const raw = await signed(message({ id: `inv-${o.uid ?? 1}`, from: 'rechnung@quillmere.example', subject: `Ihre Quillmere-Rechnung Nr. 9900112${o.uid ?? 1}`, body: 'Guten Tag, Ihre Rechnung finden Sie im Anhang.', pdf: Buffer.from('%PDF-1.4\n') }));
+  await refreshMail(db, CFG, { open: async () => fakeBox([{ uid: o.uid ?? 1, raw }]), resolver, now: () => LATER, pdfText: async () => ({ id: 'j', ok: true, kind: 'pdf.text', pages: 1, truncated: false,
+    rows: [['9780000000002', 'The Long Tide of Markets', `${qty} ST`, price, `${total} CHF`, '2.6 %'], ['Total', `${total} CHF`]] }) });
+}
+
+describe('a later invoice of the same book takes over the order line (philobiblos#45 review)', () => {
+  it('typed at the wrong price, the shop\'s mail at the right one (so not held), then the typed one undone: the line stays delivered, by the mail', async () => {
+    const db = world();
+    const e = invoice(db, [{ isbn: '9780000000002', qty: 1, price: 1890 }]);
+    await mailTide(db);
+    // The typed one delivered the line first: the mail's copy is of no order.
+    expect(db.select().from(t.copy).all().map((c) => [c.source, c.orderId, c.priceC]).sort()).toEqual([['invoice', null, 1990], ['manual', 'o_nov', 1890]]);
+    undoEntry(db, 'p_sam', e.id!, LATER);
+    expect(db.select().from(t.copy).all().map((c) => [c.source, c.orderId, c.priceC])).toEqual([['invoice', 'o_nov', 1990]]);
+    expect(line(db, 'b_tide')).toMatchObject({ state: 'delivered', copyId: null });
+    expect(order(db)).toMatchObject({ status: 'invoiced', invoicedC: 1990 });
+  });
+
+  it('refused (409, nothing changed) when it is not clear which purchase takes it over: two later ones, or another quantity', async () => {
+    const two = world();
+    const e = invoice(two, [{ isbn: '9780000000002', qty: 1, price: 1890 }]);
+    await mailTide(two);
+    invoice(two, [{ isbn: '9780000000002', qty: 1, price: 1700 }], { at: LATER });
+    let before = state(two);
+    refused(() => undoEntry(two, 'p_sam', e.id!, LATER), 409, /bought again since/);
+    expect(state(two)).toBe(before);
+    const qty = world();
+    const f = invoice(qty, [{ isbn: '9780000000002', qty: 1, price: 1890 }]);
+    await mailTide(qty, { qty: 2 });
+    before = state(qty);
+    refused(() => undoEntry(qty, 'p_sam', f.id!, LATER), 409, /bought again since/);
+    expect(state(qty)).toBe(before);
+    // Two purchases of one copy each, for an invoice of two: as many copies, still not one purchase.
+    const split = world();
+    const g = invoice(split, [{ isbn: '9780000000002', qty: 2, price: 1890 }]);
+    await mailTide(split);
+    invoice(split, [{ isbn: '9780000000002', qty: 1, price: 1700 }], { at: LATER });
+    before = state(split);
+    refused(() => undoEntry(split, 'p_sam', g.id!, LATER), 409, /bought again since/);
+    expect(state(split)).toBe(before);
+  });
+
+  it('a copy of no order from before the invoice, or a later one of another order, is another purchase: the line goes back as it was', () => {
+    const db = world();
+    db.insert(t.copy).values({ id: '00000000000000000000000000', bookId: 'b_tide', source: 'invoice', orderId: null, priceC: 1500, acquiredAt: '2026-01-01T00:00:00.000Z' }).run();
+    db.insert(t.order).values({ id: 'o_dec', month: '2026-12', status: 'invoiced', invoicedC: 1990, createdAt: NOW.toISOString() }).run();
+    db.insert(t.copy).values({ id: '7ZZZZZZZZZZZZZZZZZZZZZZZZZ', bookId: 'b_tide', source: 'invoice', orderId: 'o_dec', priceC: 1990, acquiredAt: '2026-12-01T00:00:00.000Z' }).run();
+    const e = invoice(db, [{ isbn: '9780000000002', qty: 1, price: 1890 }]);
+    undoEntry(db, 'p_sam', e.id!, LATER);
+    expect(line(db, 'b_tide').state).toBe('quoted');
+    expect(order(db)).toMatchObject({ status: 'quoted', invoicedC: null });
+    expect(db.select().from(t.copy).all().map((c) => c.orderId).sort()).toEqual([null, 'o_dec']);
   });
 });
 

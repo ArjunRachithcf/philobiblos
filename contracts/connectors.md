@@ -183,7 +183,9 @@ effects of the mail of its kind in the table above, on the same records, and not
   that fit, the newest. A mail with a line Philobiblos cannot place, or a typed one with another number, counts as before.
 - **Undo** (philobiblos#45, `POST /orders/entries/{id}/undo`; `GET /orders/entries` lists the last 7 days'): an invoice
   typed or imported is undone by whoever recorded it, or an admin, within 7 days (`UNDO_DAYS`), while nothing it changed
-  has changed since: its copies removed, a tap's copy it took the tap's again, its order lines as they were, each
+  has changed since: its copies removed, a tap's copy it took the tap's again, its order lines as they were (a line
+  whose book was bought again since by one invoice of no order, as many copies, passes to that purchase: it stays
+  delivered and the order is invoiced for it; two such purchases, or another quantity, is 409), each
   order's invoiced total less its own (with none left, the order as before its first invoice), the price it learnt put
   back unless another invoice changed it since, a pile it put a book on left without it unless the book was touched
   since, and the entry gone (its number may be typed again). The book it added stays. Refused (409) when a copy, line

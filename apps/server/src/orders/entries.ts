@@ -18,7 +18,7 @@
 //
 // An invoice entry keeps what it did (undo_json), so whoever recorded it, or an admin, may undo it for UNDO_DAYS while
 // nothing it changed has changed since (undoEntry; philobiblos#45).
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -370,6 +370,14 @@ interface Undo {
   offers: { bookId: string; was: OfferRow | null; left: OfferRow | null }[];
 }
 
+/**
+ * Copies of a book made after the entry `entryId` (a ULID: copies made later have later ids), of no order, by an
+ * invoice (mailed: invoice; typed or imported: manual). A tap's copy is always of its order, so never one of these.
+ */
+function laterCopies(tx: Tx, bookId: string, entryId: string) {
+  return tx.select().from(t.copy).where(and(eq(t.copy.bookId, bookId), isNull(t.copy.orderId), inArray(t.copy.source, ['invoice', 'manual']), sql`${t.copy.id} > ${entryId}`)).all();
+}
+
 /** How long after it was recorded an invoice entry may be undone. */
 export const UNDO_DAYS = 7;
 const DAY_MS = 86_400_000;
@@ -388,7 +396,8 @@ function mayUndo(db: Db, me: string, e: { personId: string | null }): boolean {
  * line it delivered is no longer as it left it, an order it invoiced is closed or invoiced for less than it added, or
  * a bookshop's mail counts as it (or waits in the Inbox as maybe it): undoing it would leave that mail uncounted.
  * Otherwise, in one transaction: its copies removed, the tap's copy and its line the tap's again, the order lines it
- * delivered as they were, each order's invoiced total less what it added (with nothing left invoiced, the order as it
+ * delivered as they were (or, for a book bought again since by an invoice of no order, that purchase's: it takes the line
+ * over and the order is invoiced for it; refused, 409, when it is not clear which purchase that is), each order's invoiced total less what it added (with nothing left invoiced, the order as it
  * was before its first invoice), a price it learnt put back as it was unless another invoice has changed it since,
  * a pile it put a book on left without it unless that book has been touched since, and the entry gone, so its number
  * may be typed again. A book it added stays: it may be known elsewhere by now.
@@ -430,18 +439,36 @@ export function undoEntry(db: Db, me: string, id: string, now = new Date()): voi
       const row = tx.select().from(t.order).where(eq(t.order.id, o.id)).get();
       if (!row || row.status !== 'invoiced' || (row.invoicedC ?? 0) < o.c) changed('the order it invoiced');
     }
+    // A line it delivered, of a book bought again since, of no order (an invoice read or typed after it, which found
+    // the line delivered already): that purchase takes the line over rather than leave it to buy (philobiblos#45 review).
+    const handover = new Map<number, string[]>();
+    const added = new Map<string, number>();
+    const own = new Set(u.lines.flatMap((l) => l.copies));
+    for (const [i, l] of u.lines.entries()) {
+      if (!l.line || l.tap) continue;
+      const later = laterCopies(tx, l.bookId, id).filter((c) => !own.has(c.id));
+      if (!later.length) continue;
+      const purchases = new Set(later.map((c) => `${c.source}|${c.acquiredAt}|${c.priceC}`));
+      if (purchases.size > 1 || later.length !== l.copies.length) {
+        throw new EntryError(409, 'its book was bought again since, and it is not clear which purchase the order line goes to: the invoice stays');
+      }
+      handover.set(i, later.map((c) => c.id));
+      added.set(l.line.orderId, (added.get(l.line.orderId) ?? 0) + later.reduce((n, c) => n + (c.priceC ?? 0), 0));
+    }
 
-    for (const l of u.lines) {
+    for (const [i, l] of u.lines.entries()) {
       for (const c of l.copies) tx.delete(t.copy).where(eq(t.copy.id, c)).run();
       if (l.tap) tx.update(t.copy).set(l.tap.was).where(eq(t.copy.id, l.tap.copyId)).run();
-      if (l.line) tx.update(t.orderLine).set(l.line.was as { state: 'planned' }).where(and(eq(t.orderLine.orderId, l.line.orderId), eq(t.orderLine.bookId, l.bookId))).run();
+      const later = handover.get(i);
+      if (later && l.line) tx.update(t.copy).set({ orderId: l.line.orderId }).where(inArray(t.copy.id, later)).run();
+      else if (l.line) tx.update(t.orderLine).set(l.line.was as { state: 'planned' }).where(and(eq(t.orderLine.orderId, l.line.orderId), eq(t.orderLine.bookId, l.bookId))).run();
       if (l.reading) {
         tx.delete(t.reading).where(and(eq(t.reading.personId, l.reading), eq(t.reading.bookId, l.bookId), eq(t.reading.status, 'to_read'), eq(t.reading.updatedAt, e.createdAt))).run();
       }
     }
     for (const o of u.orders) {
       const row = tx.select().from(t.order).where(eq(t.order.id, o.id)).get()!;
-      const left = (row.invoicedC ?? 0) - o.c;
+      const left = (row.invoicedC ?? 0) - o.c + (added.get(o.id) ?? 0);
       // Nothing left of what it was invoiced: still invoiced while a line of it stays delivered by an invoice (a free
       // one, say; a tap's line is no invoice's), else as it was before its first invoice.
       const invoicedLine = tx.select({ b: t.orderLine.bookId }).from(t.orderLine)
