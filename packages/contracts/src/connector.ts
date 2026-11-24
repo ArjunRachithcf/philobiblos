@@ -10,7 +10,8 @@ export interface Connector {
   id: string;
   name: string;
   locale: { currency: string; language: string };
-  money: { before: string[]; after: string[] };
+  /** `decimal`, `groups`: how its amounts are written (contracts/connector.schema.json; philobiblos#62). */
+  money: { before: string[]; after: string[]; decimal?: '.' | ','; groups?: (',' | '.' | "'" | ' ')[] };
   mail?: {
     domains: string[];
     dkim_domains?: string[];

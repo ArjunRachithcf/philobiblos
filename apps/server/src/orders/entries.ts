@@ -28,7 +28,8 @@ import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { bookIsbn } from '../books/isbn';
-import { AMOUNT_CEILING_C, parseAmount } from '@philobiblos/contracts/money';
+import { AMOUNT_CEILING_C, amountExample, belowHundredths, parseAmount } from '@philobiblos/contracts/money';
+import { currencyDigits } from '../household/currency';
 import { amountProblem, getMoney } from '../household/money';
 import { actsFor, getPerson, household, view } from '../household/people';
 import { DAY, longDay } from '../inbox/inbox';
@@ -146,8 +147,12 @@ function line(kind: EntryKind, row: number, v: unknown, csv: boolean, currency: 
     if (csv) {
       // An amount in the household's currency as a person writes it: digits, then a point or a comma and at most the
       // currency's decimals. No symbol, sign or thousands separator: an amount Philobiblos cannot place is refused, never guessed.
-      p = typeof p === 'string' ? parseAmount(p, currency) : null;
-      if (p === null) return at(`price: an amount such as 18.90 (or 1890 in a currency without decimals), in ${currency}`);
+      // A thousandth (in a currency with three decimals) is refused as such: amounts are kept in hundredths.
+      const digits = currencyDigits(currency);
+      const written = typeof p === 'string' ? p : '';
+      p = parseAmount(written, digits);
+      if (p === null && belowHundredths(written, digits)) return at(`price: amounts are kept to hundredths, so a ${currency} price has at most two decimals (${amountExample(digits)}, not ${written.trim().slice(0, 20)}: three could be a thousands group)`);
+      if (p === null) return at(`price: an amount such as ${amountExample(digits)}, in ${currency}`);
     }
     const problem = amountProblem(p, currency);
     if (problem) return at(`price: ${problem}`);

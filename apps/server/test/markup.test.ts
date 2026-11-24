@@ -185,6 +185,16 @@ describe('Order markup', () => {
     expect(pageOffer(page.replace('24800', '24800.5'), 'The Long Tide of Markets', ['Mira Okafor'], 'KRW')).toMatchObject({ priceC: null });
   });
 
+  it('in a currency with three decimals, 1.250 reads as hundredths; a thousandth is refused as below hundredths (philobiblos#62)', () => {
+    const dinar = { ...RULES, markup: { ...RULES.markup!, currency: 'KWD' } };
+    const inDinar = (price: unknown) => parseMarkup(ldBlocks(ld(order([offer({ price, currency: 'KWD' })]))), [], dinar);
+    expect(inDinar('1.250')).toMatchObject({ kind: 'online_order', lines: [{ priceC: 125 }] });
+    expect(inDinar('12.5')).toMatchObject({ kind: 'online_order', lines: [{ priceC: 1250 }] });
+    expect(inDinar('1.255')).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/hundredths/) });
+    expect(inDinar(1.255)).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/hundredths/) });
+    expect(inDinar('1.2500')).toMatchObject({ kind: 'unknown_layout', reason: expect.stringMatching(/price/) });
+  });
+
   it('an ISBN-10 is read as its ISBN-13; one whose check digit is wrong is an ISBN Philobiblos cannot read', () => {
     expect(parse(ld(order([offer({ isbn: '0-00-000000-0' })])))).toMatchObject({ kind: 'online_order', lines: [{ ean: '9780000000002' }] });
     expect(parse(ld(order([offer({ isbn: '000000006X' })])))).toMatchObject({ kind: 'online_order', lines: [{ ean: '9780000000064' }] });

@@ -390,11 +390,11 @@ components:
             priceAsks: { enum: [title, isbn, null], description: 'what its price lookup sends that host: a book''s title and first author, or its ISBN-13 alone (only books with one are asked); null without a lookup' }
             orderTo: { type: [string, 'null'], description: 'where Compose writes unless Settings names another address' }
             markup: { type: boolean, description: 'schema.org Order and Invoice markup (JSON-LD) in its signed mail counts: an order''s lines are kept, an invoice makes copies' }
-    Money: { type: integer, description: 'hundredths of the household''s currency (HouseholdMoney), 0 to 1,000,000,000,000 (10,000,000,000 of any currency: arithmetic''s ceiling, not a typo guard). Hundredths are a fixed scale, not the currency''s minor unit: in a currency without decimals an amount is whole units (a multiple of 100), written and typed without decimals (Intl''s digits for the currency, at most two); one an admin sets that is not is refused (400)' }
+    Money: { type: integer, description: 'hundredths of the household''s currency (HouseholdMoney), 0 to 1,000,000,000,000 (10,000,000,000 of any currency: arithmetic''s ceiling, not a typo guard). Hundredths are a fixed scale, not the currency''s minor unit: in a currency without decimals an amount is whole units (a multiple of 100), written and typed without decimals (HouseholdMoney.digits: the server''s Intl count for the currency); one an admin sets that is not is refused (400). In a currency with three decimals, amounts are still hundredths: one written with a thousandth is refused, never rounded' }
     Me: { type: object, properties: { person: { $ref: '#/components/schemas/Person' }, household: { type: array, items: { $ref: '#/components/schemas/Person' } }, mode: { enum: [homerslab, standalone] }, money: { $ref: '#/components/schemas/HouseholdMoney' } } }
     HouseholdMoney:
       type: object
-      required: [currency, unknownPrice, priceLimits]
+      required: [currency, unknownPrice, priceLimits, digits]
       description: 'The household''s money (philobiblos#27): every amount (Money) is in hundredths of its currency. No currency is assumed.'
       properties:
         currency: { type: [string, 'null'], pattern: '^[A-Z]{3}$', description: 'ISO 4217, one this server knows; null until chosen (PHILOBIBLOS_CURRENCY at a start fills in a household that has none, or an admin here). A connector counts only in it, and it does not change while a connector in another is enabled (409); amounts are never converted.' }
@@ -407,6 +407,12 @@ components:
             high: { oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ], description: 'null (read only): no limit, the unknown price is 0' }
             max: { oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ] }
             own: { type: boolean, readOnly: true, description: 'the household''s own limits; false while they follow its unknown price' }
+        digits: { type: integer, minimum: 0, readOnly: true, description: 'the decimals amounts in its currency are written and typed with, as this server''s Intl counts them (2 without a currency): the screens'' one source, never their own Intl, whose count can differ (philobiblos#62). Amounts are kept in hundredths whatever it is: with 0, whole units; with 3, an amount''s third decimal is 0 (a thousandth is refused everywhere, never rounded)' }
+        currencies:
+          type: array
+          readOnly: true
+          description: 'GET /settings only: every currency this server knows, with its digits, for Settings'' choice of the household''s (philobiblos#62)'
+          items: { type: object, required: [code, digits], properties: { code: { type: string, pattern: '^[A-Z]{3}$' }, digits: { type: integer, minimum: 0 } } }
     Person: { type: object, required: [id, name, role], properties: { id: {type: string}, name: {type: string}, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'] }, birthYear: { type: [integer, 'null'], description: kids only }, ageBand: { enum: ['0-2','3-5','6-8','9-12', null] }, signsIn: { type: boolean, description: 'standalone: has at least one passkey' } } }
     PersonInput: { type: object, required: [name, role], additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: string, pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: integer, minimum: 2000, maximum: 2100 } } }
     PersonPatch: { type: object, additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'], pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: [integer, 'null'], minimum: 2000, maximum: 2100 } } }

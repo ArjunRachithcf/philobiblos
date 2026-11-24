@@ -20,13 +20,15 @@
       }
     },
     "money": {
-      "description": "How amounts are written: a symbol before the amount, or after it; the amount itself is always 1 to 4 digits, '.' or ',', 2 digits.",
+      "description": "How amounts are written: a symbol before the amount, or after it; the amount has the currency's decimals (none, two or three, as the server counts them), its whole units grouped by thousands or not (philobiblos#62).",
       "type": "object",
       "additionalProperties": false,
       "required": ["before", "after"],
       "properties": {
         "before": { "$ref": "#/$defs/symbols" },
-        "after": { "$ref": "#/$defs/symbols" }
+        "after": { "$ref": "#/$defs/symbols" },
+        "decimal": { "description": "Its decimal mark. Needed in a currency with three decimals, where '1,250' could be 1.25 or 1250: without it, no amount reads. Otherwise optional: '.' or ',', whichever is not the grouping's.", "enum": [".", ","] },
+        "groups": { "description": "How it groups thousands: any of ',', '.', an apostrophe and ' ' (a space, a no-break or a narrow no-break space). Default: ',', '.' and the apostrophe, never the decimal mark; a space only when listed here (else '12 500' is refused, never read as 12).", "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": [",", ".", "'", " "] } }
       }
     },
     "mail": {

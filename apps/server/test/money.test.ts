@@ -15,6 +15,7 @@ import * as t from '../src/db/schema';
 import { AMOUNT_CEILING_C } from '@philobiblos/contracts/money';
 import { getMonth } from '../src/month/plan';
 import { DEFAULT_UNKNOWN_PRICE_C } from '../src/household/money';
+import { currencyDigits } from '../src/household/currency';
 import { ORIGIN, TEST_SEALING_KEY, household, sessionCookie } from './helpers';
 import { CONNECTORS } from './mailkit';
 
@@ -48,19 +49,19 @@ describe('the household\'s currency', () => {
   it('PHILOBIBLOS_CURRENCY is the currency the household starts with; once its settings exist it is never read again', async () => {
     const db = admins();
     const a = await client(db, { PHILOBIBLOS_CURRENCY: 'EUR' });
-    expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: 'EUR', unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING });
+    expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: 'EUR', unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING, digits: 2, currencies: expect.any(Array) });
     await a.built.app.close();
     const b = await client(db, { PHILOBIBLOS_CURRENCY: 'GBP' });
     expect((await b.get('p_admin', '/api/settings')).json().money.currency).toBe('EUR');
     // Everyone signed in sees it (the screens write amounts in it), from /me.
-    expect((await b.get('p_adult', '/api/me')).json().money).toEqual({ currency: 'EUR', unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING });
+    expect((await b.get('p_adult', '/api/me')).json().money).toEqual({ currency: 'EUR', unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING, digits: 2 });
     await b.built.app.close();
   });
 
   it('unset, the household has no currency until it is chosen: none is assumed; set at a later start, it fills that in', async () => {
     const db = admins();
     const a = await client(db);
-    expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: null, unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING });
+    expect((await a.get('p_admin', '/api/settings')).json().money).toEqual({ currency: null, unknownPrice: DEFAULT_UNKNOWN_PRICE_C, priceLimits: FOLLOWING, digits: 2, currencies: expect.any(Array) });
     expect((await a.get('p_adult', '/api/me')).json().money.currency).toBeNull();
     await a.built.app.close();
     // An enabling made while there was no currency (by hand: the server refuses it) does not survive the filling in.
@@ -98,6 +99,60 @@ describe('the household\'s currency', () => {
     expect((await a.get('p_admin', '/api/settings')).json().money.currency).toBeNull();
     expect((await a.patch('p_admin', { money: { currency: 'eur' } })).statusCode).toBe(200);
     expect((await a.get('p_admin', '/api/settings')).json().money.currency).toBe('EUR');
+    await a.built.app.close();
+  });
+});
+
+describe('one source for a currency\'s decimals: the server\'s (philobiblos#62)', () => {
+  it('the server\'s Intl says how many each currency has; without a currency, or one it does not know, hundredths', () => {
+    expect(currencyDigits('CHF')).toBe(2);
+    expect(currencyDigits('JPY')).toBe(0);
+    expect(currencyDigits('KWD')).toBe(3);
+    expect(currencyDigits(null)).toBe(2);
+    expect(currencyDigits('ZZZ')).toBe(2);
+  });
+
+  it('the screens get the household\'s from /me, and Settings every currency the server knows with its own, so no browser counts differently', async () => {
+    const db = admins();
+    const a = await client(db);
+    expect((await a.patch('p_admin', { money: { currency: 'JPY', unknownPrice: 250000 } })).statusCode).toBe(200);
+    expect((await a.get('p_adult', '/api/me')).json().money.digits).toBe(0);
+    const s = (await a.get('p_admin', '/api/settings')).json().money;
+    expect(s.digits).toBe(0);
+    const by = new Map((s.currencies as { code: string; digits: number }[]).map((c) => [c.code, c.digits]));
+    expect([...by.keys()]).toEqual(Intl.supportedValuesOf('currency'));
+    for (const code of ['IDR', 'HUF', 'KWD', 'CHF', 'JPY']) expect(by.get(code), code).toBe(currencyDigits(code));
+    // Only Settings carries the list: /me stays small.
+    expect((await a.get('p_adult', '/api/me')).json().money.currencies).toBeUndefined();
+    // They are the server's to say, never a part a client sets.
+    for (const k of ['digits', 'currencies']) expect((await a.patch('p_admin', { money: { [k]: 2 } })).statusCode, k).toBe(400);
+    await a.built.app.close();
+  });
+
+  it('a currency with three decimals keeps hundredths: any whole hundredth is an amount; the limit is said where it is set', async () => {
+    const db = admins();
+    const a = await client(db);
+    expect((await a.patch('p_admin', { money: { currency: 'KWD', unknownPrice: 125, priceLimits: { high: 1999, max: 3001 } } })).statusCode).toBe(200);
+    expect((await a.get('p_admin', '/api/settings')).json().money).toMatchObject({ currency: 'KWD', digits: 3, unknownPrice: 125, priceLimits: { high: 1999, max: 3001, own: true } });
+    await a.built.app.close();
+  });
+});
+
+describe('a new currency re-checks the amounts it would keep (philobiblos#62)', () => {
+  it('an unknown price or own limits the new currency cannot write refuse the change, unless set in the same save', async () => {
+    const db = admins();
+    const a = await client(db);
+    expect((await a.patch('p_admin', { money: { currency: 'EUR', unknownPrice: 2550 } })).statusCode).toBe(200);
+    let r = await a.patch('p_admin', { money: { currency: 'JPY' } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toMatch(/money\.unknownPrice.*JPY/);
+    expect((await a.get('p_admin', '/api/settings')).json().money.currency).toBe('EUR');
+    expect((await a.patch('p_admin', { money: { currency: 'JPY', unknownPrice: 2500 } })).statusCode).toBe(200);
+    expect((await a.patch('p_admin', { money: { currency: 'EUR', priceLimits: { high: 4050, max: 6000 } } })).statusCode).toBe(200);
+    r = await a.patch('p_admin', { money: { currency: 'JPY' } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toMatch(/money\.priceLimits.*JPY/);
+    expect((await a.patch('p_admin', { money: { currency: 'JPY', priceLimits: null } })).statusCode).toBe(200);
     await a.built.app.close();
   });
 });

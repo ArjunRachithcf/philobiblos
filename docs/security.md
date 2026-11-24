@@ -70,7 +70,8 @@ applies; a feature that cannot meet them waits.
 - One currency: the household's (Settings; philobiblos#27). Every amount is in hundredths of it, and nothing is ever
   converted. No amount is capped at one currency's size: any is at most 10,000,000,000 of the currency (arithmetic's
   ceiling, so sums stay exact), and in a currency without decimals an amount an admin sets or types is whole units
-  (philobiblos#40). None is assumed: `PHILOBIBLOS_CURRENCY` gives a household that has none its currency at a start (never
+  (philobiblos#40). A currency's decimals are the server's count, sent to the screens; an amount with a thousandth (a
+  currency with three decimals) is refused everywhere, never rounded (philobiblos#62, docs/spec.md §6). None is assumed: `PHILOBIBLOS_CURRENCY` gives a household that has none its currency at a start (never
   replacing one it has), or an admin chooses it. A database from before M4 says the currency its amounts were in.
   A connector counts only in the household's currency: enabling one in another (or before there is one) is refused, one
   enabled before the currency changed underneath it counts for nothing (its senders, words and price host with it), and

@@ -15,7 +15,7 @@ import { SEALED } from '../src/routes/month';
 import type { MediaOutcome } from '../src/media/client';
 import { MediaUnavailable } from '../src/media/client';
 import { TEST_SEALING_KEY, household } from './helpers';
-import { CFG, CONNECTORS, HOUSEHOLD, RULES, SEALERS, SHOPS, fakeBox, message, resolver, signed } from './mailkit';
+import { CFG, CONNECTORS, HOUSEHOLD, QUILLMERE, RULES, SEALERS, SHOPS, fakeBox, message, resolver, signed } from './mailkit';
 
 // The parsers with the invented example bookshop's rules (connectors/quillmere/connector.yaml).
 const { PARSERS } = parse;
@@ -201,6 +201,75 @@ describe('the shop\'s order mails and invoices', () => {
     expect(Date.now() - t0).toBeLessThan(1500);
     expect(htmlLines('a<br>b</p>c<brx>d<BR/>e')).toBe('a\nb\nc d\ne');
     expect(ownLines(`CHF 1.00 ${'x'.repeat(1001)}`)).toBeNull();
+  });
+});
+
+describe('amounts with the connector\'s currency\'s own decimals (philobiblos#62)', () => {
+  /** The example bookshop's rules with its amounts in another currency, written with these symbols. */
+  const inCurrency = (currency: string, before: string[], after: string[], more: { decimal?: '.' | ',' } = {}) =>
+    parse.mailRules({ ...QUILLMERE, locale: { ...QUILLMERE.locale, currency }, money: { before, after, ...more } });
+  const YEN = inCurrency('JPY', ['¥', 'JPY'], ['JPY']);
+  const DINAR = inCurrency('KWD', ['KWD'], ['KWD'], { decimal: '.' });
+  const quote = (price: string, r: parse.MailRules) => parse.parseQuote(`Author: Mira Okafor\nTitle: The Long Tide of Markets\nPrice: ${price}\n`, [], r);
+
+  it('a quote in a currency without decimals: whole units, grouped or not; a fraction fails closed', () => {
+    expect(quote('¥1,980', YEN)).toMatchObject({ kind: 'bookshop_quote', lines: [{ priceC: 198000 }] });
+    expect(quote('JPY 24800', YEN)).toMatchObject({ kind: 'bookshop_quote', lines: [{ priceC: 2480000 }] });
+    expect(quote('¥1,980.50', YEN)).toMatchObject({ kind: 'unknown_layout' });
+    // A bullet line's commas between a book's parts never cut its amount.
+    // A comma written right before a digit, with no digit before it, still splits (an author, then a title that starts with one).
+    expect(parseQuote('- Clarke,2001: A Space Odyssey, CHF 14.90, delivery time 1-3 days\n', [])).toMatchObject({ kind: 'bookshop_quote', lines: [{ author: 'Clarke', title: '2001: A Space Odyssey', priceC: 1490 }] });
+    expect(parse.parseQuote('- Reed, A Map of Small Rivers, ¥2,400, delivery time 1-3 days\n', [], YEN)).toMatchObject({ kind: 'bookshop_quote', lines: [{ title: 'A Map of Small Rivers', priceC: 240000, delivery: '1-3 days' }] });
+  });
+
+  it('a quote line whose amount cannot be placed is refused, never skipped while the other books are read', () => {
+    for (const price of ['1.250 CHF', '12 500 CHF', 'CHF 12 500.00']) {
+      expect(parseQuote(`- Okafor, Value Beyond Price, ${price}\n- Reed, A Map of Small Rivers, CHF 22.50, delivery time 1-3 days\n`, []), price)
+        .toMatchObject({ kind: 'unknown_layout' });
+    }
+    expect(quote('¥1 250', YEN)).toMatchObject({ kind: 'unknown_layout' });
+    // Without its decimal mark, a three-decimal connector reads no amount: never 1000 times too little.
+    expect(quote('KWD 1,250', inCurrency('KWD', ['KWD'], ['KWD']))).toMatchObject({ kind: 'unknown_layout' });
+    expect(quote('KWD 1,250', DINAR)).toMatchObject({ kind: 'unknown_layout' });
+  });
+
+  it('an invoice\'s total or postage split at a space (12 500) is refused, never read as its last group', () => {
+    const row = ['9780000000002', 'The Long Tide of Markets', '1 ST', '12500', '12500 JPY', '10 %'];
+    expect(parse.parseInvoice('1', [row, ['Total', '12 500 JPY']], false, [], YEN)).toMatchObject({ kind: 'unknown_layout', reason: 'a total Philobiblos cannot place' });
+    expect(parse.parseInvoice('1', [row, ['Versand', '1 500 JPY'], ['Total', '14000 JPY']], false, [], YEN)).toMatchObject({ kind: 'unknown_layout', reason: 'postage Philobiblos cannot place' });
+    expect(parse.parseInvoice('1', [row, ['Total', '12500 JPY']], false, [], YEN)).toMatchObject({ kind: 'invoice', totalC: 1250000 });
+  });
+
+  it('two decimals past the old cap of 9999.99, grouped; a group a currency with two decimals cannot place fails closed', () => {
+    expect(parseQuote('Author: Mira Okafor\nTitle: The Long Tide of Markets\nPrice: CHF 12\'345.00\n', [])).toMatchObject({ kind: 'bookshop_quote', lines: [{ priceC: 1234500 }] });
+    expect(parseQuote('Author: Mira Okafor\nTitle: The Long Tide of Markets\nPrice: CHF 1,980\n', [])).toMatchObject({ kind: 'unknown_layout' });
+  });
+
+  it('three decimals: 1.250 reads as hundredths; a thousandth fails closed, and says it is below hundredths', () => {
+    expect(quote('KWD 1.250', DINAR)).toMatchObject({ kind: 'bookshop_quote', lines: [{ priceC: 125 }] });
+    expect(quote('KWD 1.255', DINAR)).toMatchObject({ kind: 'unknown_layout', reason: parse.BELOW_HUNDREDTHS });
+    expect(parse.parseShop('online_order', '1', 'Buch The Quiet Hedgehog von Lena Paulsen | KWD 3.105', [], DINAR)).toMatchObject({ kind: 'unknown_layout', reason: parse.BELOW_HUNDREDTHS });
+    const rows = (price: string, total: string) => [['9780000000002', 'The Long Tide of Markets', '1 ST', price, `${price} KWD`, '0 %'], ['Total', `${total} KWD`]];
+    expect(parse.parseInvoice('1', rows('3.100', '3.100'), false, [], DINAR)).toMatchObject({ kind: 'invoice', totalC: 310, lines: [{ priceC: 310, totalC: 310 }] });
+    expect(parse.parseInvoice('1', rows('3.105', '3.105'), false, [], DINAR)).toMatchObject({ kind: 'unknown_layout', reason: parse.BELOW_HUNDREDTHS });
+    // A number in a title that only looks like an amount refuses nothing: only the cells read as money count.
+    expect(parse.parseInvoice('1', [['9780000000002', 'Release 2.105 Notes', '1 ST', '3.100', '3.100 KWD', '0 %'], ['Gewicht 0.355 kg'], ['Total', '3.100 KWD']], false, [], DINAR)).toMatchObject({ kind: 'invoice', totalC: 310 });
+    // A stated total with a thousandth is never passed over for the rows' sum.
+    expect(parse.parseInvoice('1', rows('3.100', '3.105'), false, [], DINAR)).toMatchObject({ kind: 'unknown_layout', reason: parse.BELOW_HUNDREDTHS });
+  });
+
+  it('an online order and an invoice in a currency without decimals, of any size', () => {
+    expect(parse.parseShop('online_order', '1', 'Buch The Quiet Hedgehog von Lena Paulsen | 2 x ¥ 12,800', [], YEN)).toMatchObject({ kind: 'online_order', lines: [{ qty: 2, priceC: 1280000 }] });
+    expect(parse.parseShop('online_order', '1', 'Buch The Quiet Hedgehog von Lena Paulsen | ¥ 12,80', [], YEN)).toMatchObject({ kind: 'unknown_layout' });
+    const rows = [['9780000000002', 'The Long Tide of Markets', '1 ST', '12,800', '12,800 JPY', '10 %'], ['Versandkosten', '500 JPY'], ['Total', '13,300 JPY']];
+    expect(parse.parseInvoice('1', rows, false, [], YEN)).toMatchObject({ kind: 'invoice', totalC: 1330000, lines: [{ priceC: 1280000, totalC: 1280000 }] });
+    // A total or postage row's amount is the one with the currency after it: a count or a tax beside it is no amount.
+    const counted = [rows[0]!, ['Versand', '2 Pakete', '500 JPY'], ['Total', '13,300 JPY', 'für 2 Bücher']];
+    expect(parse.parseInvoice('1', counted, false, [], YEN)).toMatchObject({ kind: 'invoice', totalC: 1330000 });
+    // Without the currency after it, a bare number in a currency without decimals could be any count: the total is
+    // not placed, and the invoice is refused rather than taken as the rows' sum.
+    expect(parse.parseInvoice('1', [rows[0]!, ['Total', '12800']], false, [], YEN)).toMatchObject({ kind: 'unknown_layout', reason: 'a total Philobiblos cannot place' });
+    expect(parseInvoice('1', [['9780000000002', 'The Long Tide of Markets', '1 ST', '12345.00', '12345.00 CHF', '2.6 %']], false, [])).toMatchObject({ kind: 'invoice', totalC: 1234500 });
   });
 });
 

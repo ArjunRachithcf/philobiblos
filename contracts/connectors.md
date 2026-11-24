@@ -94,8 +94,15 @@ changes nothing. Each parser is bounded (5,000 lines of at most 1,000 characters
 split and matched by anchored expressions, never one pattern over the whole text), reads only the bookshop's own lines
 (nothing from the first reply marker on, no `>` line: the household's quoted request is never read), and **fails
 closed**: a recognised mail whose layout is not one it knows is `unknown_layout`, keeps the parser's version and its
-reason, changes nothing, waits in the Inbox, and is read again only under a new parser version. Unknown means: an
-amount Philobiblos cannot place (anything but a book's price, a total, postage, a discount or VAT), a book without a title,
+reason, changes nothing, waits in the Inbox, and is read again only under a new parser version. An amount has the
+connector's currency's decimals (none, two or three, as the server counts them), its whole units grouped by thousands
+(`,` `.` or `'` unless `money.groups` names its own, a space only then; the same throughout, never the decimal mark) or
+not, up to 10,000,000,000 (philobiblos#62). The decimal mark is `money.decimal`, or else a point or a comma that is not
+the grouping's; a connector in a currency with three decimals must name it (`1,250` is 1.25 or 1250), or it does not
+load. A digit, or a separator or a space and a digit, after an amount means it is not one (`12 500` without space
+groups is refused, never read as 12). Unknown
+means: an amount Philobiblos cannot place (anything but a book's price, a total, postage, a discount or VAT), an amount
+with a thousandth (a currency with three decimals: amounts are kept in hundredths), a book without a title,
 without a price or a status, or with two prices, an ISBN that is not 13 digits, an article of a kind it does not know,
 an invoice row that begins with an EAN and does not read whole, a stated total that is not the rows' sum (with
 postage), or a PDF the worker cut short.
@@ -158,7 +165,8 @@ effects of the mail of its kind in the table above, on the same records, and not
   the header line's own): a header row naming `isbn` (or `isbn13`, `ean`), `title`, `author`, `qty` (or `quantity`),
   `price`, `available` and `for`, in any order and case. A column it does not read is named back and its cells never
   read; one named twice, or none naming the books (no `title`, no `isbn`), refuses the file. A price is an amount as a
-  person writes it in the household's currency (`18.90`, `18,90`; no symbol, sign or thousands separator); `available`
+  person writes it in the household's currency with its decimals (`18.90`, `18,90`, `1890` in one without decimals;
+  at most two in one with three, `1.25`, since `1,250` could be 1250; no symbol, sign or thousands separator); `available`
   is yes or no. Read in one pass, linear, and refused rather than guessed at (an unclosed quote, text after a closing one);
   lines of empty cells (`;;;`) are skipped. A file over the limit is refused whole, never cut (the page too).
 - **An ISBN** is an ISBN-13 starting 978 or 979, or an ISBN-10, spaces and hyphens left out, whose check digit holds

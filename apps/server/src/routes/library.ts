@@ -14,6 +14,7 @@ import * as ex from '../stubs/examples';
 import { SealKeyMissing, aiView, checkAi } from '../ai/settings';
 import { CycleError, cycleView, setCycle } from '../jobs/schedule';
 import { MoneyError, checkMoney, getMoney } from '../household/money';
+import { currencyList } from '../household/currency';
 import { enabledConnectors } from '../connectors/enabled';
 import type { Registry } from '../connectors/load';
 import { mailView } from '../mail/oauth';
@@ -76,7 +77,7 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db, c
       // The mailbox as configured in the environment (its password never leaves it), and with XOAUTH2 what connecting
       // allows and whether it is connected (never a token).
       const mail = mailView(db, cfg);
-      return { ...ex.settings, budget: getBudget(db), cycle: cycleView(db, 'monthly'), person: personSettings(getPerson(db, req.caller!.personId)!), order, mail, ai: aiView(db, cfg), money: getMoney(db) };
+      return { ...ex.settings, budget: getBudget(db), cycle: cycleView(db, 'monthly'), person: personSettings(getPerson(db, req.caller!.personId)!), order, mail, ai: aiView(db, cfg), money: { ...getMoney(db), currencies: currencyList() } };
     } catch (e) { return fail(reply, e); }
   });
   app.patch<{ Body: { person?: unknown; budget?: unknown; order?: unknown; ai?: unknown; cycle?: unknown; money?: unknown } }>('/settings', async (req, reply) => {
@@ -95,7 +96,7 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db, c
       // The AI part: the opt-in and the Claude key's sealing are checked here too, before anything is written.
       const ai = body.ai === undefined ? null : checkAi(db, cfg, body.ai);
       // The currency never changes under an enabled connector in another one (household/money.ts).
-      const money = body.money === undefined ? null : checkMoney(body.money, enabledConnectors(db, connectors).map((e) => ({ name: e.connector.name, currency: e.connector.locale.currency })), getMoney(db).currency);
+      const money = body.money === undefined ? null : checkMoney(body.money, enabledConnectors(db, connectors).map((e) => ({ name: e.connector.name, currency: e.connector.locale.currency })), getMoney(db));
       db.transaction((tx) => {
         ai?.(tx as unknown as Db);
         money?.(tx as unknown as Db);

@@ -105,11 +105,11 @@ export function ThisMonth({ me, go }: { me: Me; go: (to: string) => void }) {
 
 function BudgetBar({ budget, total, override, admin, count, onApply }: { budget: Budget; total: number; override: boolean; admin: boolean; count: string; onApply: (b: Budget | null) => Promise<void> }) {
   const id = useId();
-  const { format: fmt, unknownPrice, currency } = useMoney();
+  const { format: fmt, unknownPrice, digits } = useMoney();
   const [draft, setDraft] = useState(budget);
   useEffect(() => setDraft(budget), [budget.min, budget.max]);
   // Steps and the bar's end follow the household's unknown price: the same bar in any currency (money.ts budgetBar).
-  const [{ step: STEP, scale }] = useState(() => budgetBar(budget, total, unknownPrice ?? 0, currency));
+  const [{ step: STEP, scale }] = useState(() => budgetBar(budget, total, unknownPrice ?? 0, digits));
   const track = useRef<HTMLDivElement>(null);
   const pct = (c: number) => `${Math.min(100, (c / scale) * 100)}%`;
   const over = total > budget.max;

@@ -385,6 +385,29 @@ describe('amounts in the household\'s currency, with its decimals or none (philo
   });
 });
 
+describe('three decimals (KWD, BHD) are kept as hundredths: a thousandth is refused, and says so (philobiblos#62)', () => {
+  it('a CSV\'s 1.25 reads; three decimals are refused (1.255 cannot be kept, 1.250 could be 1250), never rounded', () => {
+    const db = world();
+    db.update(t.householdSettings).set({ currency: 'KWD' }).run();
+    const s = snapshot(db);
+    refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,1.255\n' }, 400, /row 1.*price.*hundredths/);
+    refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,"1,250"\n' }, 400, /row 1.*price.*hundredths/);
+    expect(snapshot(db)).toBe(s);
+    record(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,1.25\n' });
+    expect(copies(db).find((c) => c[0] === 'b_tide')![3]).toBe(125);
+  });
+
+  it('a price it cannot read says how this currency writes one: 1890 without decimals, 18.90 with two', () => {
+    const db = world();
+    db.update(t.householdSettings).set({ currency: 'JPY' }).run();
+    refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,abc\n' }, 400, /such as 1890, in JPY/);
+    db.update(t.householdSettings).set({ currency: 'CHF' }).run();
+    refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,abc\n' }, 400, /such as 18\.90, in CHF/);
+    // A third decimal in a currency with two is no amount at all: never the thousandth advice.
+    refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,18.905\n' }, 400, /such as 18\.90, in CHF$/);
+  });
+});
+
 describe('a dry run: what would happen, and nothing changes', () => {
   it('the same answer as the entry, with no id, and every table as it was', () => {
     const db = world();
