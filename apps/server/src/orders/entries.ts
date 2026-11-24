@@ -138,7 +138,7 @@ function line(kind: EntryKind, row: number, v: unknown, csv: boolean, currency: 
       const digits = currencyDigits(currency);
       const written = typeof p === 'string' ? p : '';
       p = parseAmount(written, digits);
-      if (p === null && belowHundredths(written, digits)) return at(`price: amounts are kept to hundredths, so a ${currency} price has 0 as its third decimal (${amountExample(digits)}, not ${written.trim().slice(0, 20)})`);
+      if (p === null && belowHundredths(written, digits)) return at(`price: amounts are kept to hundredths, so a ${currency} price has at most two decimals (${amountExample(digits)}, not ${written.trim().slice(0, 20)}: three could be a thousands group)`);
       if (p === null) return at(`price: an amount such as ${amountExample(digits)}, in ${currency}`);
     }
     const problem = amountProblem(p, currency);

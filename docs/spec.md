@@ -145,11 +145,16 @@ whole units, typed and written without decimals. How many decimals a currency ha
 sends to the screens (`Me.money.digits`, Settings' list of currencies), so a browser that counts differently never
 accepts what the server refuses (philobiblos#62).
 
-Three decimals (philobiblos#62, decided by default): amounts stay hundredths. A currency with three decimals is written
-and read with its third decimal 0 (`1.250`), and an amount with a thousandth (`1.255`) is refused wherever it is met,
-and said so: Settings, a typed or CSV entry, a shop's mail, markup or search page. It is never rounded. Keeping
-thousandths would change every amount's scale (a migration of every stored amount, and every place that reads one); it
-waits for a household that needs it.
+Three decimals (philobiblos#62, decided by default): amounts stay hundredths. An amount with a thousandth (`1.255`) is
+refused wherever it is met, and said so: Settings, a typed or CSV entry, a shop's mail, markup or search page. It is
+never rounded. Typed (Settings, an entry, a CSV) such an amount has at most two decimals (`1.25`): `1,250` or `1.250`
+could as well be 1250, thousands grouped so. A shop's mail and search page read three decimals only from a connector
+that names its decimal mark (`money.decimal`; without it, no amount of its reads), and schema.org markup's `1.250` is
+always 1.25 (its decimal mark is the point). Keeping thousandths would change every amount's scale (a migration of
+every stored amount, and every place that reads one); it waits for a household that needs it.
+
+A new currency converts nothing, and re-checks what it would keep: an unknown price or own price limits it cannot
+write (25.50 when the new one has no decimals) refuse the change until the same save sets them.
 
 Test vectors: `contracts/scoring-vectors.json`.
 

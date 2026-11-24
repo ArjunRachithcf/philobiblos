@@ -45,12 +45,13 @@ describe('a currency\'s own decimals, as the server counts them (philobiblos#40,
     expect(typed('2500.50', 0)).toBeNull();
   });
 
-  it('three decimals: written with three, typed with the third 0; an example says so', () => {
+  it('three decimals: written with three, typed with at most two (three could be grouping); an example says so', () => {
     expect(plain(money(125, 'KWD', 3, 'always'))).toMatch(/1\.250$/);
-    expect(typed('1.250', 3)).toBe(125);
+    expect(typed('1.25', 3)).toBe(125);
+    expect(typed('1.250', 3)).toBeNull();
     expect(typed('1.255', 3)).toBeNull();
-    expect(asTyped(125, 3)).toBe('1.250');
-    expect(amountExample(3)).toBe('18.900');
+    expect(asTyped(125)).toBe('1.25');
+    expect(amountExample(3)).toBe('18.90');
     expect(amountExample(2)).toBe('18.90');
     expect(amountExample(0)).toBe('1890');
   });
@@ -62,7 +63,7 @@ describe('a currency\'s own decimals, as the server counts them (philobiblos#40,
   });
 
   it('an amount kept from before, which its currency cannot write now, is shown as it is, never rounded', () => {
-    expect(asTyped(150050, 0)).toBe('1500.50');
+    expect(asTyped(150050)).toBe('1500.50');
     expect(money(150050, 'JPY', 0)).toMatch(/1,500\.50|1\.500,50|1 500,50/);
   });
 
@@ -75,10 +76,10 @@ describe('a currency\'s own decimals, as the server counts them (philobiblos#40,
   });
 
   it('an amount as a field shows it to edit: the currency\'s decimals only when it has them', () => {
-    expect(asTyped(150000, 0)).toBe('1500');
-    expect(asTyped(2490, 2)).toBe('24.90');
-    expect(asTyped(2500, 2)).toBe('25');
-    expect(asTyped(250_000_000, 0)).toBe('2500000');
+    expect(asTyped(150000)).toBe('1500');
+    expect(asTyped(2490)).toBe('24.90');
+    expect(asTyped(2500)).toBe('25');
+    expect(asTyped(250_000_000)).toBe('2500000');
   });
 
   it('the budget bar moves in steps that follow the household\'s unknown price, so any currency has the same bar', () => {
@@ -100,7 +101,7 @@ describe('Settings sends only what was changed (philobiblos#62)', () => {
   const digits = (code: string | null) => ({ JPY: 0, CHF: 2, KWD: 3, IDR: 2 } as Record<string, number>)[code ?? ''] ?? 2;
   // A household in a currency without decimals, with an unknown price kept from before (1500.50) and its own limits.
   const stored = { currency: 'JPY', unknownPrice: 150050, priceLimits: { high: 400000, max: 600000, own: true } };
-  const form = { code: 'JPY', unknown: asTyped(150050, 0), own: true, high: asTyped(400000, 0), max: asTyped(600000, 0) };
+  const form = { code: 'JPY', unknown: asTyped(150050), own: true, high: asTyped(400000), max: asTyped(600000) };
 
   it('an unrelated save never rounds a stored amount its currency cannot write now: an untouched field is not sent', () => {
     expect(moneyPatch({ ...form, high: '5000' }, stored, digits)).toEqual({ body: { priceLimits: { high: 500000, max: 600000 } } });
@@ -111,7 +112,7 @@ describe('Settings sends only what was changed (philobiblos#62)', () => {
   it('a field that was changed is typed in the currency being saved, with the server\'s decimals for it', () => {
     expect(moneyPatch({ ...form, unknown: '1500.5' }, stored, digits)).toEqual({ error: expect.stringMatching(/for example 1890/) });
     expect(moneyPatch({ ...form, code: 'IDR', unknown: '2500.50' }, stored, digits)).toEqual({ body: { currency: 'IDR', unknownPrice: 250050 } });
-    expect(moneyPatch({ ...form, code: 'KWD', unknown: '1.255' }, stored, digits)).toEqual({ error: expect.stringMatching(/hundredths.*18\.900/) });
+    expect(moneyPatch({ ...form, code: 'KWD', unknown: '1.255' }, stored, digits)).toEqual({ error: expect.stringMatching(/hundredths.*18\.90\b/) });
     expect(moneyPatch({ ...form, high: '7000' }, stored, digits)).toEqual({ error: expect.stringMatching(/dear/) });
   });
 

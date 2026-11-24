@@ -127,9 +127,14 @@ export function text(v: unknown): string | null {
  * does not), or a thousandth in one with three (`1.250` reads, `1.255` does not: hundredths are kept)).
  */
 export function hundredths(v: unknown, currency: string): number | null {
+  const c = markupAmount(v, currency);
+  return c === 'below' ? null : c;
+}
+
+/** `hundredths`, or `below` for an amount with a thousandth (`1.255`): why it is not read, said as such. */
+export function markupAmount(v: unknown, currency: string): number | 'below' | null {
   const s = typeof v === 'number' && Number.isFinite(v) ? String(v) : typeof v === 'string' ? v.trim() : '';
   const digits = currencyDigits(currency);
   const m = /^(\d{1,11})(?:\.(\d{1,4}))?$/.exec(s);
-  const c = m && (m[2] ?? '').length <= Math.max(2, digits) ? toHundredths(m[1]!, m[2] ?? '', digits) : null;
-  return c === 'below' ? null : c;
+  return m && (m[2] ?? '').length <= Math.max(2, digits) ? toHundredths(m[1]!, m[2] ?? '', digits) : null;
 }

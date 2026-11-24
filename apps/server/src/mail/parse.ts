@@ -13,10 +13,9 @@
 import type { Connector } from '@philobiblos/contracts/connector';
 import { alternation, amountNumber, amountReader, amountTest, contains, literal, readNumber, startsWith, subjectMatcher } from '../connectors/text';
 import { currencyDigits } from '../household/currency';
-import { belowHundredths } from '@philobiblos/contracts/money';
 import { safeField } from './read';
 import { bookIsbn } from '../books/isbn';
-import { hundredths, isType, list, node, schemaNodes, text, type LdNode, type Markup } from '../schemaorg/jsonld';
+import { isType, list, markupAmount, node, schemaNodes, text, type LdNode, type Markup } from '../schemaorg/jsonld';
 
 /** One version per parser: a row records the one that read it (and an unknown layout is read again under a new one). */
 export const PARSERS = { quote: 'quote-1', confirm: 'confirm-1', online: 'online-1', collect: 'collect-1', invoice: 'invoice-1', classify: 'classify-1', markupOrder: 'markup-order-1', markupInvoice: 'markup-invoice-1' } as const;
@@ -91,7 +90,7 @@ export function mailRules(c: Connector): MailRules {
   const attributionVerb = reply ? contains(reply.attribution_verbs) : never;
   // Amounts with the currency's own decimals (none, two or three; philobiblos#62), as this server's Intl knows them.
   const digits = currencyDigits(c.locale.currency);
-  const cell = new RegExp(`^${amountNumber(digits)}$`, 'u');
+  const cell = new RegExp(`^${amountNumber(digits, c.money)}$`, 'u');
   const read = amountReader(c.money, digits);
   const r: MailRules = {
     quoteSenders: q?.senders ?? [],
@@ -102,7 +101,7 @@ export function mailRules(c: Connector): MailRules {
     ] as MailRules['subjects'],
     amount: (s) => { const x = read(s); return x === 'below' ? null : x; },
     below: (s) => read(s) === 'below',
-    hasAmount: amountTest(c.money, digits),
+    hasAmount: amountTest(c.money),
     startsWithAmount: new RegExp(`^${alternation(c.money.before)}\\s?\\d`, 'iu'),
     summary: m.summary ? startsWith(m.summary) : never,
     unavailable: m.unavailable ? contains(m.unavailable) : never,
@@ -122,7 +121,7 @@ export function mailRules(c: Connector): MailRules {
     } : null,
     shop: m.shop ? {
       books: new Set(lower(m.shop.book_kinds)), skip: new Set(lower(m.shop.skip_kinds)), by: ` ${m.shop.by} `,
-      right: new RegExp(`^(?:(\\d{1,2}) ?[x×] ?)?${alternation(c.money.before)} ?${amountNumber(digits)}$`, 'iu'),
+      right: new RegExp(`^(?:(\\d{1,2}) ?[x×] ?)?${alternation(c.money.before)} ?${amountNumber(digits, c.money)}$`, 'iu'),
       price: (x) => readNumber(x[2]!, x[3]!, digits),
       ean: new RegExp(` ${literal(m.shop.ean_label)}: ?(\\d{13})$`, 'iu'),
     } : null,
@@ -333,23 +332,32 @@ export function parseInvoice(number: string, rows: string[][], truncated: boolea
     // invoice is refused (amounts are kept in hundredths). Other cells (a title's `2.105`) are not money.
     let below = false;
     const money = (x: string) => { const c = inv.money(x); if (c === 'below') below = true; return c === 'below' ? null : c; };
-    // A total's or postage's amount is the last one with the currency after it (`72.82` and the currency): a count or a tax beside it
-    // is no amount. Without one, the last amount, unless the currency has no decimals (any count would read as one):
-    // `undefined`, a total that is then refused.
-    const lastAmount = () => {
-      for (let i = tok.length - 2; i >= 0; i--) if (tok[i + 1]!.toUpperCase() === inv.currency) { const m = money(tok[i]!); if (m != null || below) return m; }
-      if (!inv.digits) return undefined;
-      for (let i = tok.length - 1; i >= 0; i--) { const m = money(tok[i]!); if (m != null || below) return m; }
+    // A total's or postage's amount is the last one with the currency after it (`72.82` and the currency): a count or a
+    // tax beside it is no amount. Without one, the last amount, unless the currency has no decimals (any count would read
+    // as one): `unplaced`. An amount with a number right before it (`12 500`: thousands grouped by a space, split into
+    // cells) sets `split`, and its row is refused, never read as its last group.
+    let split = false;
+    const at = (i: number) => { const m = money(tok[i]!); if (m != null && i > 0 && /\d$/.test(tok[i - 1]!)) split = true; return m; };
+    const lastAmount = (): number | null | 'unplaced' => {
+      for (let i = tok.length - 2; i >= 0; i--) if (tok[i + 1]!.toUpperCase() === inv.currency) { const m = at(i); if (m != null || below) return m; }
+      if (!inv.digits) return 'unplaced';
+      for (let i = tok.length - 1; i >= 0; i--) { const m = at(i); if (m != null || below) return m; }
       return null;
     };
     if (inv.total(s)) {
       const t = lastAmount();
       if (below) return refuse('invoice', P, BELOW_HUNDREDTHS);
-      if (t === undefined) return refuse('invoice', P, 'a total Philobiblos cannot place');
+      if (t === 'unplaced' || split) return refuse('invoice', P, 'a total Philobiblos cannot place');
       stated = t;
       continue;
     }
-    if (inv.postage(s)) { postage += lastAmount() ?? 0; if (below) return refuse('invoice', P, BELOW_HUNDREDTHS); continue; }
+    if (inv.postage(s)) {
+      const p = lastAmount();
+      if (below) return refuse('invoice', P, BELOW_HUNDREDTHS);
+      if (split) return refuse('invoice', P, 'postage Philobiblos cannot place');
+      postage += typeof p === 'number' ? p : 0;
+      continue;
+    }
     // From the end: VAT %, the currency, total, [discount %], price, the unit, qty; the title is what is left.
     let i = tok.length - 1;
     const vat = pct(tok[i--] ?? '');
@@ -426,8 +434,8 @@ export function parseMarkup(markup: Markup, address: string[], r: MailRules): Pa
     const ok = inCurrency(cur);
     if (ok === 'none') return { problem: 'an amount without its currency' };
     if (ok === 'other') return { problem: 'an amount in another currency' };
-    const c = hundredths(v, currency);
-    return c == null ? { problem: belowHundredths(String(v), currencyDigits(currency)) ? BELOW_HUNDREDTHS : 'a price Philobiblos cannot read' } : { c };
+    const c = markupAmount(v, currency);
+    return c === 'below' ? { problem: BELOW_HUNDREDTHS } : c === null ? { problem: 'a price Philobiblos cannot read' } : { c };
   };
   const top = isInvoice ? invoices[0]! : orders[0]!;
   // An invoice for one order, which is no cancellation, return or problem: an invoice naming two orders, or for an order

@@ -26,15 +26,17 @@ describe('an amount as a person types it', () => {
     expect(parseAmount('18.900', 2)).toBeNull(); // two decimals: a third is no padding of its
   });
 
-  it('three decimals (KWD, BHD) read as hundredths when the third is 0; a thousandth is refused, never rounded', () => {
-    expect(parseAmount('1.250', 3)).toBe(125);
+  it('three decimals (KWD, BHD): typed with at most two, as hundredths; three are refused, never rounded or taken for grouping', () => {
+    // `1.250` could be 1.25 or 1250 (en-KW groups thousands so): a typed field has no grouping, and refuses it.
+    expect(parseAmount('1.250', 3)).toBeNull();
+    expect(parseAmount('1,250', 3)).toBeNull();
     expect(parseAmount('1.25', 3)).toBe(125);
     expect(parseAmount('12', 3)).toBe(1200);
     expect(parseAmount('1.255', 3)).toBeNull();
     expect(parseAmount('1.2500', 3)).toBeNull();
     expect(belowHundredths('1.255', 3)).toBe(true);
     expect(belowHundredths(' 1,005 ', 3)).toBe(true);
-    expect(belowHundredths('1.250', 3)).toBe(false);
+    expect(belowHundredths('1.250', 3)).toBe(true);
     expect(belowHundredths('1.25', 3)).toBe(false);
     expect(belowHundredths('1500', 3)).toBe(false);
     expect(belowHundredths('18.905', 2)).toBe(false);
@@ -45,7 +47,7 @@ describe('an amount as a person types it', () => {
   it('an example of an amount in a currency\'s decimals, the same on the server and the screens', () => {
     expect(amountExample(0)).toBe('1890');
     expect(amountExample(2)).toBe('18.90');
-    expect(amountExample(3)).toBe('18.900');
+    expect(amountExample(3)).toBe('18.90'); // typed with at most two
   });
 
   it('a high-nominal amount reads in full; past the ceiling, a sign, a symbol or grouping is refused, never guessed', () => {

@@ -115,7 +115,7 @@ function currencies(known: { code: string }[], own: string | null | undefined): 
 function HouseholdMoney({ admin, reload, known }: { admin: boolean; reload: () => Promise<void>; known: { code: string; digits: number }[] }) {
   const id = useId();
   const { currency, digits, unknownPrice, priceLimits, format } = useMoney();
-  const shown = (c: number | null | undefined) => (c == null ? '' : asTyped(c, digits));
+  const shown = (c: number | null | undefined) => (c == null ? '' : asTyped(c));
   const [code, setCode] = useState(currency ?? '');
   const [unknown, setUnknown] = useState(shown(unknownPrice));
   // The scores' price limits (philobiblos#40): the household's own, or following the unknown price.
@@ -126,7 +126,7 @@ function HouseholdMoney({ admin, reload, known }: { admin: boolean; reload: () =
   const [ok, setOk] = useState('');
   const list = useMemo(() => (admin ? currencies(known, currency) : []), [admin, known, currency]);
   useEffect(() => { setCode(currency ?? ''); }, [currency]);
-  useEffect(() => { if (unknownPrice != null) setUnknown(asTyped(unknownPrice, digits)); }, [unknownPrice, digits]);
+  useEffect(() => { if (unknownPrice != null) setUnknown(asTyped(unknownPrice)); }, [unknownPrice, digits]);
   useEffect(() => {
     if (!priceLimits) return;
     setOwn(priceLimits.own ?? false);
@@ -198,7 +198,7 @@ function HouseholdMoney({ admin, reload, known }: { admin: boolean; reload: () =
               </div>
             )}
           </fieldset>
-          {three && <p className="footnote">{code || currency} is written with three decimals; Philobiblos keeps amounts to hundredths, so an amount’s third decimal is 0 (1.250). One with a thousandth (1.255) is refused here, in a CSV, and in a bookshop’s mail or markup: it is never rounded.</p>}
+          {three && <p className="footnote">{code || currency} is written with three decimals; Philobiblos keeps amounts to hundredths, so type at most two (1.25). An amount with a thousandth (1.255) is refused here, in a CSV, and in a bookshop’s mail or markup: it is never rounded.</p>}
           {error && <Notice kind="error">{error}</Notice>}
           {ok && <Notice kind="ok">{ok}</Notice>}
           <div className="btn-row"><button type="submit" className="btn btn-primary">Save the currency</button></div>

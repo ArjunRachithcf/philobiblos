@@ -96,7 +96,7 @@ export async function libraryRoutes(app: FastifyInstance, cfg: Config, db: Db, c
       // The AI part: the opt-in and the Claude key's sealing are checked here too, before anything is written.
       const ai = body.ai === undefined ? null : checkAi(db, cfg, body.ai);
       // The currency never changes under an enabled connector in another one (household/money.ts).
-      const money = body.money === undefined ? null : checkMoney(body.money, enabledConnectors(db, connectors).map((e) => ({ name: e.connector.name, currency: e.connector.locale.currency })), getMoney(db).currency);
+      const money = body.money === undefined ? null : checkMoney(body.money, enabledConnectors(db, connectors).map((e) => ({ name: e.connector.name, currency: e.connector.locale.currency })), getMoney(db));
       db.transaction((tx) => {
         ai?.(tx as unknown as Db);
         money?.(tx as unknown as Db);

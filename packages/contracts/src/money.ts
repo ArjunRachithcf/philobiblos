@@ -4,8 +4,9 @@
 // knows it (apps/server household/currency.ts `currencyDigits`): the server sends it to the screens, so a browser whose
 // Intl counts differently never accepts what the server refuses. No currency is built in.
 //
-// A currency with three decimals is kept in hundredths too (docs/spec.md §6): its amounts read when their
-// third decimal is 0 (`1.250`), and one with a thousandth (`1.255`) is refused everywhere, never rounded.
+// A currency with three decimals is kept in hundredths too (docs/spec.md §6): an amount with a thousandth (`1.255`) is
+// refused everywhere, never rounded. Typed, such an amount has at most two decimals (`1.25`): three could as well be a
+// thousands group (`1,250` is 1250 where thousands are grouped so), and a field has no grouping to tell them apart.
 
 /**
  * The most any amount may be, in hundredths: 10,000,000,000 of any currency. Not a typo guard (no one number is one in
@@ -33,27 +34,25 @@ export function toHundredths(units: string, decimals: string, digits: number): n
 }
 
 /**
- * An amount as a person types it, in hundredths: digits, then a point or a comma and at most the currency's decimals
- * (two in one without them, for a spreadsheet's `1500.00`), an amount the currency can write (`1500` or `1500.00` in
- * one without decimals, never `1500.50`; `1.250` in one with three, never `1.255`). No sign, symbol or grouping: what
- * cannot be placed is refused, never guessed.
+ * An amount as a person types it, in hundredths: digits, then a point or a comma and at most two decimals, an amount the
+ * currency can write (`1500` or a spreadsheet's `1500.00` in one without decimals, never `1500.50`; `1.25` in one with
+ * three, never `1.250`, which could be 1250). No sign, symbol or grouping: what cannot be placed is refused, never guessed.
  */
 export function parseAmount(s: string, digits: number): number | null {
-  const m = /^(\d{1,11})(?:[.,](\d{1,4}))?$/.exec(s.trim());
-  if (!m || (m[2] ?? '').length > Math.max(2, digits)) return null;
+  const m = /^(\d{1,11})(?:[.,](\d{1,2}))?$/.exec(s.trim());
+  if (!m) return null;
   const c = toHundredths(m[1]!, m[2] ?? '', digits);
   return c === 'below' ? null : c;
 }
 
 /** An amount to show as an example of how to write one: `18.90`, `1890` in a currency without decimals, `18.900` with three. */
-export const amountExample = (digits: number): string => (digits ? (18.9).toFixed(digits) : '1890');
+export const amountExample = (digits: number): string => (digits ? (18.9).toFixed(Math.min(2, digits)) : '1890');
 
 /**
- * Whether an amount as written in a currency with `digits` decimals is refused for a part below hundredths (`1.255`
- * with three): why, said as such. In a currency with two or none, a third decimal is no amount at all, never this.
+ * Whether an amount typed in a currency with three decimals is refused for its three (`1.255`, or `1.250`): amounts are
+ * kept to hundredths, so it is typed with at most two; why, said as such. In a currency with two or none, a third
+ * decimal is no amount at all, never this.
  */
 export function belowHundredths(s: string, digits: number): boolean {
-  if (digits <= 2) return false;
-  const m = /^\d{1,11}[.,](\d{3,4})$/.exec(s.trim());
-  return m !== null && /[1-9]/.test(m[1]!.slice(2));
+  return digits > 2 && /^\d{1,11}[.,]\d{3,4}$/.test(s.trim());
 }

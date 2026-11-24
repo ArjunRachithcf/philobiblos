@@ -138,6 +138,25 @@ describe('one source for a currency\'s decimals: the server\'s (philobiblos#62)'
   });
 });
 
+describe('a new currency re-checks the amounts it would keep (philobiblos#62)', () => {
+  it('an unknown price or own limits the new currency cannot write refuse the change, unless set in the same save', async () => {
+    const db = admins();
+    const a = await client(db);
+    expect((await a.patch('p_admin', { money: { currency: 'EUR', unknownPrice: 2550 } })).statusCode).toBe(200);
+    let r = await a.patch('p_admin', { money: { currency: 'JPY' } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toMatch(/money\.unknownPrice.*JPY/);
+    expect((await a.get('p_admin', '/api/settings')).json().money.currency).toBe('EUR');
+    expect((await a.patch('p_admin', { money: { currency: 'JPY', unknownPrice: 2500 } })).statusCode).toBe(200);
+    expect((await a.patch('p_admin', { money: { currency: 'EUR', priceLimits: { high: 4050, max: 6000 } } })).statusCode).toBe(200);
+    r = await a.patch('p_admin', { money: { currency: 'JPY' } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toMatch(/money\.priceLimits.*JPY/);
+    expect((await a.patch('p_admin', { money: { currency: 'JPY', priceLimits: null } })).statusCode).toBe(200);
+    await a.built.app.close();
+  });
+});
+
 describe('the unknown price is the household\'s own', () => {
   it('25 in the household\'s currency by default; an admin sets it, whole hundredths from 0 to any amount\'s ceiling', async () => {
     expect(DEFAULT_UNKNOWN_PRICE_C).toBe(2500);

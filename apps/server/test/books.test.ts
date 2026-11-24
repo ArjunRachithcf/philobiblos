@@ -77,16 +77,22 @@ describe('the price page, read as text', () => {
 
   it('a tile\'s price has its currency\'s decimals, of any size (philobiblos#62)', () => {
     const tile = (price: string) => page([{ id: 'A1000000003', title: 'The Long Tide of Markets', author: 'Mira Okafor', format: 'Buch (Taschenbuch)', lang: 'Englisch', price }]);
-    const priceIn = (currency: string, price: string) => {
-      const rules = prices.tileRules({ ...SHOP, locale: { ...SHOP.locale, currency } });
+    const priceIn = (currency: string, price: string, more: { decimal?: '.' | ',' } = {}) => {
+      const rules = prices.tileRules({ ...SHOP, money: { ...SHOP.money, ...more }, locale: { ...SHOP.locale, currency } });
       return prices.pickOffer(prices.parseTiles(tile(price), rules), 'The Long Tide of Markets', ['Mira Okafor'], rules)?.priceC;
     };
     expect(priceIn('CHF', 'Fr. 12345.00')).toBe(1234500);
     expect(priceIn('CHF', "Fr. 1'234.50")).toBe(123450);
     expect(priceIn('JPY', 'Fr. 2,480')).toBe(248000);
     expect(priceIn('JPY', 'Fr. 2,480.50')).toBeNull();
-    expect(priceIn('KWD', 'Fr. 1.250')).toBe(125);
-    expect(priceIn('KWD', 'Fr. 1.255')).toBeNull();
+    expect(priceIn('KWD', 'Fr. 1.250', { decimal: '.' })).toBe(125);
+    expect(priceIn('KWD', 'Fr. 1.255', { decimal: '.' })).toBeNull();
+    // The review's probes: never misread, at worst no price.
+    expect(priceIn('KWD', 'Fr. 1,250')).toBeNull();
+    expect(priceIn('KWD', 'Fr. 1.250')).toBeNull();
+    expect(priceIn('KWD', 'Fr. 1,250', { decimal: '.' })).toBeNull();
+    expect(priceIn('JPY', 'Fr. 1 250')).toBeNull();
+    expect(priceIn('HUF', 'Fr. 12 500')).toBeNull();
   });
 
   it('another author, or no print edition: no offer', () => {

@@ -19,7 +19,7 @@ import { parseDocument } from 'yaml';
 import { checkConnectorShape, priceAsks, priceUrlShape, type Connector } from '@philobiblos/contracts/connector';
 import { relaxedAligned } from '../mail/verify';
 import { fold } from './text';
-import { validCurrency } from '../household/currency';
+import { currencyDigits, validCurrency } from '../household/currency';
 
 export const CONNECTOR_LIMITS = { fileBytes: 64 * 1024, perFolder: 64 } as const;
 export const CONNECTOR_FILE = 'connector.yaml';
@@ -48,6 +48,9 @@ export function soundness(c: Connector, folder: string): string | null {
   if (c.id !== folder) return `its id (${c.id}) is not its folder's name`;
   // Its amounts are read as the household's (household/money.ts): a code no screen can write is no currency.
   if (!validCurrency(c.locale.currency)) return `its currency ${c.locale.currency} is not an ISO 4217 code this server knows`;
+  // In a currency with three decimals, `1,250` is 1.25 or 1250: only the connector can say which (philobiblos#62).
+  if (currencyDigits(c.locale.currency) > 2 && !c.money.decimal) return `its currency ${c.locale.currency} has three decimals: money.decimal must say its decimal mark`;
+  if (c.money.decimal && c.money.groups?.includes(c.money.decimal)) return `its decimal mark ${c.money.decimal} is also one of its money.groups`;
   if (c.mail) {
     for (const s of c.mail.quote?.senders ?? []) if (!c.mail.domains.includes(domainOf(s))) return `the quote sender ${s} is not at one of its mail domains`;
     // A signer aligned with none of its From domains could never count (verify.ts): Settings must not show it as one.

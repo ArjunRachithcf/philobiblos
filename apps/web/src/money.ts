@@ -30,15 +30,16 @@ export const typed = (s: string, digits: number): number | null => parseAmount(s
 
 /** Why a typed amount is not one, and how to write one: a thousandth is said as such (amounts are kept in hundredths). */
 export const amountHelp = (s: string, digits: number): string => (belowHundredths(s, digits)
-  ? `amounts are kept to hundredths, so the third decimal is 0, for example ${amountExample(digits)}`
+  ? `amounts are kept to hundredths, so type at most two decimals, for example ${amountExample(digits)}`
   : `for example ${amountExample(digits)}`);
 
 /** `c` hundredths as a field shows it to edit: digits and a point, the currency's decimals only when there are some. */
-export function asTyped(c: number, digits: number): string {
+export function asTyped(c: number): string {
   const units = Math.floor(c / 100);
   const rest = c % 100;
   if (!rest) return String(units);
-  return `${units}.${String(rest).padStart(2, '0')}${'0'.repeat(Math.max(0, digits - 2))}`;
+  // Two decimals at most, whatever the currency has: a typed amount never has three (packages/contracts parseAmount).
+  return `${units}.${String(rest).padStart(2, '0')}`;
 }
 
 /**
@@ -74,8 +75,7 @@ export interface MoneyBody { currency?: string; unknownPrice?: number; priceLimi
  * (`digitsOf`).
  */
 export function moneyPatch(f: MoneyForm, stored: { currency: Currency; unknownPrice: number | null; priceLimits: PriceLimits | null }, digitsOf: (code: Currency) => number): { body: MoneyBody } | { error: string } {
-  const before = digitsOf(stored.currency);
-  const shown = (c: number | null | undefined) => (c == null ? '' : asTyped(c, before));
+  const shown = (c: number | null | undefined) => (c == null ? '' : asTyped(c));
   const cur = f.code || stored.currency;
   const digits = digitsOf(cur);
   const body: MoneyBody = {};

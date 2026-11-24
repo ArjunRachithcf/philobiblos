@@ -386,13 +386,14 @@ describe('amounts in the household\'s currency, with its decimals or none (philo
 });
 
 describe('three decimals (KWD, BHD) are kept as hundredths: a thousandth is refused, and says so (philobiblos#62)', () => {
-  it('a CSV\'s 1.250 reads; 1.255 is refused as an amount below hundredths, never rounded', () => {
+  it('a CSV\'s 1.25 reads; three decimals are refused (1.255 cannot be kept, 1.250 could be 1250), never rounded', () => {
     const db = world();
     db.update(t.householdSettings).set({ currency: 'KWD' }).run();
     const s = snapshot(db);
     refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,1.255\n' }, 400, /row 1.*price.*hundredths/);
+    refused(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,"1,250"\n' }, 400, /row 1.*price.*hundredths/);
     expect(snapshot(db)).toBe(s);
-    record(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,1.250\n' });
+    record(db, { kind: 'invoice', csv: 'isbn,qty,price\n9780000000002,1,1.25\n' });
     expect(copies(db).find((c) => c[0] === 'b_tide')![3]).toBe(125);
   });
 

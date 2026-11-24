@@ -46,6 +46,9 @@ export function amountProblem(v: unknown, currency: string | null): string | nul
   return null;
 }
 
+/** Hundredths as a plain number with two decimals (`2550` is `25.50`): how a refusal names an amount. */
+const asDecimal = (c: number) => `${Math.floor(c / 100)}.${String(c % 100).padStart(2, '0')}`;
+
 /** PHILOBIBLOS_CURRENCY at a start: the currency of a household that has none yet; one it has is never replaced. */
 export function initCurrency(db: Db, currency: string | null): void {
   if (currency === null) return;
@@ -60,9 +63,12 @@ export function initCurrency(db: Db, currency: string | null): void {
 /**
  * Settings.money, checked before anything is written: `{ currency?, unknownPrice?, priceLimits? }`. `others` are the
  * currencies of the enabled connectors (by name): the household's currency does not change to one they do not use.
- * `current` is the household's currency now: amounts are checked against the one in force after the request.
+ * `stored` is the household's money now: amounts are checked against the currency in force after the request, and a new
+ * currency re-checks the amounts it would keep (philobiblos#62): an unknown price or own limits it cannot write refuse the
+ * change, unless the same request sets them too. Nothing is converted.
  */
-export function checkMoney(body: unknown, others: { name: string; currency: string }[], current: string | null): (tx: Db) => void {
+export function checkMoney(body: unknown, others: { name: string; currency: string }[], stored: Money): (tx: Db) => void {
+  const current = stored.currency;
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new MoneyError(400, 'money: { currency, unknownPrice, priceLimits }');
   const b = body as Record<string, unknown>;
   for (const k of Object.keys(b)) if (k !== 'currency' && k !== 'unknownPrice' && k !== 'priceLimits') throw new MoneyError(400, `money: ${k.slice(0, 40)} is not one of its settings`);
@@ -95,6 +101,17 @@ export function checkMoney(body: unknown, others: { name: string; currency: stri
       if (o.high === 0) throw new MoneyError(400, 'money.priceLimits.high: above 0 (null follows the unknown price)');
       if ((o.high as number) > (o.max as number)) throw new MoneyError(400, 'money.priceLimits: the "dear" limit is above the one that leaves a book out');
       Object.assign(set, { priceHighC: o.high as number, priceMaxC: o.max as number });
+    }
+  }
+  if (set.currency !== undefined && set.currency !== current) {
+    const digits = currencyDigits(set.currency);
+    const kept = (c: number, what: string) => {
+      if (!wholeIn(c, digits)) throw new MoneyError(400, `${what}: ${asDecimal(c)} is not an amount ${set.currency} can write; set it in the same change`);
+    };
+    if (b.unknownPrice === undefined) kept(stored.unknownPrice, 'money.unknownPrice');
+    if (b.priceLimits === undefined && stored.priceLimits.own) {
+      kept(stored.priceLimits.high!, 'money.priceLimits.high');
+      kept(stored.priceLimits.max!, 'money.priceLimits.max');
     }
   }
   return (tx) => {

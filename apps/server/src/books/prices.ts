@@ -43,7 +43,7 @@ export function tileRules(c: Pick<Connector, 'money' | 'locale'> & { prices: Sea
     article: new RegExp(`href="(?:https://${literal(host)})?${literal(p.article.path)}(${literal(p.article.id_prefix)}\\d{${lo},${hi}})[^"<>]{0,200}"`, 'g'),
     print: contains(p.print_formats), want: contains(p.want_languages), other: contains(p.other_languages),
     // The currency's own decimals (philobiblos#62); one with a thousandth is no price Philobiblos keeps.
-    price: amountFinder({ before: c.money.before, after: [] }, currencyDigits(c.locale.currency)),
+    price: amountFinder({ ...c.money, after: [] }, currencyDigits(c.locale.currency)),
     availability: new RegExp(`(?<![\\p{L}\\p{N}])(${alternation(av.phrases)}(?: ${alternation(av.joiners)} [\\d.\\- ]{1,12}${alternation(av.units)}?)?)`, 'u'),
   };
 }

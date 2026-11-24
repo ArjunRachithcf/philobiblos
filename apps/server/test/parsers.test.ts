@@ -206,10 +206,10 @@ describe('the shop\'s order mails and invoices', () => {
 
 describe('amounts with the connector\'s currency\'s own decimals (philobiblos#62)', () => {
   /** The example bookshop's rules with its amounts in another currency, written with these symbols. */
-  const inCurrency = (currency: string, before: string[], after: string[]) =>
-    parse.mailRules({ ...QUILLMERE, locale: { ...QUILLMERE.locale, currency }, money: { before, after } });
+  const inCurrency = (currency: string, before: string[], after: string[], more: { decimal?: '.' | ',' } = {}) =>
+    parse.mailRules({ ...QUILLMERE, locale: { ...QUILLMERE.locale, currency }, money: { before, after, ...more } });
   const YEN = inCurrency('JPY', ['¥', 'JPY'], ['JPY']);
-  const DINAR = inCurrency('KWD', ['KWD'], ['KWD']);
+  const DINAR = inCurrency('KWD', ['KWD'], ['KWD'], { decimal: '.' });
   const quote = (price: string, r: parse.MailRules) => parse.parseQuote(`Author: Mira Okafor\nTitle: The Long Tide of Markets\nPrice: ${price}\n`, [], r);
 
   it('a quote in a currency without decimals: whole units, grouped or not; a fraction fails closed', () => {
@@ -220,6 +220,24 @@ describe('amounts with the connector\'s currency\'s own decimals (philobiblos#62
     // A comma written right before a digit, with no digit before it, still splits (an author, then a title that starts with one).
     expect(parseQuote('- Clarke,2001: A Space Odyssey, CHF 14.90, delivery time 1-3 days\n', [])).toMatchObject({ kind: 'bookshop_quote', lines: [{ author: 'Clarke', title: '2001: A Space Odyssey', priceC: 1490 }] });
     expect(parse.parseQuote('- Reed, A Map of Small Rivers, ¥2,400, delivery time 1-3 days\n', [], YEN)).toMatchObject({ kind: 'bookshop_quote', lines: [{ title: 'A Map of Small Rivers', priceC: 240000, delivery: '1-3 days' }] });
+  });
+
+  it('a quote line whose amount cannot be placed is refused, never skipped while the other books are read', () => {
+    for (const price of ['1.250 CHF', '12 500 CHF', 'CHF 12 500.00']) {
+      expect(parseQuote(`- Okafor, Value Beyond Price, ${price}\n- Reed, A Map of Small Rivers, CHF 22.50, delivery time 1-3 days\n`, []), price)
+        .toMatchObject({ kind: 'unknown_layout' });
+    }
+    expect(quote('¥1 250', YEN)).toMatchObject({ kind: 'unknown_layout' });
+    // Without its decimal mark, a three-decimal connector reads no amount: never 1000 times too little.
+    expect(quote('KWD 1,250', inCurrency('KWD', ['KWD'], ['KWD']))).toMatchObject({ kind: 'unknown_layout' });
+    expect(quote('KWD 1,250', DINAR)).toMatchObject({ kind: 'unknown_layout' });
+  });
+
+  it('an invoice\'s total or postage split at a space (12 500) is refused, never read as its last group', () => {
+    const row = ['9780000000002', 'The Long Tide of Markets', '1 ST', '12500', '12500 JPY', '10 %'];
+    expect(parse.parseInvoice('1', [row, ['Total', '12 500 JPY']], false, [], YEN)).toMatchObject({ kind: 'unknown_layout', reason: 'a total Philobiblos cannot place' });
+    expect(parse.parseInvoice('1', [row, ['Versand', '1 500 JPY'], ['Total', '14000 JPY']], false, [], YEN)).toMatchObject({ kind: 'unknown_layout', reason: 'postage Philobiblos cannot place' });
+    expect(parse.parseInvoice('1', [row, ['Total', '12500 JPY']], false, [], YEN)).toMatchObject({ kind: 'invoice', totalC: 1250000 });
   });
 
   it('two decimals past the old cap of 9999.99, grouped; a group a currency with two decimals cannot place fails closed', () => {

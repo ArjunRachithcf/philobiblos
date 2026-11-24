@@ -55,28 +55,43 @@ export function subjectMatcher(template: string): (subject: string) => string | 
   };
 }
 
-/** Money as the connector writes it: a symbol before the amount (`<symbol> 19.90`) or after it (`19.90 <symbol>`). */
-export interface Money { before: string[]; after: string[] }
+/**
+ * Money as the connector writes it: a symbol before the amount (`<symbol> 19.90`) or after it (`19.90 <symbol>`), and
+ * optionally its decimal mark and its thousands groups (contracts/connector.schema.json `money`, philobiblos#62).
+ */
+export interface Money { before: string[]; after: string[]; decimal?: '.' | ','; groups?: readonly (',' | '.' | "'" | ' ')[] }
+
+/** How each group separator is matched: a space is any of the spaces a page or a PDF writes between thousands. */
+const GROUP: Record<',' | '.' | "'" | ' ', string> = { ',': ',', '.': '\\.', "'": "'", ' ': '[ \\u00a0\\u202f]' };
+/** Whatever could continue a number after it: a separator (or a space) and a digit, or a digit. */
+const CONTINUES = "(?![.,'\\s]?\\d)";
 
 /**
  * An amount's number in a currency with `digits` decimals (philobiblos#62), as a pattern with two captures: its whole
- * units, grouped by thousands (with `,`, `.` or `'`, the same one throughout, up to 10,000,000,000) or not grouped, and
- * its decimals: exactly the currency's, after a point or a comma that is not the grouping's (`1,234.50`, `1.234,50`), or
- * none in a currency without decimals (`1,980`). It never stops inside a number: a digit, or a separator and a digit,
- * after it is no amount (`1,98` in a currency without decimals, `19.905` in one with two). Bounded alternatives only:
- * linear.
+ * units, grouped by thousands (the same separator throughout, up to 10,000,000,000) or not grouped, and its decimals:
+ * exactly the currency's, after the decimal mark, or none in a currency without decimals (`1,980`). Groups are `,` `.`
+ * and `'` unless the connector names its own (a space only then); the decimal mark is the connector's, or else a point
+ * or a comma that is not the grouping's (`1,234.50`, `1.234,50`). In a currency with three decimals a connector must
+ * name its decimal mark (`1,250` is 1.25 or 1250): without one, nothing matches. It never stops inside a number: a
+ * digit, or a separator or a space and a digit, after it is no amount (`1,98` without decimals, `19.905` with two,
+ * `12 500` without space groups). Bounded alternatives only: linear.
  */
-export function amountNumber(digits: number): string {
-  const grouped = (sep: string) => `\\d{1,3}(?:${sep}\\d{3}){1,3}`;
-  const units = digits > 0
-    ? `(${grouped(',')}(?=\\.)|${grouped('\\.')}(?=,)|${grouped("'")}|\\d{1,11})[.,](\\d{${digits}})`
-    : `(${grouped(',')}|${grouped('\\.')}|${grouped("'")}|\\d{1,11})()`;
-  return `${units}(?![.,']?\\d)`;
+export function amountNumber(digits: number, m: Pick<Money, 'decimal' | 'groups'> = {}): string {
+  if (digits > 2 && !m.decimal) return '(?!)()()';
+  const groups = m.groups ?? ([',', '.', "'"] as const).filter((g) => g !== m.decimal);
+  const mark = m.decimal ? GROUP[m.decimal] : '[.,]';
+  const grouped = groups.map((g) => {
+    const run = `\\d{1,3}(?:${GROUP[g]}\\d{3}){1,3}`;
+    // Without a named decimal mark, a point or a comma grouping is followed by the other one only.
+    return digits > 0 && !m.decimal && (g === ',' || g === '.') ? `${run}(?=${g === ',' ? '\\.' : ','})` : run;
+  });
+  const units = `(${[...grouped, '\\d{1,11}'].join('|')})`;
+  return `${units}${digits > 0 ? `${mark}(\\d{${digits}})` : '()'}${CONTINUES}`;
 }
 
 /** The two captures of `amountNumber` in hundredths; `below` when its decimals have a thousandth (not kept); else null. */
 export const readNumber = (units: string, decimals: string, digits: number): number | 'below' | null =>
-  toHundredths(units.replace(/[,.']/g, ''), decimals, digits);
+  toHundredths(units.replace(/[^\d]/g, ''), decimals, digits);
 
 /**
  * The first amount in a line, a symbol before it or after it: hundredths, written with the currency's `digits` decimals
@@ -84,10 +99,11 @@ export const readNumber = (units: string, decimals: string, digits: number): num
  * null. One pattern, compiled once.
  */
 export function amountReader(m: Money, digits: number): (s: string) => number | 'below' | null {
-  const n = amountNumber(digits);
-  // A side without symbols has no branch (an empty alternation would match any number).
+  const n = amountNumber(digits, m);
+  // A side without symbols has no branch (an empty alternation would match any number). An amount after which its
+  // symbol stands never starts inside a number (after a digit, a separator, or a digit and a space: `12 500`).
   const before = m.before.length ? `${alternation(m.before)}\\s?${n}` : '(?!)()()';
-  const after = m.after.length ? `(?<![\\d.,'])${n}\\s?${alternation(m.after)}${NOT_WORD_AFTER}` : '(?!)()()';
+  const after = m.after.length ? `(?<![\\d.,'])(?<!\\d\\s)${n}\\s?${alternation(m.after)}${NOT_WORD_AFTER}` : '(?!)()()';
   const re = new RegExp(`${before}|${after}`, 'iu');
   return (s) => {
     const x = re.exec(s);
@@ -102,11 +118,12 @@ export function amountFinder(m: Money, digits: number): (s: string) => number | 
 }
 
 /**
- * Whether a line holds an amount at all: a symbol and a digit, or a number with a symbol after it. Loose on purpose
- * (two decimals, or as many as the currency has), so a line with an amount the reader cannot place is refused, never
- * skipped.
+ * Whether a line holds an amount at all: a symbol and a digit, or a digit with a symbol after it, however the number is
+ * written (`1.250` or `12 500` before the symbol). Loose on purpose, so a line with an amount the reader cannot place is refused,
+ * never skipped.
  */
-export function amountTest(m: Money, digits: number): (s: string) => boolean {
-  const re = new RegExp(`${alternation(m.before)}\\s?\\d|\\d${digits > 0 ? `[.,]\\d{2,${Math.max(2, digits)}}` : ''}\\s?${alternation(m.after)}${NOT_WORD_AFTER}`, 'iu');
+export function amountTest(m: Money): (s: string) => boolean {
+  const sides = [...(m.before.length ? [`${alternation(m.before)}\\s?\\d`] : []), ...(m.after.length ? [`\\d\\s?${alternation(m.after)}${NOT_WORD_AFTER}`] : [])];
+  const re = new RegExp(sides.length ? sides.join('|') : '(?!)', 'iu');
   return (s) => re.test(s);
 }

@@ -162,6 +162,10 @@ describe('a connector\'s words are matched in linear time', () => {
       [`amounts with ${d} decimals, symbols and digits`, () => { const f = amountFinder({ before: ['JPY'], after: ['JPY'] }, d); return () => f('JPY 1'.repeat(HUGE / 5) + '.'); }],
       [`amounts with ${d} decimals, points and apostrophes`, () => { const f = amountFinder({ before: ['JPY'], after: ['JPY'] }, d); return () => f("1'1.".repeat(HUGE / 4) + ' JPY'); }],
     ] as [string, () => () => unknown][]),
+    ...[0, 2, 3].map((d) => [`amounts with ${d} decimals, a decimal mark and space groups`, () => {
+      const f = amountFinder({ before: ['JPY'], after: ['JPY'], decimal: ',', groups: [' ', '.'] }, d);
+      return () => f('1 111\u00a0'.repeat(HUGE / 6) + '1.1 JPY');
+    }] as [string, () => () => unknown]),
   ])('%s, on a megabyte of hostile text', (_n, make) => {
     const run = make();
     const t0 = Date.now();
@@ -189,27 +193,66 @@ describe('a connector\'s words are matched in linear time', () => {
     expect(chf('1.234,50 CHF')).toBe(123450);
     expect(chf('CHF 10000000000.00')).toBe(1_000_000_000_000);
     for (const bad of ['CHF 1,980', 'CHF 19.9', 'CHF 19.905', 'CHF 1,234,50', 'CHF 1.234.50', 'CHF 10000000000.01', 'CHF 19', 'CHF 1234,567.00']) expect(chf(bad), bad).toBeNull();
-    const kwd = amountFinder({ before: ['KWD'], after: ['KWD'] }, 3);
+    // Three decimals: the connector says which mark is its decimal one (`money.decimal`); a point and three digits is
+    // then never a thousands group. Without it, nothing reads (KWD 1,250 could be 1.25 or 1250).
+    const bare = amountReader({ before: ['KWD'], after: ['KWD'] }, 3);
+    for (const probe of ['KWD 1,250', '12.500 KWD', 'KWD 1.250', 'KWD 1,250.500']) expect(bare(probe), probe).toBeNull();
+    const kwd = amountFinder({ before: ['KWD'], after: ['KWD'], decimal: '.' }, 3);
+    expect(kwd('KWD 1,250')).toBeNull();
+    expect(kwd('12,500 KWD')).toBeNull();
+    const comma = amountFinder({ before: ['KWD'], after: ['KWD'], decimal: ',' }, 3);
+    expect(comma('12.500 KWD')).toBeNull();
+    expect(comma('KWD 1.250,500')).toBe(125050);
+    expect(comma('KWD 12,500')).toBe(1250);
+    // A decimal mark the connector names is never one of its groups.
+    expect(amountFinder({ before: ['¥'], after: [], decimal: '.' }, 0)('¥1.980')).toBeNull();
+    expect(amountFinder({ before: ['CHF'], after: [], decimal: ',' }, 2)('CHF 1,234,50')).toBeNull();
+    expect(amountFinder({ before: ['CHF'], after: [], decimal: ',' }, 2)('CHF 1.234,50')).toBe(123450);
     expect(kwd('KWD 1.250')).toBe(125);
     expect(kwd('KWD 1,250.500')).toBe(125050);
     expect(kwd('12.500 KWD')).toBe(1250);
     // A thousandth is never kept, nor rounded: none read, and the reader says why.
     for (const bad of ['KWD 1.255', 'KWD 1.25', 'KWD 1']) expect(kwd(bad), bad).toBeNull();
-    const below = (s: string) => amountReader({ before: ['KWD'], after: ['KWD'] }, 3)(s) === 'below';
+    const below = (s: string) => amountReader({ before: ['KWD'], after: ['KWD'], decimal: '.' }, 3)(s) === 'below';
     expect(below('KWD 1.255')).toBe(true);
     expect(below('1.255 KWD')).toBe(true);
     expect(below('KWD 1.250')).toBe(false);
     expect(amountReader({ before: ['CHF'], after: ['CHF'] }, 2)('CHF 1.255')).toBeNull();
   });
 
-  it('whether a line holds an amount follows the decimals too', () => {
-    expect(amountTest({ before: ['¥'], after: ['円'] }, 0)('2,480円')).toBe(true);
-    expect(amountTest({ before: ['¥'], after: ['円'] }, 0)('2480 円')).toBe(true);
-    expect(amountTest({ before: ['KWD'], after: ['KWD'] }, 3)('1.250 KWD')).toBe(true);
+  it('a connector in a currency with three decimals names its decimal mark; its groups never hold it (philobiblos#62)', () => {
+    const kwd = (money: string) => read(EXAMPLE.replace('currency: CHF', 'currency: KWD').replace('money:\n  before: [CHF, Fr.]', `money:\n${money}  before: [CHF, Fr.]`));
+    expect(kwd('')).toMatchObject({ problem: expect.stringMatching(/three decimals.*money\.decimal/) });
+    expect(kwd("  decimal: '.'\n")).toMatchObject({ connector: expect.anything() });
+    expect(kwd("  decimal: ';'\n")).toMatchObject({ problem: expect.stringMatching(/schema/) });
+    expect(read(EXAMPLE.replace('money:\n  before: [CHF, Fr.]', "money:\n  decimal: '.'\n  groups: ['.', ' ']\n  before: [CHF, Fr.]"))).toMatchObject({ problem: expect.stringMatching(/decimal mark.*group/) });
+    expect(read(EXAMPLE.replace('money:\n  before: [CHF, Fr.]', "money:\n  groups: [' ', \"'\"]\n  before: [CHF, Fr.]"))).toMatchObject({ connector: expect.anything() });
+  });
+
+  it('a space before more digits ends no amount: it is refused, never cut short; a connector may declare space groups', () => {
+    const huf = amountFinder({ before: ['HUF'], after: ['HUF'] }, 0);
+    for (const probe of ['HUF 12 500', '12 500 HUF', 'HUF 12\u00a0500', '12\u202f500 HUF']) expect(huf(probe), probe).toBeNull();
+    expect(amountFinder({ before: ['¥'], after: [] }, 0)('¥1 250')).toBeNull();
+    expect(amountFinder({ before: ['CHF'], after: ['CHF'] }, 2)('CHF 1 234.50')).toBeNull();
+    const spaced = amountFinder({ before: ['HUF'], after: ['HUF'], groups: [' '] }, 0);
+    expect(spaced('HUF 12 500')).toBe(1250000);
+    expect(spaced('12\u00a0500 HUF')).toBe(1250000);
+    expect(spaced('12\u202f500 HUF')).toBe(1250000);
+    expect(spaced('HUF 12,500')).toBeNull(); // only the groups it declares
+    expect(spaced('HUF 12 50')).toBeNull();
+  });
+
+  it('whether a line holds an amount: any digit with a symbol, however the number is written', () => {
+    expect(amountTest({ before: ['¥'], after: ['円'] })('2,480円')).toBe(true);
+    expect(amountTest({ before: ['¥'], after: ['円'] })('2480 円')).toBe(true);
+    expect(amountTest({ before: ['KWD'], after: ['KWD'] })('1.250 KWD')).toBe(true);
     // Loose on purpose: an amount with fewer decimals than its currency's still counts, so its line is refused, never skipped.
-    expect(amountTest({ before: ['KWD'], after: ['KWD'] }, 3)('Versand 1.25 KWD')).toBe(true);
-    expect(amountTest({ before: ['CHF'], after: ['CHF'] }, 2)('19.90 CHF')).toBe(true);
-    expect(amountTest({ before: ['CHF'], after: ['CHF'] }, 2)('page 3 CHF')).toBe(false);
+    expect(amountTest({ before: ['KWD'], after: ['KWD'] })('Versand 1.25 KWD')).toBe(true);
+    expect(amountTest({ before: ['CHF'], after: ['CHF'] })('19.90 CHF')).toBe(true);
+    // A number with the symbol after it counts, however it is written, so a quote's line is refused, never skipped.
+    expect(amountTest({ before: ['CHF'], after: ['CHF'] })('12 500 CHF')).toBe(true);
+    expect(amountTest({ before: ['CHF'], after: ['CHF'] })('1.250 CHF')).toBe(true);
+    expect(amountTest({ before: ['CHF'], after: ['CHF'] })('Swiss CHF')).toBe(false);
   });
 
   it('a word is a literal: its pattern characters match only themselves', () => {
