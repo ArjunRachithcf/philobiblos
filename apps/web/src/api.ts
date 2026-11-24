@@ -22,7 +22,8 @@ export type Connector = components['schemas']['Connector'];
 export type MailSettings = components['schemas']['MailSettings'];
 
 export class ApiError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
+  /** `body`: the server's answer, for a refusal that carries more than its message (a 409 that asks, say). */
+  constructor(readonly status: number, message: string, readonly body: unknown = null) { super(message); }
 }
 
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
@@ -36,7 +37,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   const data: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = (data as { error?: string }).error;
-    throw new ApiError(res.status, msg ?? (res.status === 429 ? 'Too many tries; wait a minute.' : 'Something went wrong.'));
+    throw new ApiError(res.status, msg ?? (res.status === 429 ? 'Too many tries; wait a minute.' : 'Something went wrong.'), data);
   }
   return data as T;
 }

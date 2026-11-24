@@ -12,7 +12,8 @@
 // signed In-Reply-To (a bookshop mail already tied to it), or the one of the month its signed Subject names as Compose
 // wrote it ("Book order, November 2026"); only the bookshop's signed mail ties anything (Compose copies the request to
 // no one). With no order, every line is unmatched.
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -26,6 +27,9 @@ export interface BookKey { id: string; title: string; authors: string[]; isbn13:
 export type Matched<L> = L & { bookId: string | null };
 /** What is kept of a parsed mail beside its headers: the parser's fields, each line with the book it matched. */
 export type Applied = Record<string, unknown> & { parser: string };
+
+/** A mail's Inbox item id: its key (mail_seen.message_id) hashed, never the Message-ID itself. */
+export const mailItemId = (key: string) => `m_${createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 32)}`;
 
 /** How many of a thread's Message-IDs an order keeps. */
 export const THREAD_MAX = 20;
@@ -144,8 +148,9 @@ function invoice(tx: Tx, m: VerifiedMail, p: Extract<Parsed, { kind: 'invoice' }
   if (again) return { ...kept, duplicateOf: again.id };
   // One a person typed in already for this connector's shop (orders/entries.ts) counts as this one; one typed for
   // another shop, or for none, never does.
+  // One a person answered is the same as another mail (philobiblos#58) stands for that mail, and never for this one.
   const typed = p.invoiceNumber != null && tx.select({ id: t.orderEntry.id }).from(t.orderEntry)
-    .where(and(eq(t.orderEntry.kind, 'invoice'), sql`upper(${t.orderEntry.number}) = upper(${p.invoiceNumber})`, eq(t.orderEntry.shop, m.auth.connector))).get();
+    .where(and(eq(t.orderEntry.kind, 'invoice'), sql`upper(${t.orderEntry.number}) = upper(${p.invoiceNumber})`, eq(t.orderEntry.shop, m.auth.connector), isNull(t.orderEntry.duplicateOf))).get();
   if (typed) return { ...kept, duplicateOf: `entry:${typed.id}` };
   const books = keys(tx);
   const out = p.lines.map((l): Matched<InvoiceLine> => ({ ...l, bookId: matchBook(books, l) }));
@@ -199,6 +204,8 @@ function maybeTyped(tx: Tx, m: VerifiedMail, number: string | null, all: Matched
     eq(t.orderEntry.kind, 'invoice'), eq(t.orderEntry.totalC, total), sql`${t.orderEntry.createdAt} >= ${since}`, sql`${t.orderEntry.createdAt} <= ${now}`,
     sql`(${t.orderEntry.number} IS NULL OR (upper(${t.orderEntry.number}) = upper(${number}) AND ${t.orderEntry.shop} <> ${m.auth.connector}))`,
     sql`NOT EXISTS (${named})`,
+    // One a person answered is the same as a mail counted already (philobiblos#58) stands for that mail, and counted nothing.
+    isNull(t.orderEntry.duplicateOf),
   )).orderBy(desc(t.orderEntry.createdAt)).all();
   const same = rows.find((e) => {
     const got = new Map<string, number>();
@@ -209,6 +216,46 @@ function maybeTyped(tx: Tx, m: VerifiedMail, number: string | null, all: Matched
     return got.size === want.size && [...want].every(([b, q]) => got.get(b) === q);
   });
   return same?.id ?? null;
+}
+
+/** A bookshop's invoice mail that a typed or imported one may be (`maybeMailed`). */
+export interface MailedInvoice { key: string; seenAt: string; date: string | null; day: string | null; number: string | null }
+
+/**
+ * The bookshop's invoice mail that an invoice being typed or imported may be (philobiblos#58), or null: `maybeTyped`'s
+ * rule mirrored, for a mail that counted first. A verified invoice mail read in the last MAYBE_TYPED_DAYS days that
+ * counted (its copies made: not one sent again, counted as a typed one, or waiting in the Inbox as maybe one), whose
+ * every line that is a book names one (when read, or added from the Inbox since), with the same books in the same quantities and the same total for them as the
+ * entry (`lines`: every line naming a book Philobiblos has; `total`: theirs). The entry's number, if it has one, must
+ * be the mail's (typed for the mail's own connector, that number is refused before this: orders/entries.ts). A mail an entry is the same as already (order_entry.duplicate_of) is never asked about again; of several, the
+ * newest.
+ */
+export function maybeMailed(tx: Tx, e: { number: string | null; lines: { bookId: string; qty: number }[]; total: number }, now: string): MailedInvoice | null {
+  const want = new Map<string, number>();
+  for (const l of e.lines) want.set(l.bookId, (want.get(l.bookId) ?? 0) + l.qty);
+  const since = new Date(Date.parse(now) - MAYBE_TYPED_DAYS * 86_400_000).toISOString();
+  const j = (path: string) => sql`json_extract(${t.mailSeen.parsedJson}, ${path})`;
+  const rows = tx.select().from(t.mailSeen).where(and(
+    eq(t.mailSeen.accepted, 1), eq(t.mailSeen.kind, 'invoice'), sql`${t.mailSeen.seenAt} >= ${since}`, sql`${t.mailSeen.seenAt} <= ${now}`,
+    sql`${j('$.duplicateOf')} IS NULL`, sql`${j('$.maybeTyped')} IS NULL`,
+    e.number === null ? undefined : sql`upper(${j('$.invoiceNumber')}) = upper(${e.number})`,
+    sql`NOT EXISTS (SELECT 1 FROM ${t.orderEntry} WHERE ${t.orderEntry.duplicateOf} = ${t.mailSeen.messageId})`,
+  )).orderBy(desc(t.mailSeen.seenAt)).all();
+  for (const r of rows) {
+    const p = JSON.parse(r.parsedJson ?? '{}') as { lines?: unknown; date?: unknown; day?: unknown; invoiceNumber?: unknown };
+    if (!Array.isArray(p.lines)) continue;
+    // A line that named no book when it was read but was added from the Inbox since counts as the book it was added as.
+    const added = new Map(tx.select().from(t.inboxDecision).where(and(eq(t.inboxDecision.item, mailItemId(r.messageId)), eq(t.inboxDecision.decision, 'added'))).all().map((d) => [d.idx, d.bookId]));
+    const lines = (p.lines as { bookId?: unknown; qty?: unknown; totalC?: unknown; notBook?: unknown }[])
+      .map((l, i) => (l && typeof l === 'object' && l.bookId == null && added.get(i) ? { ...l, bookId: added.get(i) } : l)).filter((l) => l && !l.notBook);
+    if (!lines.length || lines.some((l) => typeof l.bookId !== 'string' || typeof l.qty !== 'number' || typeof l.totalC !== 'number')) continue;
+    const got = new Map<string, number>();
+    for (const l of lines) got.set(l.bookId as string, (got.get(l.bookId as string) ?? 0) + (l.qty as number));
+    if (lines.reduce((n, l) => n + (l.totalC as number), 0) !== e.total || got.size !== want.size || ![...want].every(([b, q]) => got.get(b) === q)) continue;
+    const str = (v: unknown) => (typeof v === 'string' ? v : null);
+    return { key: r.messageId, seenAt: r.seenAt, date: str(p.date), day: str(p.day), number: str(p.invoiceNumber) };
+  }
+  return null;
 }
 
 /**

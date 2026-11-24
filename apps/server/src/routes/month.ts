@@ -16,7 +16,8 @@ export const SEALED = { bookshopEmail: 'bookshop_email', deliveryAddress: 'deliv
 
 export async function monthRoutes(app: FastifyInstance, cfg: Config, db: Db, connectors: Registry) {
   const fail = (reply: FastifyReply, e: unknown) => {
-    if (e instanceof MonthError || e instanceof EntryError) return reply.code(e.status).send({ error: e.message });
+    if (e instanceof EntryError) return reply.code(e.status).send({ error: e.message, ...(e.maybeMailed ? { maybeMailed: e.maybeMailed } : {}) });
+    if (e instanceof MonthError) return reply.code(e.status).send({ error: e.message });
     if (e instanceof SealError) return reply.code(409).send({ error: 'the addresses were sealed with another key: an admin enters them again in Settings' });
     throw e;
   };
