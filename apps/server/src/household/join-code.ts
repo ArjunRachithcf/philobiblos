@@ -76,10 +76,11 @@ const sentSince = (db: Db, since: number, where?: ReturnType<typeof eq>) =>
   db.select({ n: count() }).from(t.joinCodeSent).where(and(gte(t.joinCodeSent.sentAt, new Date(since).toISOString()), where)).get()?.n ?? 0;
 
 /**
- * A code asked for. `to` is the address when a mail may go out to it (the route checked the link opens for this
- * client, has the mail rule, that the address is at its domain and that it is not a public provider's); null when no
- * mail goes out whatever the limits say. Returns the request token (the same answer in every case) and, when the
- * limits leave room, the code to send to `to`.
+ * A code asked for. `linkId`: the link the token names, if one does (kept on the request whether or not a mail goes out,
+ * so its tries are limited with the link's others alike). `to` is the address when a mail may go out to it (the route
+ * checked the link opens for this client, has the mail rule, that the address is at its domain and that it is not a
+ * public provider's); null when no mail goes out whatever the limits say. Returns the request token (the same answer
+ * in every case) and, when the limits leave room, the code to send to `to`.
  */
 export function askCode(db: Db, key: Buffer, o: { linkId: string | null; to: string | null }, now = new Date()): { request: string; send: { to: string; code: string } | null } {
   const request = newToken();
@@ -103,7 +104,7 @@ export function askCode(db: Db, key: Buffer, o: { linkId: string | null; to: str
       }
     }
     tx.insert(t.joinCode).values({
-      id, requestHash: hashToken(request), joinLinkId: send ? o.linkId : null, address: send ? send.to : null, mac: send ? codeMac(key, id, send.code) : null,
+      id, requestHash: hashToken(request), joinLinkId: o.linkId, address: send ? send.to : null, mac: send ? codeMac(key, id, send.code) : null,
       createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + JOIN_CODE.ttlMs).toISOString(),
     }).run();
     return { request, send };

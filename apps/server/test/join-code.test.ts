@@ -401,6 +401,19 @@ describe('the same answer whether or not a mail went out', () => {
     expect((await join(b.app, token, 'Jordan')).json()).toMatchObject({ waiting: true });
   });
 
+  it('a request that sent nothing is tried like one that did: the link\'s limit counts both (no telling the domain by its 429)', async () => {
+    const b = await app();
+    const { token } = await makeLink(b.app, b.db);
+    const real = (await ask(b.app, token, `jordan@${DOMAIN}`)).json().request;
+    const none = (await ask(b.app, token, 'jordan@example.net', { remote: '10.20.9.9' })).json().request;
+    expect(b.sent).toHaveLength(1);
+    const tries = [];
+    for (let i = 0; i < 5; i++) tries.push((await tryCode(b.app, real, '000000', { remote: `10.20.3.${i + 1}` })).statusCode);
+    for (let i = 0; i < 6; i++) tries.push((await tryCode(b.app, none, '000000', { remote: `10.20.4.${i + 1}` })).statusCode);
+    // ten tries a link in ten minutes, whichever of its requests they were for
+    expect(tries).toEqual([...Array(10).fill(400), 429]);
+  });
+
   it('the mail is sent after the answer: a server that never answers does not hold it back', async () => {
     const b = await app(withSmtp(), household(), () => new Promise(() => {}));
     const { token } = await makeLink(b.app, b.db);

@@ -147,7 +147,9 @@ export async function joinRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     // exactly, never a public provider's; and the limits leave room. Whatever happens, the same answer.
     const admission = checkLink(db, { hash }, address(req), new Date(), where, match(domainOf(to)));
     const eligible = admission !== null && admission.link.mailDomain !== null && admission.matches === true;
-    const { request, send } = askCode(db, mail.key!, { linkId: eligible ? admission.link.id : null, to: eligible ? to : null });
+    // The request keeps the link the token names either way, so trying its code is limited with the link's others.
+    const named = admission?.link.id ?? db.select({ id: t.joinLink.id }).from(t.joinLink).where(eq(t.joinLink.tokenHash, hash)).get()?.id ?? null;
+    const { request, send } = askCode(db, mail.key!, { linkId: named, to: eligible ? to : null });
     // Sent after the answer is decided, never awaited: its time says nothing either.
     if (send) void mail.send(send.to, send.code).catch(() => app.log.warn('a join code was not sent: the SMTP server could not be reached or refused it'));
     return answer(reply, start, 200, { request });
