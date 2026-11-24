@@ -661,7 +661,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Any adult (the bookshop's mail is the household's): the answer to an item of kind maybe_typed_invoice (philobiblos#45), a verified mailed invoice held because its books, quantities and books' total are those of an invoice typed in or imported in the 30 days before it was read with no number, or with its number for no shop or another (so nothing counted them once). same: the mail counts as the typed one and nothing else changes; another: another purchase, so the mail's effect now (its copies owned at the price paid, the price learnt, its order lines delivered and invoiced). Once; the item is gone after it. */
+        /** Any adult (the bookshop's mail is the household's): the answer to an item of kind maybe_typed_invoice (philobiblos#45), a verified mailed invoice held because it and an invoice typed in or imported in the 30 days before it was read hold each other's copies (the same books, quantities and books' total; or one holds every copy of the other at the same total for them, philobiblos#64) with no number, or with its number for no shop or another (so nothing counted them once). same: the mail counts as the typed one and nothing else changes but the copies it holds beyond the typed ones (typed.more), which count as a mail's; another: another purchase, so the mail's effect now (its copies owned at the price paid, the price learnt, its order lines delivered and invoiced). Once; the item is gone after it, unless what is left of the mail fits another typed invoice, which it then asks about (philobiblos#64). */
         post: operations["answerTypedInvoice"];
         delete?: never;
         options?: never;
@@ -935,7 +935,7 @@ export interface paths {
         /** Any adult: the invoices typed in or imported in the last 7 days (philobiblos#45), newest first, at most 50: when, the number and shop, the total, how many copies, who recorded it, and whether you may undo it (canUndo: you recorded it or are an admin, and it was recorded since undo exists; whether nothing has changed since is answered by the undo). */
         get: operations["listOrderEntries"];
         put?: never;
-        /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop's connector's mail. An invoice that may be a bookshop's mail counted in the last 30 days is asked about first (philobiblos#58): 409 with maybeMailed, then sent again with mailed (same: kept as the mail's duplicate, nothing counted; another: it counts); a dry run names it (maybeMailed) and asks nothing. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
+        /** Any adult: an order's quote or an invoice typed in (lines) or imported from a CSV (csv), for any shop or none (philobiblos#27). It has the effects a verified mail of its kind has, and only those: an invoice's copies owned at the price paid (source manual), the line of the composed order each book was ordered in delivered and that order invoiced, a book nobody has added (for yourself or a kid: on their pile); a quote's lines of the month's composed order (drafted or quoted) quoted or unavailable, and the order quoted. Amounts in hundredths of the household's currency (a CSV's as written, 18.90). An invoice number counts once per shop, typed, imported or read from that shop's connector's mail. An invoice that may be a bookshop's mail counted in the last 30 days is asked about first (philobiblos#58): 409 with maybeMailed, then sent again with mailed (same: kept as the mail's duplicate, nothing counted; another: it counts); a dry run names it (maybeMailed) and asks nothing. One holding the mail's books and more, or part of them, is asked alike (philobiblos#64): same counts only the copies beyond the mail's; one holding two such mails' books is 409, to be recorded apart. Kept: book ids, quantities, amounts, the number and who recorded it, never the text typed. dryRun answers what it would do and changes nothing. */
         post: operations["recordOrderEntry"];
         delete?: never;
         options?: never;
@@ -1418,6 +1418,13 @@ export interface components {
                 shop: string | null;
                 totalC: components["schemas"]["Money"];
                 by?: components["schemas"]["Person"];
+                /** @description the mail holds the typed copies and this many more (philobiblos#64): the same counts only these */
+                more?: number;
+                /**
+                 * @description the mail is part of the typed invoice (philobiblos#64): the same counts nothing
+                 * @constant
+                 */
+                part?: true;
             };
             /** @description mail kinds: what Philobiblos knows of it. An unverified mail has its reason only. */
             mail?: {
@@ -1477,9 +1484,9 @@ export interface components {
             number: string | null;
             shop: string | null;
             total: components["schemas"]["Money"];
-            /** @description copies it made (0 for one kept as a mail's duplicate) */
+            /** @description copies it made (for one kept as a mail's duplicate, only those beyond the mail's: philobiblos#64) */
             copies: number;
-            /** @description answered the same as a bookshop's mail counted already (philobiblos#58): it counted nothing */
+            /** @description answered the same as a bookshop's mail counted already (philobiblos#58): it counted nothing but the copies beyond the mail's (philobiblos#64), which copies counts */
             sameAsMail?: boolean;
             by?: components["schemas"]["Person"];
             canUndo: boolean;
@@ -1539,7 +1546,7 @@ export interface components {
             /** @description A CSV (comma, semicolon or tab; RFC 4180 quoting; at most 100 rows, 20 columns, 1,000 characters a cell): a header row naming isbn (isbn13, ean), title, author, qty (quantity), price, available and for, in any order and case, then a row a book. Other columns are ignored and named back. price is an amount such as 18.90; available yes or no. */
             csv?: string;
             dryRun?: boolean;
-            /** @description an invoice: the answer to "Is this the invoice that came by mail on …?" (a 409 with maybeMailed), sent with the entry again (philobiblos#58). same: kept as the mail's duplicate, nothing counted; another: another purchase, it counts. An answer about another mail than the one that fits now is asked again (409; a dry run names it); same with no mail that fits is 409. */
+            /** @description an invoice: the answer to "Is this the invoice that came by mail on …?" (a 409 with maybeMailed), sent with the entry again (philobiblos#58). same: kept as the mail's duplicate, nothing counted but the copies it holds beyond the mail's (philobiblos#64); another: another purchase, it counts. An answer about another mail than the one that fits now is asked again (409; a dry run names it); same with no mail that fits is 409. */
             mailed?: {
                 /** @description maybeMailed.mail */
                 mail: string;
@@ -1547,14 +1554,22 @@ export interface components {
                 answer: "same" | "another";
             };
         };
-        /** @description A bookshop's invoice mail counted in the last 30 days that a typed or imported invoice may be (philobiblos#58): the same books in the same quantities, the same books' total, and the entry's number (if any) the mail's. */
+        /** @description A bookshop's invoice mail counted in the last 30 days that a typed or imported invoice may be (philobiblos#58), or holds, or is part of (philobiblos#64): one holds every copy of the other, at the same total for the copies they share (the books' totals), and the entry's number (if any) is the mail's. */
         MaybeMailed: {
             /** @description its Inbox item id */
             mail: string;
             /** @description the day its Date header names (UTC midnight), else the day it was read */
             cameOn: string;
             number: string | null;
+            /** @description the mail's books' total */
             total: components["schemas"]["Money"];
+            /** @description the entry holds the mail's copies and this many more: the same counts only these */
+            more?: number;
+            /**
+             * @description the entry is part of the mail: the same counts nothing
+             * @constant
+             */
+            part?: true;
         };
         EntryAsked: {
             /** @description "Is this the invoice that came by mail on 16 November 2026?", or why it is refused */
@@ -1593,7 +1608,7 @@ export interface components {
             ignoredColumns: string[];
             /** @description a dry run's: the mail it would be asked about */
             maybeMailed?: components["schemas"]["MaybeMailed"];
-            /** @description answered the same as this mail: kept as its duplicate, nothing counted */
+            /** @description answered the same as this mail: kept as its duplicate, nothing counted but the copies beyond the mail's (more) */
             sameAsMail?: components["schemas"]["MaybeMailed"];
             lines: {
                 row: number;
@@ -3557,7 +3572,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description The item asks nothing about a typed invoice, or it is answered already */
+            /** @description The item asks nothing about a typed invoice, or it is answered already; same about a typed invoice that no longer fits what is left of the mail (philobiblos#64) */
             409: {
                 headers: {
                     [name: string]: unknown;
