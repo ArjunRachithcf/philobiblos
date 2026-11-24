@@ -10,11 +10,12 @@ import { clearSessionCookies, endRequestSessions, requestSession } from '../auth
 import { LEGACY_SESSION_COOKIE, SESSION_COOKIE, SESSION_DAYS, cookieOptions, createSession } from '../auth/sessions';
 import type { Challenges, WebAuthn } from '../auth/webauthn';
 import { getPerson, setupNeeded, suggestHandle, view } from '../household/people';
+import { anyPerson, arrive } from '../household/waiting';
 import { resolveIdentity } from '../identity';
 
 const limited = { auth: 'public' as const, rateLimit: { max: 20, timeWindow: '1 minute' } };
 
-export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, webauthn: WebAuthn, challenges: Challenges) {
+export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, webauthn: WebAuthn, challenges: Challenges, joined?: () => void) {
   const standaloneOnly = (reply: FastifyReply) => {
     if (cfg.mode === 'standalone') return true;
     void reply.code(404).send({ error: 'Homeward signs people in' });
@@ -26,17 +27,27 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     const { token } = createSession(db, personId, passkeyId);
     void reply.setCookie(SESSION_COOKIE, token, cookieOptions(SESSION_DAYS * 86_400));
     if (req.cookies?.[LEGACY_SESSION_COOKIE] !== undefined) void reply.clearCookie(LEGACY_SESSION_COOKIE, { path: '/' });
-    return { mode: cfg.mode, signedIn: true, setupNeeded: false, person: view(db, getPerson(db, personId)!) };
+    const p = anyPerson(db, personId)!;
+    return { mode: cfg.mode, signedIn: true, setupNeeded: false, ...(p.state === 'waiting' ? { waiting: true } : {}), person: view(db, p) };
   };
 
+  // Who this is. Under HomersLab it is where a person the edge sends first arrives (household/waiting.ts arrive), as at
+  // any other route. A waiting person is signed in and `waiting`, with their own name only.
   app.get('/auth/session', { config: { auth: 'public' } }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const id = cfg.mode === 'standalone' ? null : resolveIdentity(cfg, req.socket.remoteAddress, req.headers);
-    const personId = cfg.mode === 'standalone'
-      ? requestSession(db, req, reply)?.personId ?? null
-      : id ? db.select().from(t.person).where(eq(t.person.externalId, id.externalId)).get()?.id ?? null : null;
-    const p = personId ? getPerson(db, personId) : undefined;
-    const ok = p && p.role !== 'kid';
-    return { mode: cfg.mode, signedIn: Boolean(ok), setupNeeded: cfg.mode === 'standalone' && setupNeeded(db), ...(ok ? { person: view(db, p) } : {}) };
+    const base = { mode: cfg.mode, setupNeeded: cfg.mode === 'standalone' && setupNeeded(db) };
+    let p: ReturnType<typeof anyPerson> | null;
+    if (cfg.mode === 'standalone') {
+      const personId = requestSession(db, req, reply)?.personId;
+      p = personId ? anyPerson(db, personId) ?? null : null;
+    } else {
+      const id = resolveIdentity(cfg, req.socket.remoteAddress, req.headers);
+      const a = id?.role ? arrive(db, { ...id, role: id.role }) : null;
+      if (a?.kind === 'waiting' && a.joined) joined?.();
+      if (a?.kind === 'waiting') return { ...base, signedIn: true, waiting: true, ...(a.person ? { person: view(db, a.person) } : {}) };
+      p = a?.kind === 'member' ? a.person : null;
+    }
+    if (!p || p.role === 'kid') return { ...base, signedIn: false };
+    return { ...base, signedIn: true, ...(p.state === 'waiting' ? { waiting: true } : {}), person: view(db, p) };
   });
 
   app.post<{ Body: { token?: unknown; name?: unknown } }>('/auth/enrol/options', { config: limited }, async (req, reply) => {
@@ -118,7 +129,8 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, db: Db, weba
     if (!pending) return reply.code(401).send({ error: 'this sign-in step expired; start again' });
     const id = webauthn.credentialId(req.body?.response);
     const key = id ? db.select().from(t.passkey).where(eq(t.passkey.id, id)).get() : undefined;
-    const p = key ? getPerson(db, key.personId) : undefined;
+    // A waiting person signs in too, to the one "waiting" page (the auth hook answers them nothing else).
+    const p = key ? anyPerson(db, key.personId) : undefined;
     // One answer for every failure: which passkeys exist is nobody's business.
     const refuse = () => reply.code(401).send({ error: 'that passkey did not sign you in' });
     if (!key || !p || p.role === 'kid') return refuse();

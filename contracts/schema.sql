@@ -11,7 +11,12 @@ CREATE TABLE person (
   role          TEXT NOT NULL CHECK (role IN ('admin','adult','kid')),
   birth_year    INTEGER,                  -- kids: drives age band
   settings_json TEXT NOT NULL DEFAULT '{}', -- per-person: mix, unread_limit, counterpoints, takeaways, takeaways_to_claude (default off), fiction, weights
-  handle        TEXT                      -- short lower-case name for the backlog's for:/by: (e.g. 'alex'); unique
+  handle        TEXT,                     -- short lower-case name for the backlog's for:/by: (e.g. 'alex'); unique
+  -- ADR 0011, philobiblos#34 slice 1: waiting for an admin's approval, or a member. A waiting person is an adult
+  -- without a handle (given at approval), counts nowhere and sees nothing.
+  state         TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('waiting','active') AND (state = 'active' OR (role = 'adult' AND handle IS NULL))),
+  ceiling       TEXT CHECK (ceiling IN ('admin','adult','kid')), -- HomersLab: the Homeward role sent last; the Philobiblos role is never above it
+  arrived_at    TEXT                      -- when they first came
 );
 CREATE UNIQUE INDEX person_handle ON person(handle);
 

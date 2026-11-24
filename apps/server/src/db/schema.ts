@@ -12,7 +12,18 @@ export const person = sqliteTable('person', {
   birthYear: integer('birth_year'),
   settingsJson: text('settings_json').notNull().default('{}'),
   handle: text('handle'),
-}, (t) => [check('person_role', sql`${t.role} IN ('admin','adult','kid')`), uniqueIndex('person_handle').on(t.handle)]);
+  // Waiting for an admin's approval (ADR 0011, philobiblos#34 slice 1), or a member. A waiting person is an adult with
+  // no handle (it is given at approval), counts nowhere and sees nothing (household/waiting.ts).
+  state: text('state', { enum: ['waiting', 'active'] }).notNull().default('active'),
+  // Under HomersLab: the Homeward role the edge sent last, the ceiling of the Philobiblos role. Null standalone.
+  ceiling: text('ceiling', { enum: ['admin', 'adult', 'kid'] }),
+  // When they first came (a waiting person's request; null for people from before).
+  arrivedAt: text('arrived_at'),
+}, (t) => [
+  check('person_role', sql`${t.role} IN ('admin','adult','kid')`), uniqueIndex('person_handle').on(t.handle),
+  check('person_state', sql`${t.state} IN ('waiting','active') AND (${t.state} = 'active' OR (${t.role} = 'adult' AND ${t.handle} IS NULL))`),
+  check('person_ceiling', sql`${t.ceiling} IN ('admin','adult','kid')`),
+]);
 
 // Sign-in (standalone; ADR 0010) ---------------------------------------
 export const passkey = sqliteTable('passkey', {

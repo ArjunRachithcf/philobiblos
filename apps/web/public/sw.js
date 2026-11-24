@@ -57,9 +57,10 @@ self.addEventListener('fetch', (e) => {
 
 // Notifications (Web Push, the server's push/push.ts): a push carries only its kind, no words, so the text is the
 // device's language's (PUSH_TEXT, English when there is none yet; philobiblos#27 adds the household's locale) and never text
-// from the message; a tap opens This month on Philobiblos's own origin, whatever the message says.
+// from the message; a tap opens This month on Philobiblos's own origin (Household for `join`: someone waits to join, for
+// admins), whatever the message says.
 const PUSH_TEXT = {
-  en: { plan: 'This month’s plan is ready.', test: 'Notifications from Philobiblos work on this device.', other: 'Philobiblos has something new.' },
+  en: { plan: 'This month’s plan is ready.', test: 'Notifications from Philobiblos work on this device.', join: 'Someone is waiting to join the household.', other: 'Philobiblos has something new.' },
 };
 const own = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
 self.addEventListener('push', (e) => {
@@ -68,11 +69,14 @@ self.addEventListener('push', (e) => {
   const lang = String((self.navigator && self.navigator.language) || 'en').toLowerCase().split('-')[0];
   const text = own(PUSH_TEXT, lang) ? PUSH_TEXT[lang] : PUSH_TEXT.en;
   const body = kind !== 'other' && own(text, kind) ? text[kind] : text.other;
-  e.waitUntil(self.registration.showNotification('Philobiblos', { body, tag: 'philobiblos', icon: '/icon-192.png' }));
+  // The page a tap opens, from Philobiblos's own list: never a URL from the message.
+  const page = kind === 'join' ? '/household' : '/month';
+  e.waitUntil(self.registration.showNotification('Philobiblos', { body, tag: 'philobiblos', icon: '/icon-192.png', data: { page } }));
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = new URL('/month', self.location.origin).href;
+  const page = e.notification.data && e.notification.data.page === '/household' ? '/household' : '/month';
+  const url = new URL(page, self.location.origin).href;
   e.waitUntil((async () => {
     for (const c of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) {
       if (new URL(c.url).origin === self.location.origin && 'focus' in c) { await c.focus(); if ('navigate' in c) await c.navigate(url); return; }

@@ -12,7 +12,7 @@ const FILTERS: [string, string][] = [['all', 'All'], ['shared', 'Shared'], ['mai
 const KIND: Record<InboxItem['kind'], string> = {
   share: 'Shared', ai_suggestion: 'AI suggestion', unmatched_invoice_line: 'Invoice', unmatched_quote_line: 'Quote',
   unmatched_shop_line: 'Shop order', mail_failed: 'Could not read', mail_waiting: 'Waiting', mail_unverified: 'Not verified',
-  maybe_typed_invoice: 'Invoice typed?',
+  maybe_typed_invoice: 'Invoice typed?', people_waiting: 'Joining',
 };
 const SHARE_STATUS: Record<string, string> = { received: 'Waiting for the media worker', reading: 'Reading the images and videos', done: 'Received', failed: 'Failed' };
 const day = (iso?: string | null) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : null; };
@@ -114,6 +114,7 @@ function Item({ it, kids, busy, onDecide, onDismiss }: {
         )}
         {it.kind === 'mail_failed' && <Notice kind="warn" title="Philobiblos could not read this mail, so it changed nothing.">{it.mail?.reason}{it.mail?.expected ? ` (it looked like: ${it.mail.expected.replace(/_/g, ' ')})` : ''}</Notice>}
         {it.kind === 'mail_waiting' && <Notice kind="info">{it.mail?.reason}</Notice>}
+        {it.kind === 'people_waiting' && <p className="footnote">Approve or decline them in <a href="/household">Household</a>. A name alone is no reason to let someone in.</p>}
         {it.share?.aiNote && <Notice kind="info">{it.share.aiNote}</Notice>}
         {it.kind === 'ai_suggestion' && <p className="footnote">The AI suggests these from your reading map. Nothing is added until you add it.</p>}
         {it.kind === 'share' && it.share?.status === 'done' && !it.found.length && !it.share.aiNote && <p className="footnote">The AI reads shares for books once it is set up; until then, add the books by hand in the Backlog.</p>}
@@ -122,7 +123,7 @@ function Item({ it, kids, busy, onDecide, onDismiss }: {
             {it.found.map((f) => <Book key={f.index} it={it} f={f} kids={kids} busy={busy} onDecide={onDecide} />)}
           </ul>
         )}
-        <div className="btn-row"><button type="button" className="btn btn-sm" disabled={busy} aria-label={`Dismiss ${it.title}`} onClick={() => onDismiss(it)}>Dismiss</button></div>
+        {it.kind !== 'people_waiting' && <div className="btn-row"><button type="button" className="btn btn-sm" disabled={busy} aria-label={`Dismiss ${it.title}`} onClick={() => onDismiss(it)}>Dismiss</button></div>}
       </div>
     </section>
   );

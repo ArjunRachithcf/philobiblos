@@ -165,6 +165,15 @@ function unverifiedItem(db: Db): InboxItem | null {
   };
 }
 
+/** The one item, for admins, that says people wait to join (ADR 0011): their count only; Household lists them. */
+export const WAITING_ID = 'p_waiting';
+function waitingItem(db: Db, me: string): InboxItem | null {
+  if (getPerson(db, me)?.role !== 'admin') return null;
+  const head = db.select({ n: count(), latest: max(t.person.arrivedAt) }).from(t.person).where(eq(t.person.state, 'waiting')).get();
+  if (!head?.n) return null;
+  return { id: WAITING_ID, kind: 'people_waiting', title: `${head.n} ${head.n === 1 ? 'person waits' : 'people wait'} to join`, createdAt: head.latest ?? new Date(0).toISOString(), waiting: { count: head.n }, found: [] };
+}
+
 /**
  * GET /inbox, a page at a time (newest first). Every source is read in batches with its decisions for that batch only,
  * so no query grows with the mailbox; unverified mail is one item, however much of it there is.
@@ -174,6 +183,7 @@ export function listInbox(db: Db, me: string, filter: Filter = 'all', o: { curso
   const cursor = o.cursor ?? null;
   const items: InboxItem[] = [];
   const sources: Source[] = [];
+  if (filter === 'all' && !cursor) { const w = waitingItem(db, me); if (w) items.push(w); }
   if (filter === 'all' || filter === 'shared') {
     sources.push({ tag: 's', done: false, buf: [], last: null, read: (c) => {
       const rows = db.select().from(t.share).where(and(eq(t.share.personId, me), after(t.share.createdAt, t.share.id, 's', c)))

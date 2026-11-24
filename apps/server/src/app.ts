@@ -24,7 +24,7 @@ import { SHARE_BYTES, SHARE_UPLOADS, ShareProcessor } from './shares/shares';
 import type { runMediaJob } from './media/client';
 import { AiJobs, type AiJobOptions } from './ai/jobs';
 import { pushRoutes } from './routes/push';
-import { pushClient } from './push/push';
+import { joinNotifier, pushClient } from './push/push';
 import { initHousehold } from './jobs/schedule';
 import { initCurrency } from './household/money';
 import { loadConnectors, type Registry } from './connectors/load';
@@ -105,8 +105,11 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   app.addHook('onClose', async () => shares.close());
   app.addHook('onReady', async () => { void shares.kick(); });
   await app.register(async (api) => {
-    api.addHook('onRequest', authHook(cfg, db));
-    await authRoutes(api, cfg, db, webauthn, challenges);
+    const push = opts.push ?? pushClient(cfg);
+    // Someone new waits to join: the admins are told (push/push.ts joinNotifier; the Inbox shows it too).
+    const joined = joinNotifier(db, cfg, push);
+    api.addHook('onRequest', authHook(cfg, db, { joined }));
+    await authRoutes(api, cfg, db, webauthn, challenges, joined);
     await peopleRoutes(api, cfg, db);
     await libraryRoutes(api, cfg, db, connectors);
     await backlogRoutes(api, cfg, db);
@@ -116,7 +119,6 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     await knowledgeRoutes(api, db);
     await stubRoutes(api, cfg);
     await inboxRoutes(api, cfg, db, shares);
-    const push = opts.push ?? pushClient(cfg);
     await pushRoutes(api, cfg, db, push);
     await jobRoutes(api, cfg, db, { egress, connectors, shares, ai, push, ...opts.jobs, mail: { token: () => mailOAuth.accessToken(), ...opts.jobs?.mail } });
   }, { prefix: '/api' });

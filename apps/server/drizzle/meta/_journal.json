@@ -169,6 +169,13 @@
       "when": 1796256400000,
       "tag": "0023_order_entry_duplicate_of",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1796256800000,
+      "tag": "0024_person_state",
+      "breakpoints": true
     }
   ]
 }

@@ -87,6 +87,8 @@ export function Library({ me }: { me: Me }) {
 }
 
 function PersonPicker({ people, who, me, onPick }: { people: Person[]; who: string; me?: string; onPick: (id: string) => void }) {
+  // A household of one has no one else's library to show (ADR 0011).
+  if (people.length < 2) return null;
   return (
     <Choice label="Whose library" value={who} onChange={onPick} className="lib-people"
       options={people.map((p) => [p.id, p.id === me ? `${p.name} (you)` : p.name])} />

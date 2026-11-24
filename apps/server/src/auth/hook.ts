@@ -7,12 +7,15 @@
 // header), and it is the only kind that may change something without Origin: an iOS Shortcut sends none, and a token
 // is not an ambient credential. Every other change must carry Philobiblos's own Origin, in both modes.
 // A share token is good for POST /shares and nothing else. Kids, and people HomersLab sends without a role, get 403.
+// A person waiting for an admin's approval (household/waiting.ts) gets 403 WAITING on every route but the public ones,
+// with nothing of the household in it.
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { getPerson, syncHomersLabPerson } from '../household/people';
+import { getPerson } from '../household/people';
+import { anyPerson, arrive } from '../household/waiting';
 import { resolveIdentity } from '../identity';
 import { requestSession } from './cookie';
 import { isFresh, type Session } from './sessions';
@@ -29,6 +32,14 @@ declare module 'fastify' {
 
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/** The one answer a waiting person gets, from every route that needs a person: no household data, nothing stored. */
+export const WAITING_ANSWER = { error: 'an admin of the household has not let you in yet', waiting: true } as const;
+
+export interface AuthHookOptions {
+  /** A new person waits (HomersLab: the edge sent them for the first time): the admins are told. */
+  joined?: () => void;
+}
+
 /**
  * Wrong share tokens: counted per address and per the token id they name, 10 in 10 minutes, after which a wrong one is
  * answered 429 instead of 401. A valid token is never refused: the token is looked up first (by its id, one indexed
@@ -42,7 +53,7 @@ function bearer(req: FastifyRequest): string | null {
   return m ? m[1]! : null;
 }
 
-export function authHook(cfg: Config, db: Db) {
+export function authHook(cfg: Config, db: Db, o: AuthHookOptions = {}) {
   const failures = new Limiter(TOKEN_FAILURES.max, TOKEN_FAILURES.windowMs);
   return async (req: FastifyRequest, reply: FastifyReply) => {
     const mode: AuthMode = req.routeOptions.config.auth ?? 'person';
@@ -71,15 +82,20 @@ export function authHook(cfg: Config, db: Db) {
       const identity = resolveIdentity(cfg, req.socket.remoteAddress, req.headers);
       if (identity) {
         if (!identity.role) return reply.code(403).send({ error: 'not allowed' });
-        const p = syncHomersLabPerson(db, { ...identity, role: identity.role });
-        if (p.role === 'kid') return reply.code(403).send({ error: 'not allowed' });
-        req.caller = { personId: p.id, role: p.role, via: 'homerslab' };
+        const a = arrive(db, { ...identity, role: identity.role });
+        if (a.kind === 'refused') return reply.code(403).send({ error: 'not allowed' });
+        if (a.kind === 'waiting') {
+          if (a.joined) o.joined?.();
+          return reply.code(403).send(WAITING_ANSWER);
+        }
+        req.caller = { personId: a.person.id, role: a.person.role as Caller['role'], via: 'homerslab' };
         return;
       }
     } else {
       const s = requestSession(db, req, reply);
-      const p = s ? getPerson(db, s.personId) : undefined;
+      const p = s ? anyPerson(db, s.personId) : undefined;
       if (s && p) {
+        if (p.state === 'waiting') return reply.code(403).send(WAITING_ANSWER);
         if (p.role === 'kid') return reply.code(403).send({ error: 'not allowed' });
         req.caller = { personId: p.id, role: p.role, via: 'session', session: s };
         return;
@@ -97,10 +113,17 @@ export function requireAdmin(req: FastifyRequest, reply: FastifyReply): boolean 
 }
 
 /**
- * A change that widens what Philobiblos trusts or lets go (a bookshop connector enabled, a new notification key) needs a
- * sign-in of the last few minutes: standalone, the session's own (ADR 0010). Under HomersLab Philobiblos has no sessions
- * and no step-up of its own, and the edge does not yet say when the person last signed in (ArjunRachithcf/homeward#253),
- * so such a change is refused there until it does (fail closed, ADR 0011). Sends the 403 and answers false when refused.
+ * A change that widens what Philobiblos trusts or lets go (a bookshop connector enabled, a new notification key, a
+ * waiting person approved or declined) needs a sign-in of the last few minutes: standalone, the session's own
+ * (ADR 0010). Under HomersLab Philobiblos has no sessions and no step-up of its own, and the edge does not yet say when
+ * the person last signed in (ArjunRachithcf/homeward#253), so such a change is refused there until it does (fail closed,
+ * ADR 0011), whatever headers the request carries. Sends the 403 and answers false when refused.
+ *
+ * The contract Philobiblos expects from homeward#253 (docs/security.md "Fresh sign-in under HomersLab"): the manifest
+ * asks `identity.authTime: true`; the edge then deletes any `X-HomersLab-Auth-Time` a client sends and sets its own, the
+ * IdP's `auth_time` of the person's session in Unix seconds, and promises it with `PHILOBIBLOS_EDGE_IDENTITY=homerslab-v2`.
+ * Only then will this read the header (from PHILOBIBLOS_TRUSTED_PROXY only, one value, digits only, not in the future,
+ * at most FRESH_MINUTES old); until that release it is never read.
  */
 export function requireFreshSignIn(req: FastifyRequest, reply: FastifyReply): boolean {
   const c = req.caller;

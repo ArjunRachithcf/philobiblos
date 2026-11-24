@@ -1,17 +1,24 @@
 // The household (ADR 0001): everyone signed in sees it; admins change it. Under HomersLab, people are managed in
-// HomersLab and arrive with each request, so the changes here answer 409.
+// HomersLab and arrive with each request, so the changes here answer 409, except deciding who waits (ADR 0011).
+// Waiting people (household/waiting.ts): admins list them, and approve or decline each with a fresh sign-in, in both
+// modes; at most WAITING_DECISIONS an admin in its window (429 past it). An unknown id and a member's get the same 404.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { and, count, eq } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
-import { requireAdmin } from '../auth/hook';
+import { requireAdmin, requireFreshSignIn } from '../auth/hook';
 import { getMoney } from '../household/money';
 import { createInvite } from '../auth/invites';
 import { clearSessionCookies } from '../auth/cookie';
 import { endAllSessions, isFresh } from '../auth/sessions';
 import { HouseholdError, addPerson, editPerson, getPerson, household, removePerson, view, type PersonInput } from '../household/people';
+import { approve, decline, waitingPeople } from '../household/waiting';
+import { Limiter } from '../shares/tokens';
+
+/** Approvals and declines an admin may make: 30 in 10 minutes. */
+export const WAITING_DECISIONS = { max: 30, windowMs: 10 * 60_000 };
 
 const ROLES = new Set(['admin', 'adult', 'kid']);
 const HANDLE = /^[a-z][a-z0-9-]{0,19}$/;
@@ -67,6 +74,41 @@ export async function peopleRoutes(app: FastifyInstance, cfg: Config, db: Db) {
     return false;
   };
   const hasPasskey = (personId: string) => Boolean(db.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.personId, personId)).get());
+
+  const decisions = new Limiter(WAITING_DECISIONS.max, WAITING_DECISIONS.windowMs);
+  // Who may decide: an admin, with a fresh sign-in (both modes; refused under HomersLab until homeward#253), within the
+  // rate limit; all of it before the id is looked at, so nothing about who waits shows to anyone else.
+  const mayDecide = (req: FastifyRequest, reply: FastifyReply) => {
+    if (!requireAdmin(req, reply) || !requireFreshSignIn(req, reply)) return false;
+    if (decisions.hit(req.caller!.personId)) return true;
+    void reply.code(429).send({ error: 'too many decisions at once: wait a few minutes' });
+    return false;
+  };
+
+  app.get('/people/waiting', async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return waitingPeople(db).map((p) => ({
+      id: p.id, name: p.name, arrivedAt: p.arrivedAt, via: p.externalId ? 'homeward' as const : 'join_link' as const,
+      // Slices 2 to 4 of philobiblos#34 fill these: the join link used, the household's networks, a verified address.
+      joinLink: null, fromHomeNetwork: null, verifiedAddress: null,
+      // Under HomersLab, the most they may be: their Homeward role.
+      mayBeAdmin: !p.ceiling || p.ceiling === 'admin',
+    }));
+  });
+
+  app.post<{ Params: { personId: string } }>('/people/waiting/:personId/approve', async (req, reply) => {
+    if (!mayDecide(req, reply)) return;
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'role') || (b.role !== undefined && b.role !== 'adult' && b.role !== 'admin')) {
+      return reply.code(400).send({ error: 'role: adult (the default) or admin' });
+    }
+    try { return view(db, approve(db, req.params.personId, (b.role as 'adult' | 'admin' | undefined) ?? 'adult')); } catch (e) { return fail(reply, e); }
+  });
+
+  app.post<{ Params: { personId: string } }>('/people/waiting/:personId/decline', async (req, reply) => {
+    if (!mayDecide(req, reply)) return;
+    try { decline(db, req.params.personId); return reply.code(204).send(); } catch (e) { return fail(reply, e); }
+  });
 
   app.get('/me', async (req) => ({
     person: view(db, getPerson(db, req.caller!.personId)!),

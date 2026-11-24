@@ -30,11 +30,18 @@ test('the setup link makes Alex the admin with a passkey, then the household is 
   await page.getByRole('button', { name: 'Create a passkey' }).click();
   await expect(page.getByRole('heading', { name: 'Household' })).toBeVisible();
   await expect(page.getByText('Alex (you)')).toBeVisible();
+  // A household of one (ADR 0011): just you, no family parts, no one waiting
+  await expect(page.getByRole('heading', { name: 'You', exact: true })).toBeVisible();
+  await expect(page.getByText(/Just you for now/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Waiting to join' })).toHaveCount(0);
   await expectAccessible(page, 'household');
 
   await page.getByLabel('Name', { exact: true }).fill('Sam');
   await page.getByRole('button', { name: 'Add them' }).click();
   await expect(page.getByRole('listitem').filter({ hasText: 'Sam' })).toContainText('No passkey yet');
+  // a second person: the family's parts show
+  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
+  await expect(page.getByText(/Just you for now/)).toHaveCount(0);
   await page.getByLabel('Name', { exact: true }).fill('Kid 1');
   await page.getByLabel('Role').selectOption('kid');
   await page.getByLabel('Birth year').fill('2021');

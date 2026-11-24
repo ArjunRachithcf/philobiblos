@@ -62,6 +62,27 @@ paths:
       summary: 'Admins, standalone: add an adult, an admin or a kid (under HomersLab, people come from HomersLab)'
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PersonInput' } } } }
       responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }, '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'The handle is taken, or the household is managed by HomersLab', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /people/waiting:
+    get:
+      tags: [household]
+      operationId: listWaiting
+      summary: 'Admins: the people who wait for approval (ADR 0011), newest first; at most 10 wait. A waiting person counts nowhere else and sees nothing.'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WaitingPerson' } } } } } }
+  /people/waiting/{personId}/approve:
+    parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
+    post:
+      tags: [household]
+      operationId: approvePerson
+      summary: 'Admins, both modes: lets a waiting person in, as an adult (the default) or an admin; under HomersLab never above their Homeward role. Needs a fresh sign-in: standalone, one in the last 10 minutes; under HomersLab the edge''s recent sign-in signal (ArjunRachithcf/homeward#253), so it is refused there until the edge sends it. 30 decisions in 10 minutes an admin.'
+      requestBody: { required: false, content: { application/json: { schema: { type: object, additionalProperties: false, properties: { role: { enum: [adult, admin] } } } } } }
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '200': { description: 'Approved: the person as a member now', content: { application/json: { schema: { $ref: '#/components/schemas/Person' } } } }, '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '404': { description: 'No one waits with that id (a member''s id gets the same answer)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '409': { description: 'Above their Homeward role', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many decisions; wait, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
+  /people/waiting/{personId}/decline:
+    parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
+    post:
+      tags: [household]
+      operationId: declinePerson
+      summary: 'Admins, both modes: declines a waiting person; their request, passkeys and sessions go in one transaction. The same fresh sign-in and limit as approving.'
+      responses: { '401': { $ref: '#/components/responses/Unauthorized' }, '403': { $ref: '#/components/responses/Forbidden' }, '204': { description: Declined }, '404': { description: 'No one waits with that id (a member''s id gets the same answer)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }, '429': { description: Too many decisions; wait, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } } }
   /people/{personId}:
     parameters: [{ name: personId, in: path, required: true, schema: { type: string } }]
     patch:
@@ -362,7 +383,7 @@ components:
     Unauthorized: { description: 'No valid identity for this route (deny by default)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Forbidden: { description: 'Not allowed: a kid (kids have no access), someone HomersLab sends without a role, a non-admin on an admin route, or a request that changes something from another origin', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
-    Error: { type: object, required: [error], properties: { error: {type: string} } }
+    Error: { type: object, required: [error], properties: { error: {type: string}, waiting: { const: true, description: 'the 403 of every route for a person who waits for an admin''s approval' } } }
     Connector:
       type: object
       description: 'A bookshop as data (contracts/connectors.md). It allows nothing until an admin enables it, for this version of its file.'
@@ -413,10 +434,22 @@ components:
           readOnly: true
           description: 'GET /settings only: every currency this server knows, with its digits, for Settings'' choice of the household''s (philobiblos#62)'
           items: { type: object, required: [code, digits], properties: { code: { type: string, pattern: '^[A-Z]{3}$' }, digits: { type: integer, minimum: 0 } } }
+    WaitingPerson:
+      type: object
+      required: [id, name, arrivedAt, via, joinLink, fromHomeNetwork, verifiedAddress, mayBeAdmin]
+      properties:
+        id: {type: string}
+        name: { type: string, description: 'as they gave it (or Homeward sent it): plain text, never a reason to approve by itself' }
+        arrivedAt: { type: [string, 'null'] }
+        via: { enum: [homeward, join_link] }
+        joinLink: { type: ['null'], description: 'the join link they used (philobiblos#34 slice 2)' }
+        fromHomeNetwork: { type: ['null'], description: 'whether they came from the household''s networks (slice 3)' }
+        verifiedAddress: { type: ['null'], description: 'the address a rule verified (slices 4a and 4b)' }
+        mayBeAdmin: { type: boolean, description: 'under HomersLab, false unless their Homeward role is admin (the ceiling)' }
     Person: { type: object, required: [id, name, role], properties: { id: {type: string}, name: {type: string}, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'] }, birthYear: { type: [integer, 'null'], description: kids only }, ageBand: { enum: ['0-2','3-5','6-8','9-12', null] }, signsIn: { type: boolean, description: 'standalone: has at least one passkey' } } }
     PersonInput: { type: object, required: [name, role], additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: string, pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: integer, minimum: 2000, maximum: 2100 } } }
     PersonPatch: { type: object, additionalProperties: false, properties: { name: { type: string, minLength: 1, maxLength: 60 }, role: { enum: [admin, adult, kid] }, handle: { type: [string, 'null'], pattern: '^[a-z][a-z0-9-]{0,19}$' }, birthYear: { type: [integer, 'null'], minimum: 2000, maximum: 2100 } } }
-    AuthSession: { type: object, required: [mode, signedIn, setupNeeded], properties: { mode: { enum: [homerslab, standalone] }, signedIn: {type: boolean}, setupNeeded: { type: boolean, description: 'standalone: no admin has a passkey yet; the setup link is in PHILOBIBLOS_DATA_DIR/setup-link.txt' }, person: { $ref: '#/components/schemas/Person' } } }
+    AuthSession: { type: object, required: [mode, signedIn, setupNeeded], properties: { mode: { enum: [homerslab, standalone] }, signedIn: {type: boolean}, waiting: { type: boolean, description: 'signed in, and waiting for an admin''s approval: every other route answers 403 (ADR 0011)' }, setupNeeded: { type: boolean, description: 'standalone: no admin has a passkey yet; the setup link is in PHILOBIBLOS_DATA_DIR/setup-link.txt' }, person: { $ref: '#/components/schemas/Person' } } }
     WebAuthnStart: { type: object, required: [challengeId, options], properties: { challengeId: {type: string}, options: { type: object, description: 'PublicKeyCredentialCreationOptionsJSON or PublicKeyCredentialRequestOptionsJSON' }, person: { type: object, properties: { name: {type: string} }, description: 'enrol: who the link is for' } } }
     WebAuthnFinish: { type: object, required: [challengeId, response], additionalProperties: false, properties: { challengeId: { type: string, maxLength: 100 }, response: { type: object, description: 'RegistrationResponseJSON or AuthenticationResponseJSON' }, label: { type: string, maxLength: 40, description: 'enrol: a name for this passkey, e.g. Laptop' } } }
     Passkey: { type: object, required: [id, label, createdAt], properties: { id: {type: string}, label: {type: string}, createdAt: {type: string}, lastUsedAt: { type: [string, 'null'] }, backedUp: {type: boolean}, invitedBy: { type: [string, 'null'], description: 'the name of the admin whose invite made it; null for your own or the setup link' } } }
@@ -489,12 +522,13 @@ components:
       required: [id, kind, title, createdAt, found]
       properties:
         id: {type: string}
-        kind: { enum: [share, ai_suggestion, unmatched_invoice_line, unmatched_quote_line, unmatched_shop_line, mail_failed, mail_waiting, mail_unverified, maybe_typed_invoice] }
+        kind: { enum: [share, ai_suggestion, unmatched_invoice_line, unmatched_quote_line, unmatched_shop_line, mail_failed, mail_waiting, mail_unverified, maybe_typed_invoice, people_waiting] }
         by: { $ref: '#/components/schemas/Person' }
         title: { type: string, description: 'Philobiblos''s own words, or a share''s title, or a verified mail''s subject (safeField); plain text, never HTML' }
         createdAt: {type: string}
         mediaCount: {type: integer}
         share: { type: object, description: 'kind share', properties: { status: { enum: [received, reading, done, failed] }, progress: { type: object, properties: { done: {type: integer}, total: {type: integer} } }, refused: {type: integer}, url: { type: [string, 'null'] }, note: { type: [string, 'null'] }, aiNote: { type: [string, 'null'], description: 'what the AI could not read of it (images without a vision model, or nothing), Philobiblos''s words' } } }
+        waiting: { type: object, description: 'kind people_waiting (admins only): how many wait for approval; Household lists them', required: [count], properties: { count: {type: integer} } }
         unverified: { type: object, description: 'kind mail_unverified: every unverified mail since the item was last dismissed', properties: { count: {type: integer}, reasons: { type: array, maxItems: 5, items: { type: object, properties: { reason: {type: string}, count: {type: integer} } } } } }
         typed: { type: object, description: 'kind maybe_typed_invoice: the invoice typed in or imported that this mailed one may be (its found are the mail''s books, to show: answered with POST /inbox/{itemId}/typed, never one by one)', required: [entryId, createdAt, number, shop, totalC], properties: { entryId: {type: string}, createdAt: {type: string}, number: { type: [string, 'null'] }, shop: { type: [string, 'null'] }, totalC: { $ref: '#/components/schemas/Money' }, by: { $ref: '#/components/schemas/Person' }, more: { type: integer, minimum: 1, description: 'the mail holds the typed copies and this many more (philobiblos#64): the same counts only these' }, part: { const: true, description: 'the mail is part of the typed invoice (philobiblos#64): the same counts nothing' } } }
         mail: { type: object, description: 'mail kinds: what Philobiblos knows of it. An unverified mail has its reason only.', properties: { reason: { type: [string, 'null'] }, expected: { type: [string, 'null'], description: 'the kind the mail looked like (failed closed)' }, date: { type: [string, 'null'] }, number: { type: [string, 'null'], description: 'order or invoice number' } } }
