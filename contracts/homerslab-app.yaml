@@ -72,6 +72,9 @@ network:
   push_egress: [fcm.googleapis.com, updates.push.services.mozilla.com, web.push.apple.com, '*.notify.windows.com']
   optional_egress: [api.anthropic.com]
   optional_egress_note: api.anthropic.com only when the household opts in to Claude in Settings; with Ollama nothing leaves for AI.
+  # No SMTP under HomersLab: PHILOBIBLOS_SMTP_* is standalone's alone (join codes, philobiblos#34 slice 4a) and stops a
+  # start in homerslab mode; the verified address comes from the edge there (slice 4b). Standalone, the SMTP host is the
+  # one outgoing mail connection, reached only by src/net/smtp.ts, only while it is set.
 # NEEDS HomersLab (philobiblos#49): a mail bridge that listens on its own loopback only needs Philobiblos to share its network
 # namespace (docs/mail-providers.md); until HomersLab can run one that way, the mailbox under HomersLab is a server reached
 # by name (PHILOBIBLOS_IMAP_HOST, PHILOBIBLOS_IMAP_PORT, and its own certificate in PHILOBIBLOS_IMAP_CA_FILE if it has one).

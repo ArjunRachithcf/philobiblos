@@ -39,7 +39,7 @@ export function view(db: Db, p: Person): PersonView {
  */
 export function adminView(db: Db, p: Person): PersonView {
   const by = p.admittedBy ? db.select({ name: t.person.name }).from(t.person).where(eq(t.person.id, p.admittedBy)).get()?.name ?? null : null;
-  return { ...view(db, p), letInByLink: p.admittedLink ? { linkId: p.admittedLink, by, at: p.arrivedAt } : null };
+  return { ...view(db, p), letInByLink: p.admittedLink ? { linkId: p.admittedLink, by, at: p.arrivedAt, domain: p.admittedDomain } : null };
 }
 
 /** The household's members (a waiting person is not one: household/waiting.ts). */

@@ -1,5 +1,6 @@
 // Settings from the environment (contracts/homerslab-app.yaml, docker-compose.yml). Secrets are read here and
 // nowhere else, and never logged.
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveEnv } from '@philobiblos/contracts/env';
@@ -8,6 +9,7 @@ import { validTimeZone } from './jobs/zone';
 import { validCurrency } from './household/currency';
 import { parseLocale } from './household/locale';
 import type { MailboxPlace, Secret } from './net/imap';
+import { plainAddress, type SmtpSettings } from './net/smtp';
 import type { Cidr } from './net/networks';
 import { edgeAddress, parseTrustedProxy } from './net/proxy';
 
@@ -100,6 +102,20 @@ export interface Config {
   pushHosts: string[];
   /** The household's addresses the bookshop writes to (PHILOBIBLOS_MAIL_RECIPIENTS); a mail to anyone else is not taken. */
   mailRecipients: string[];
+  /**
+   * Outgoing SMTP (ADR 0011, philobiblos#34 slice 4a), standalone only and off by default: it sends one mail, a join
+   * link's 6-digit code (net/smtp.ts). PHILOBIBLOS_SMTP_HOST, _PORT (465: TLS from the first byte, never STARTTLS), _USER,
+   * the password from PHILOBIBLOS_SMTP_PASSWORD or PHILOBIBLOS_SMTP_PASSWORD_FILE (never in SQLite), _FROM (one plain
+   * address), _CA_FILE. null: not set, and the mail-domain rule is not offered.
+   */
+  smtp: SmtpSettings | null;
+  /**
+   * The public mail providers' domains (anyone can have an address there), which a mail-domain rule cannot accept
+   * automatically: the list that ships (PHILOBIBLOS_PUBLIC_MAIL_DOMAINS_FILE, the repository's
+   * mail-providers/public-domains.txt; /app/mail-providers/public-domains.txt in the image). Read only when SMTP is set;
+   * empty otherwise.
+   */
+  publicMailDomains: ReadonlySet<string>;
 }
 
 /**
@@ -128,6 +144,9 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
   // Under HomersLab it names who may send X-HomersLab-Person: the edge's one address, never a range a neighbour is in.
   if (mode === 'homerslab' && !edgeAddress(trustedProxy)) throw new Error('PHILOBIBLOS_TRUSTED_PROXY must be the edge\'s one address in homerslab mode (no range, no list)');
   const origin = parseOrigin(env.PHILOBIBLOS_ORIGIN ?? `http://localhost:${port}`);
+  const smtp = parseSmtp(env);
+  // Join codes are standalone's: under HomersLab the verified address comes from the edge (slice 4b), and nothing sends mail.
+  if (mode === 'homerslab' && smtp) throw new Error('PHILOBIBLOS_SMTP_* is for standalone join codes only: leave it out in homerslab mode');
   return {
     mode,
     dataDir,
@@ -153,6 +172,8 @@ export function loadConfig(given: NodeJS.ProcessEnv = process.env): Config {
     mailRecipients: (env.PHILOBIBLOS_MAIL_RECIPIENTS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter((d) => /^[^@\s]+@[^@\s]+$/.test(d)),
     pushHosts: parsePushHosts(env.PHILOBIBLOS_PUSH_HOSTS),
     arcSealers: (env.PHILOBIBLOS_MAIL_ARC_SEALERS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
+    smtp,
+    publicMailDomains: smtp ? readPublicMailDomains(env.PHILOBIBLOS_PUBLIC_MAIL_DOMAINS_FILE || fileURLToPath(new URL('../../../mail-providers/public-domains.txt', import.meta.url))) : new Set(),
     connectorDirs: {
       builtin: env.PHILOBIBLOS_BUILTIN_CONNECTORS_DIR === 'none' ? null : resolve(env.PHILOBIBLOS_BUILTIN_CONNECTORS_DIR || fileURLToPath(new URL('../../../connectors', import.meta.url))),
       local: env.PHILOBIBLOS_CONNECTORS_DIR ? resolve(env.PHILOBIBLOS_CONNECTORS_DIR) : null,
@@ -207,10 +228,57 @@ function parseOllama(v: string): string {
   return u.origin;
 }
 
-/** A host name only (no scheme, port or path): the port is PHILOBIBLOS_IMAP_PORT's. */
-function parseHost(v: string): string {
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v)) throw new Error('PHILOBIBLOS_IMAP_HOST must be a host name, e.g. imap.example.org (the port is PHILOBIBLOS_IMAP_PORT, default 993)');
+/** A host name only (no scheme, port or path): the port is PHILOBIBLOS_<kind>_PORT's. */
+function parseHost(v: string, kind: 'IMAP' | 'SMTP' = 'IMAP'): string {
+  const eg = kind === 'IMAP' ? 'imap.example.org' : 'smtp.example.org';
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v)) throw new Error(`PHILOBIBLOS_${kind}_HOST must be a host name, e.g. ${eg} (the port is PHILOBIBLOS_${kind}_PORT, default ${kind === 'IMAP' ? 993 : 465})`);
   return v.toLowerCase();
+}
+
+/** A port from 1 to 65535, or `fallback` when unset. */
+function parsePort(v: string | undefined, name: string, fallback: number): number {
+  const port = v?.trim() ? Number(v.trim()) : fallback;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${name}: a port from 1 to 65535 (TLS from the first byte on it, always)`);
+  return port;
+}
+
+/**
+ * Outgoing SMTP, or null when PHILOBIBLOS_SMTP_HOST is unset. Once it is set, every part must be: the user, a
+ * password (from the environment or a file, never both), and the sender. A part set without the host is a mistake.
+ */
+function parseSmtp(env: NodeJS.ProcessEnv): SmtpSettings | null {
+  const keys = ['USER', 'PASSWORD', 'PASSWORD_FILE', 'FROM', 'PORT', 'CA_FILE'].map((k) => `PHILOBIBLOS_SMTP_${k}`);
+  if (!env.PHILOBIBLOS_SMTP_HOST?.trim()) {
+    const stray = keys.find((k) => env[k]);
+    if (stray) throw new Error(`${stray} is set, but PHILOBIBLOS_SMTP_HOST is not`);
+    return null;
+  }
+  for (const k of ['PHILOBIBLOS_SMTP_USER', 'PHILOBIBLOS_SMTP_FROM']) if (!env[k]?.trim()) throw new Error(`PHILOBIBLOS_SMTP_HOST is set: ${k} is needed too`);
+  if (Boolean(env.PHILOBIBLOS_SMTP_PASSWORD) === Boolean(env.PHILOBIBLOS_SMTP_PASSWORD_FILE)) throw new Error('PHILOBIBLOS_SMTP_HOST is set: one of PHILOBIBLOS_SMTP_PASSWORD or PHILOBIBLOS_SMTP_PASSWORD_FILE is needed (not both)');
+  const user = env.PHILOBIBLOS_SMTP_USER!.trim();
+  if (/\p{Cc}/u.test(user) || user.length > 254) throw new Error('PHILOBIBLOS_SMTP_USER: at most 254 characters, no control characters');
+  const from = plainAddress(env.PHILOBIBLOS_SMTP_FROM!.trim());
+  if (!from) throw new Error('PHILOBIBLOS_SMTP_FROM: one plain address, e.g. codes@example.org (no display name)');
+  return {
+    host: parseHost(env.PHILOBIBLOS_SMTP_HOST.trim(), 'SMTP'),
+    port: parsePort(env.PHILOBIBLOS_SMTP_PORT, 'PHILOBIBLOS_SMTP_PORT', 465),
+    user,
+    password: env.PHILOBIBLOS_SMTP_PASSWORD ? { value: env.PHILOBIBLOS_SMTP_PASSWORD } : { file: env.PHILOBIBLOS_SMTP_PASSWORD_FILE! },
+    from,
+    caFile: env.PHILOBIBLOS_SMTP_CA_FILE?.trim() || null,
+  };
+}
+
+/**
+ * The shipped list of public mail providers' domains: one a line, `#` starts a comment. A list that cannot be read
+ * stops Philobiblos (the rule it guards would otherwise accept anyone with such an address).
+ */
+export function readPublicMailDomains(file: string): ReadonlySet<string> {
+  let text: string;
+  try { text = readFileSync(file, 'utf8'); } catch { throw new Error(`PHILOBIBLOS_PUBLIC_MAIL_DOMAINS_FILE: cannot read ${file} (the public mail providers a mail-domain rule cannot accept)`); }
+  const domains = text.split('\n').map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean);
+  if (!domains.length) throw new Error(`PHILOBIBLOS_PUBLIC_MAIL_DOMAINS_FILE: ${file} names no domain`);
+  return new Set(domains);
 }
 
 /**
@@ -249,8 +317,7 @@ function parseImap(env: NodeJS.ProcessEnv): ImapSettings | null {
 }
 
 function place(env: NodeJS.ProcessEnv): MailboxPlace {
-  const port = env.PHILOBIBLOS_IMAP_PORT?.trim() ? Number(env.PHILOBIBLOS_IMAP_PORT.trim()) : 993;
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PHILOBIBLOS_IMAP_PORT: a port from 1 to 65535 (TLS from the first byte on it, always)');
+  const port = parsePort(env.PHILOBIBLOS_IMAP_PORT, 'PHILOBIBLOS_IMAP_PORT', 993);
   return { host: parseHost(env.PHILOBIBLOS_IMAP_HOST!), port, user: env.PHILOBIBLOS_IMAP_USER!, folder: env.PHILOBIBLOS_IMAP_FOLDER || 'INBOX', caFile: env.PHILOBIBLOS_IMAP_CA_FILE?.trim() || null };
 }
 

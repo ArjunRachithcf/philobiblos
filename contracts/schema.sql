@@ -19,7 +19,8 @@ CREATE TABLE person (
   arrived_at    TEXT,                     -- when they first came
   seen_at       TEXT,                     -- HomersLab: when the edge last sent them (to the hour); `join` pushes stop for an admin it no longer sends
   admitted_link TEXT,                     -- slice 3: the join link whose rules let them in (kept after it goes)
-  admitted_by   TEXT                      -- slice 3: the admin who made that link (kept after they go)
+  admitted_by   TEXT,                     -- slice 3: the admin who made that link (kept after they go)
+  admitted_domain TEXT                    -- slice 4a: the mail domain that matched (never the address)
 );
 CREATE UNIQUE INDEX person_handle ON person(handle);
 
@@ -77,6 +78,7 @@ CREATE TABLE join_link (                   -- a household join link; its waiting
   automatic          INTEGER NOT NULL DEFAULT 0, -- 1: whoever matches every rule is let in at once, as an adult (never an admin)
   refuse_non_matches INTEGER NOT NULL DEFAULT 0, -- 1: whoever does not match is refused instead of waiting
   networks_json      TEXT,                 -- JSON array of CIDRs inside the household's networks; NULL: all of them
+  mail_domain        TEXT,                 -- slice 4a: an address at this domain, verified by a code; NULL: no mail rule
   CHECK (max_uses BETWEEN 1 AND 10 AND uses BETWEEN 0 AND max_uses)
 );
 
@@ -84,8 +86,31 @@ CREATE TABLE join_request (                -- a waiting person's request: what t
   person_id         TEXT PRIMARY KEY NOT NULL REFERENCES person(id) ON DELETE CASCADE,
   join_link_id      TEXT REFERENCES join_link(id) ON DELETE SET NULL,
   from_home_network INTEGER NOT NULL,
-  matches_rules     INTEGER                -- whether they matched the link's own rules (slice 3); NULL: it has none
+  matches_rules     INTEGER,               -- whether they matched the link's own rules (slice 3); NULL: it has none
+  verified_address  TEXT                   -- slice 4a: the address a code verified; gone with the request
 );
+
+CREATE TABLE join_code (                   -- slice 4a: a code asked for on a join page, before the passkey (at most 30 minutes)
+  id            TEXT PRIMARY KEY NOT NULL,
+  request_hash  TEXT NOT NULL UNIQUE,      -- SHA-256 of the request token only that page holds
+  join_link_id  TEXT REFERENCES join_link(id) ON DELETE CASCADE, -- NULL: a link that does not open (no mail went out)
+  address       TEXT,                      -- the address being verified; NULL when no mail went out
+  mac           BLOB,                      -- HMAC of the code (key from the sealing key, HKDF info "join-code"); NULL: no live code
+  created_at    TEXT NOT NULL,
+  expires_at    TEXT NOT NULL,             -- the code's 10 minutes
+  tries         INTEGER NOT NULL DEFAULT 0,
+  verified_at   TEXT,
+  CHECK (tries BETWEEN 0 AND 5)
+);
+CREATE INDEX join_code_address ON join_code(address);
+
+CREATE TABLE join_code_sent (              -- slice 4a: the codes sent in the last day, for the send limits
+  id            INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  sent_at       TEXT NOT NULL,
+  join_link_id  TEXT NOT NULL,             -- a plain id: the count outlives the link for its day
+  address_mac   TEXT NOT NULL              -- an HMAC of the address (the same key), never the address
+);
+CREATE INDEX join_code_sent_at ON join_code_sent(sent_at);
 
 CREATE TABLE household_settings (
   id                INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),

@@ -89,6 +89,8 @@ export interface Pending {
   challenge: string; kind: 'enrol' | 'sign-in' | 'join'; inviteId?: string; name?: string; expires: number;
   /** 'join' (household/join-links.ts): the link, the presented token's hash (its rate limit) and the person to be. */
   joinLinkId?: string; tokenHash?: string; personId?: string;
+  /** 'join' with the mail-domain rule (household/join-code.ts): the hash of the request whose code was right. */
+  codeRequest?: string;
 }
 
 /** One-time challenges, 5 minutes, at most 1000 waiting (the oldest go first). */

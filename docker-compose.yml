@@ -55,6 +55,17 @@ services:
       PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL: ${PHILOBIBLOS_IMAP_OAUTH_TOKEN_URL:-}
       PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL: ${PHILOBIBLOS_IMAP_OAUTH_REVOKE_URL:-}
       PHILOBIBLOS_IMAP_OAUTH_SCOPE: ${PHILOBIBLOS_IMAP_OAUTH_SCOPE:-}
+      # Outgoing SMTP, off by default (ADR 0011, philobiblos#34 slice 4a): only for a join link's mail-domain rule, which
+      # mails a 6-digit code and nothing else. TLS from the first byte (port 465; never STARTTLS), the certificate verified;
+      # the password here or in a file (like IMAP's). Unset, the rule is not offered. The host is then the one more place
+      # that something leaves for: the address being verified and its code.
+      PHILOBIBLOS_SMTP_HOST: ${PHILOBIBLOS_SMTP_HOST:-}
+      PHILOBIBLOS_SMTP_PORT: ${PHILOBIBLOS_SMTP_PORT:-}
+      PHILOBIBLOS_SMTP_USER: ${PHILOBIBLOS_SMTP_USER:-}
+      PHILOBIBLOS_SMTP_PASSWORD: ${PHILOBIBLOS_SMTP_PASSWORD:-}
+      PHILOBIBLOS_SMTP_PASSWORD_FILE: ${PHILOBIBLOS_SMTP_PASSWORD_FILE:-}
+      PHILOBIBLOS_SMTP_FROM: ${PHILOBIBLOS_SMTP_FROM:-}
+      PHILOBIBLOS_SMTP_CA_FILE: ${PHILOBIBLOS_SMTP_CA_FILE:-}
       # Whose ARC seal vouches for a forward that broke the bookshop's DKIM: your own mail provider's sealing domain, if
       # you forward through one (docs/connectors.md lists common ones). None by default: no provider is assumed.
       PHILOBIBLOS_MAIL_ARC_SEALERS: ${PHILOBIBLOS_MAIL_ARC_SEALERS:-${SHELF_MAIL_ARC_SEALERS:-}}

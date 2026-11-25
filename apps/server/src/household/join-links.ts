@@ -8,6 +8,9 @@
 // keeps it; a link's own rules only add to it (narrower ranges inside the household's). A link set to accept
 // automatically lets in, as an adult and never an admin, whoever matches every rule, with immediate use; whoever does not
 // match waits, or is refused when the link refuses non-matches. Outside the household's networks everyone is refused.
+//
+// The mail-domain rule (slice 4a): an address at the link's domain, verified by a code (household/join-code.ts). Offered
+// only while SMTP is set; never matched for a public mail provider's domain, and never without SMTP (fail closed).
 import { and, desc, eq, gt, inArray, lt, lte, notExists, or, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Config } from '../config';
@@ -36,8 +39,17 @@ export interface LinkRules {
   refuseNonMatches: boolean;
   /** Ranges inside the household's networks the link opens from; null: all of the household's. */
   networks: Cidr[] | null;
+  /** An address at this domain, verified by a code (slice 4a); null: no mail rule. */
+  mailDomain: string | null;
 }
-export const NO_RULES: LinkRules = { automatic: false, refuseNonMatches: false, networks: null };
+export const NO_RULES: LinkRules = { automatic: false, refuseNonMatches: false, networks: null, mailDomain: null };
+
+/**
+ * What the mail-domain rule may match on: whether it is offered (SMTP set), the public providers it never matches, and
+ * the domain this person verified (or, `assume`, the best case: whether the link would open for someone who verifies).
+ */
+export interface MailMatch { offered: boolean; publicDomains: ReadonlySet<string>; verifiedDomain?: string | null; assume?: boolean }
+export const NO_MAIL: MailMatch = { offered: false, publicDomains: new Set() };
 
 /** Whether `inner` lies wholly inside `outer`. */
 const within = (inner: Cidr, outer: Cidr) => inner.family === outer.family && inner.prefix >= outer.prefix && inRanges([outer], inner.network);
@@ -65,7 +77,7 @@ export function linkNetworks(db: Db, given: unknown, s: Surroundings = NO_SURROU
 }
 
 /** A stored link's rules. Stored ranges that no longer parse match no one (fail closed). */
-export function rulesOf(row: Pick<JoinLink, 'automatic' | 'refuseNonMatches' | 'networksJson'>): LinkRules {
+export function rulesOf(row: Pick<JoinLink, 'automatic' | 'refuseNonMatches' | 'networksJson' | 'mailDomain'>): LinkRules {
   let networks: Cidr[] | null = null;
   if (row.networksJson !== null) {
     let parsed: unknown;
@@ -73,7 +85,7 @@ export function rulesOf(row: Pick<JoinLink, 'automatic' | 'refuseNonMatches' | '
     const list = Array.isArray(parsed) ? parsed.map((c) => parseCidr(c)) : [null];
     networks = list.every((c): c is Cidr => c !== null) ? list : [];
   }
-  return { automatic: row.automatic === 1, refuseNonMatches: row.refuseNonMatches === 1, networks };
+  return { automatic: row.automatic === 1, refuseNonMatches: row.refuseNonMatches === 1, networks, mailDomain: row.mailDomain };
 }
 
 /** A new link; 409 while no home network is listed (an empty list never means anywhere). */
@@ -87,6 +99,7 @@ export function createJoinLink(db: Db, cfg: Pick<Config, 'origin'>, o: { created
   db.insert(t.joinLink).values({
     id, tokenHash: hashToken(token), createdBy: o.createdBy, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(), maxUses: o.uses ?? JOIN_LINK.uses,
     automatic: rules.automatic ? 1 : 0, refuseNonMatches: rules.refuseNonMatches ? 1 : 0, networksJson: rules.networks ? JSON.stringify(rules.networks.map((c) => c.cidr)) : null,
+    mailDomain: rules.mailDomain,
   }).run();
   return { id, url: `${cfg.origin}/join#${token}`, token, expiresAt, maxUses: o.uses ?? JOIN_LINK.uses };
 }
@@ -105,20 +118,24 @@ export const presentedHash = (token: unknown) => hashToken(looksLikeToken(token)
  */
 /** `matches`: whether they matched the link's own rules; null when it has none beyond the household's. */
 export interface Admission { link: JoinLink; outcome: 'accept' | 'wait'; matches: boolean | null }
-export function checkLink(tx: Db, by: { hash: string } | { id: string }, address: string | null | undefined, now = new Date(), s: Surroundings = NO_SURROUNDINGS): Admission | null {
+export function checkLink(tx: Db, by: { hash: string } | { id: string }, address: string | null | undefined, now = new Date(), s: Surroundings = NO_SURROUNDINGS, mail: MailMatch = NO_MAIL): Admission | null {
   const row = tx.select().from(t.joinLink).where('hash' in by ? eq(t.joinLink.tokenHash, by.hash) : eq(t.joinLink.id, by.id)).get();
   // The household's rule, which every link keeps: its networks.
   const home = inHomeNetwork(tx, address, s);
-  const rules = rulesOf(row ?? { automatic: 0, refuseNonMatches: 0, networksJson: '[]' });
+  const rules = rulesOf(row ?? { automatic: 0, refuseNonMatches: 0, networksJson: '[]', mailDomain: null });
   // The link's own: inside its ranges too, when it has any (they add to the household's, never replace it).
   const inOwn = rules.networks === null || inRanges(rules.networks, address);
-  const matches = home && inOwn;
+  // And an address verified at its domain, when it has the mail rule: never while SMTP is unset, never a public
+  // provider's domain (anyone can have an address there).
+  const d = rules.mailDomain;
+  const mailOk = d === null || (mail.offered && !mail.publicDomains.has(d) && (mail.assume === true || mail.verifiedDomain === d));
+  const matches = home && inOwn && mailOk;
   const room = waitingNow(tx) < WAITING.max;
   const open = row !== undefined && row.expiresAt > now.toISOString() && row.uses < row.maxUses;
   if (!open || !home || (!matches && rules.refuseNonMatches)) return null;
   const outcome = matches && rules.automatic ? 'accept' as const : 'wait' as const;
   if (outcome === 'wait' && !room) return null;
-  return { link: row, outcome, matches: rules.networks === null ? null : matches };
+  return { link: row, outcome, matches: rules.networks === null && rules.mailDomain === null ? null : matches };
 }
 
 /** Counts a use, at an enrolment, inside its transaction: false if the link was used up or expired in between. */
@@ -153,7 +170,7 @@ export function revokeJoinLinksBy(tx: Db, adminId: string): void {
 
 export interface JoinLinkView {
   id: string; createdAt: string; expiresAt: string; maxUses: number; uses: number; createdBy: string | null; waiting: number; open: boolean;
-  accept: 'approval' | 'automatic'; nonMatches: 'wait' | 'refuse'; networks: string[] | null;
+  accept: 'approval' | 'automatic'; nonMatches: 'wait' | 'refuse'; networks: string[] | null; mailDomain: string | null;
 }
 
 /**
@@ -179,4 +196,5 @@ export const rulesView = (r: LinkRules) => ({
   accept: r.automatic ? 'automatic' as const : 'approval' as const,
   nonMatches: r.refuseNonMatches ? 'refuse' as const : 'wait' as const,
   networks: r.networks ? r.networks.map((c) => c.cidr) : null,
+  mailDomain: r.mailDomain,
 });

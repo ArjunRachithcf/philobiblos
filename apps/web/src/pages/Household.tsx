@@ -51,7 +51,7 @@ export function Household({ me, reload }: { me: Me; reload: () => Promise<void> 
                   <span className="row-sub wrap">{sub(p)}</span>
                   {isAdmin && p.letInByLink && (
                     <span className="row-sub wrap">
-                      {`Let in by ${p.letInByLink.by ? `${p.letInByLink.by}’s` : 'a former admin’s'} join link${p.letInByLink.at ? `, ${new Date(p.letInByLink.at).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}` : ''}`}
+                      {`Let in by ${p.letInByLink.by ? `${p.letInByLink.by}’s` : 'a former admin’s'} join link${p.letInByLink.domain ? ` (an address at ${p.letInByLink.domain})` : ''}${p.letInByLink.at ? `, ${new Date(p.letInByLink.at).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}` : ''}`}
                     </span>
                   )}
                 </span>
@@ -116,7 +116,7 @@ function WaitingList({ mode, changes, onDecided }: { mode: NonNullable<Me['mode'
                 {[p.via === 'homeward' ? 'Came from Homeward' : p.joinLink?.createdBy ? `Came with ${p.joinLink.createdBy}’s join link` : 'Came with a join link',
                   p.arrivedAt ? new Date(p.arrivedAt).toLocaleString(undefined, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : null,
                   p.fromHomeNetwork == null ? null : p.fromHomeNetwork ? 'from the home network' : 'from outside the home network',
-                  p.matchesRules == null ? null : p.matchesRules ? 'from the link’s own ranges' : 'from outside the link’s own ranges',
+                  p.matchesRules == null ? null : p.matchesRules ? 'matches the link’s rules' : 'does not match the link’s rules',
                   p.verifiedAddress ? `verified ${p.verifiedAddress}` : null].filter(Boolean).join(' · ')}
               </span>
             </span>

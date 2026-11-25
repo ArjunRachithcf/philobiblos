@@ -36,6 +36,8 @@ COPY --from=build /out/dist ./dist
 COPY --from=build /out/drizzle ./drizzle
 # The bookshop connectors that ship (data only, docs/connectors.md); a household adds its own with PHILOBIBLOS_CONNECTORS_DIR.
 COPY --from=build /src/connectors ./connectors
+# The public mail providers a join link's mail-domain rule cannot accept (data only, philobiblos#34 slice 4a).
+COPY --from=build /src/mail-providers ./mail-providers
 COPY --from=build /out/web ./web
 # The media worker (ADR 0009) has its own tree: sharp and pdfjs-dist live only there, run as `node /app/worker/dist/main.js`
 # in its own container without a network (docker-compose.yml).

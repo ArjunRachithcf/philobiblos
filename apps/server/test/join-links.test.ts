@@ -156,7 +156,7 @@ describe('the home network', () => {
     for (const a of ['127.0.0.1', '172.18.0.1', '172.20.5.9', '192.168.1.1', '203.0.113.5', '2001:db8::1', 'fe80::1', '', undefined]) expect(proposeNetwork(a), String(a)).toBeNull();
     const { app: a, db } = await app();
     const res = await a.inject({ url: '/api/people/home-networks', remoteAddress: '192.168.1.23', headers: { cookie: sessionCookie(db, 'p_alex') } });
-    expect(res.json()).toEqual({ networks: [], proposal: '192.168.1.0/24', behindProxy: false, trustedProxy: false, surroundings: 'known' });
+    expect(res.json()).toEqual({ networks: [], proposal: '192.168.1.0/24', behindProxy: false, trustedProxy: false, surroundings: 'known', mailCodes: null });
     expect(db.select().from(t.homeNetwork).all()).toEqual([]);
   });
 

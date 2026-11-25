@@ -27,6 +27,7 @@ export const IMAGE_DEFAULTS: Readonly<Record<string, string>> = {
   PHILOBIBLOS_WEB_DIR: '/app/web',
   PHILOBIBLOS_MIGRATIONS_DIR: '/app/drizzle',
   PHILOBIBLOS_BUILTIN_CONNECTORS_DIR: '/app/connectors',
+  PHILOBIBLOS_PUBLIC_MAIL_DOMAINS_FILE: '/app/mail-providers/public-domains.txt',
 };
 
 /** The names that together say one thing (their suffixes): new ones of a setting set, old ones of it ignored. */
@@ -34,6 +35,7 @@ export const SETTINGS: readonly (readonly string[])[] = [
   ['DATA_DIR', 'DB_FILE'],
   ['SEALING_KEY', 'SEALING_KEY_FILE'],
   ['IMAP_PASSWORD', 'IMAP_PASSWORD_FILE'],
+  ['SMTP_PASSWORD', 'SMTP_PASSWORD_FILE'],
 ];
 
 type Env = Record<string, string | undefined>;

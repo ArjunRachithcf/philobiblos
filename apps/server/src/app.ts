@@ -18,6 +18,7 @@ import { peopleRoutes } from './routes/people';
 import { joinRoutes } from './routes/join';
 import { readSurroundings, type Surroundings } from './net/networks';
 import { lapseWaiting } from './household/waiting';
+import { codeMail, pruneCodes } from './household/join-code';
 import { stubRoutes } from './routes/stubs';
 import { jobRoutes, type JobDeps } from './routes/jobs';
 import { createEgress, egressRules } from './net/egress';
@@ -60,7 +61,9 @@ export interface AppOptions { connectors?: Registry; ai?: AiJobOptions; push?: E
   /** Tests only: where Philobiblos runs (net/networks.ts readSurroundings, read at start otherwise). */
   surroundings?: Surroundings;
   /** Tests only: how many links a per-link join limiter counts (routes/join.ts JOIN_LINK_KEYS). */
-  joinLinkKeys?: number }
+  joinLinkKeys?: number;
+  /** Tests: where join codes go instead of the SMTP server (household/join-code.ts). */
+  sendCode?: (to: string, code: string) => Promise<void> }
 
 export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   // The household's settings row, with PHILOBIBLOS_TZ as its zone the first time only (jobs/schedule.ts initHousehold).
@@ -114,7 +117,11 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   app.addHook('onClose', async () => shares.close());
   // Waiting requests lapse after 7 days (household/waiting-rows.ts): each read of the waiting people lapses old ones,
   // and this hourly sweep the ones nobody reads.
-  const sweep = setInterval(() => { try { lapseWaiting(db); } catch { /* the next sweep tries again */ } }, 3_600_000);
+  // Join codes asked for more than 30 minutes ago go too (household/join-code.ts), with their addresses.
+  const sweep = setInterval(() => {
+    try { lapseWaiting(db); } catch { /* the next sweep tries again */ }
+    try { pruneCodes(db); } catch { /* the next sweep tries again */ }
+  }, 3_600_000);
   sweep.unref();
   app.addHook('onClose', async () => clearInterval(sweep));
   app.addHook('onReady', async () => { void shares.kick(); });
@@ -125,7 +132,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     api.addHook('onRequest', authHook(cfg, db, { joined }));
     await authRoutes(api, cfg, db, webauthn, challenges, joined);
     await peopleRoutes(api, cfg, db);
-    await joinRoutes(api, cfg, db, webauthn, challenges, { joined, floorMs: opts.joinFloorMs, surroundings: opts.surroundings ?? readSurroundings(), linkKeys: opts.joinLinkKeys });
+    await joinRoutes(api, cfg, db, webauthn, challenges, { joined, floorMs: opts.joinFloorMs, surroundings: opts.surroundings ?? readSurroundings(), linkKeys: opts.joinLinkKeys, mail: codeMail(cfg, opts.sendCode) });
     await libraryRoutes(api, cfg, db, connectors);
     await backlogRoutes(api, cfg, db);
     await monthRoutes(api, cfg, db, connectors);

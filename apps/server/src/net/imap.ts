@@ -40,7 +40,8 @@ export class MailboxError extends Error {
   constructor(message: string) { super(message); this.name = 'MailboxError'; }
 }
 
-const secret = (p: Secret) => ('value' in p ? p.value : readFileSync(p.file, 'utf8').trim());
+/** A secret's value: from the environment, or the file it names (trimmed). Also net/smtp.ts's. */
+export const readSecret = (p: Secret) => ('value' in p ? p.value : readFileSync(p.file, 'utf8').trim());
 
 export async function openMailbox(c: MailboxConfig): Promise<Mailbox> {
   const port = c.port ?? 993;
@@ -54,7 +55,7 @@ export async function openMailbox(c: MailboxConfig): Promise<Mailbox> {
     secure: true,
     doSTARTTLS: false,
     // XOAUTH2 (or OAUTHBEARER) with the token, never a password beside it; imapflow refuses a token with control characters.
-    auth: c.accessToken !== undefined ? { user: c.user, accessToken: c.accessToken } : { user: c.user, pass: secret(c.password) },
+    auth: c.accessToken !== undefined ? { user: c.user, accessToken: c.accessToken } : { user: c.user, pass: readSecret(c.password) },
     // An IP address is checked against the certificate's IP names (SNI carries host names only).
     tls: { rejectUnauthorized: true, minVersion: 'TLSv1.2', ...(isIP(c.host) ? {} : { servername: c.host }), ...(ca ? { ca } : {}) },
     logger: false,
